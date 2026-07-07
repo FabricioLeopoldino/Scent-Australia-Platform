@@ -7,6 +7,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { isDbConfigured, platformPool } from './db.js';
 import { runPlatformMigrations } from './platform/migrations.js';
+import { requireAuth, requireModule } from './platform/auth.js';
+import platformRouter from './platform/router.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -76,10 +78,25 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
-// ── Module routers (mounted as phases land) ──────────────────────────────
-// Phase 1: app.use('/api/platform', platformRouter)
-// Phase 2: app.use('/api/sa', requireAuth, requireModule('SA'), saRouter)
-// Phase 3: app.use('/api/sm', requireAuth, requireModule('SM'), smRouter)
+// ── Auth gate (FR-AUTH-5): all /api/* except login, webhooks, health ─────
+const PUBLIC_API_PATHS = ['/platform/auth/login', '/health'];
+app.use('/api', (req, res, next) => {
+  if (PUBLIC_API_PATHS.includes(req.path) || req.path.startsWith('/webhook/')) return next();
+  requireAuth(req, res, next);
+});
+
+// ── Module routers ────────────────────────────────────────────────────────
+app.use('/api/platform', platformRouter);
+
+// SA/SM stubs — the requireModule guard is live NOW (testable per Phase 1
+// verification); the real routers replace the 501 handlers in Phases 2b/3a.
+app.use('/api/sa', requireModule('SA'), (_req, res) =>
+  res.status(501).json({ error: 'SA module not yet mounted (Phase 2)' })
+);
+app.use('/api/sm', requireModule('SM'), (_req, res) =>
+  res.status(501).json({ error: 'SM module not yet mounted (Phase 3)' })
+);
+
 // Phase 5: app.post('/api/webhook/shopify/:store', webhookReceiver)
 
 // ── Static frontend + SPA catch-all ──────────────────────────────────────

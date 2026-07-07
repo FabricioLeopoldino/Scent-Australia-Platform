@@ -9,6 +9,17 @@ types.setTypeParser(1114, (val) => new Date(val + 'Z'));
 
 const DATABASE_URL = process.env.PLATFORM_DATABASE_URL;
 
+// Neon's pooled endpoint (PgBouncer, host contains "-pooler") rejects the
+// `options=-c search_path=...` startup parameter. The SA/SM pools REQUIRE
+// search_path (their legacy queries are unqualified by design — PRD §7.3),
+// so they connect to the DIRECT endpoint: same host minus "-pooler".
+// The platform pool needs no search_path (its queries are fully
+// schema-qualified) and keeps the pooled endpoint.
+function directUrl(url) {
+  if (!url) return url;
+  return url.replace('-pooler.', '.');
+}
+
 // Free-tier resilience (NFR-7): Neon drops idle connections — keep the pool
 // small, release idle clients fast, and never crash on transient pool errors.
 const POOL_TUNING = {
@@ -19,20 +30,21 @@ const POOL_TUNING = {
   allowExitOnIdle: true,
 };
 
-function makePool(searchPath) {
+function makePool(label, { searchPath } = {}) {
+  const url = searchPath ? directUrl(DATABASE_URL) : DATABASE_URL;
   const pool = new Pool({
-    connectionString: DATABASE_URL,
-    ssl: DATABASE_URL?.includes('localhost') ? false : { rejectUnauthorized: false },
-    options: `-c search_path=${searchPath}`,
+    connectionString: url,
+    ssl: url?.includes('localhost') ? false : { rejectUnauthorized: false },
+    ...(searchPath ? { options: `-c search_path=${searchPath}` } : {}),
     ...POOL_TUNING,
   });
   pool.on('error', (err) => {
-    console.error(`[db] Unexpected pool error (${searchPath}):`, err.message);
+    console.error(`[db] Unexpected pool error (${label}):`, err.message);
     // Don't exit — the pool recovers dropped Neon connections automatically.
   });
   pool.on('connect', (client) => {
     client.on('error', (err) => {
-      console.error(`[db] Client error (${searchPath}):`, err.message);
+      console.error(`[db] Client error (${label}):`, err.message);
     });
   });
   return pool;
@@ -40,9 +52,9 @@ function makePool(searchPath) {
 
 // One pool per module. search_path makes each module's unqualified table
 // names resolve to its own schema — SA/SM query text stays untouched.
-export const platformPool = makePool('platform,public');
-export const saPool = makePool('sa,public');
-export const smPool = makePool('sm,public');
+export const platformPool = makePool('platform'); // schema-qualified queries, pooled endpoint
+export const saPool = makePool('sa', { searchPath: 'sa,public' });
+export const smPool = makePool('sm', { searchPath: 'sm,public' });
 
 export async function withTransaction(pool, fn) {
   const client = await pool.connect();

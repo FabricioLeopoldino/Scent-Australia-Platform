@@ -1,3 +1,4 @@
+import bcrypt from 'bcryptjs';
 import { platformPool } from '../db.js';
 
 // Platform schema — idempotent startup migrations (PRD §8).
@@ -104,6 +105,24 @@ export async function runPlatformMigrations() {
       created_at   TIMESTAMP DEFAULT NOW()
     )
   `);
+
+  // ── Seed root user if none exist (SA pattern: default password + forced change) ──
+  // Replaced by the real SA user import at Phase 2a (scripts/migrate-sa.js).
+  const userCount = await q(`SELECT COUNT(*) FROM platform.users`);
+  if (parseInt(userCount.rows[0].count) === 0) {
+    const hash = bcrypt.hashSync('#scent2026', 10);
+    const seeded = await platformPool.query(
+      `INSERT INTO platform.users (name, password_hash, role, must_change_password)
+       VALUES ('Root', $1, 'root', true) RETURNING id`,
+      [hash]
+    );
+    await platformPool.query(
+      `INSERT INTO platform.user_modules (user_id, module) VALUES ($1, 'SA'), ($1, 'SM')
+       ON CONFLICT DO NOTHING`,
+      [seeded.rows[0].id]
+    );
+    console.log('[platform-db] Seeded root user — login: Root / #scent2026 (password change required)');
+  }
 
   console.log('[platform-db] Migrations complete.');
 }
