@@ -12,8 +12,8 @@ a module picker, and cross-system fragrance transfers.
 
 | Phase | Description | Status |
 |---|---|---|
-| 0 | Foundation (scaffold, DB schemas, staging service) | ✅ scaffold done — Neon/Render pending |
-| 1 | Platform core (auth, users, module picker) | — |
+| 0 | Foundation (scaffold, DB schemas, staging service) | ✅ done (2026-07-07) — Render deploy pending env vars |
+| 1 | Platform core (auth, users, module picker) | ✅ done (2026-07-07) — verified against Neon |
 | 2a–2d | SA module port (migration, router, frontend, regression) | — |
 | 3a–3c | SM module port + hardening | — |
 | 4 | Cross-system transfers | — |
