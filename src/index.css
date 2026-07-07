@@ -1,0 +1,30 @@
+/* Scent Australia Platform — shell base styles.
+   Module-specific styling arrives with each module port (Phases 2c / 3c). */
+
+:root {
+  --bg: #0e0e1a;
+  --surface: rgba(255, 255, 255, 0.05);
+  --border: rgba(255, 255, 255, 0.08);
+  --text-primary: #e8eaf2;
+  --text-secondary: rgba(232, 234, 242, 0.55);
+  --text-muted: rgba(232, 234, 242, 0.35);
+  --accent: #2563eb;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg);
+  color: var(--text-primary);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+  font-family: 'Archivo Black', 'Inter', sans-serif;
+}

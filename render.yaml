@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: scent-australia-platform
+    env: node
+    region: singapore
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TZ
+        value: Australia/Sydney
+      - key: FEATURE_UPLOADS
+        value: "false"
+      - key: PLATFORM_DATABASE_URL
+        sync: false
+      - key: PLATFORM_JWT_SECRET
+        generateValue: true
+      - key: ALLOWED_ORIGIN
+        sync: false
+      - key: SA_SHOPIFY_STORE_NAME
+        value: sainternalstore7811121
+      - key: SA_SHOPIFY_ACCESS_TOKEN
+        sync: false
+      - key: SA_SHOPIFY_WEBHOOK_SECRET
+        sync: false
+      - key: SM_SHOPIFY_STORE_DOMAIN
+        value: sainternalstore7811121.myshopify.com
+      - key: SM_SHOPIFY_ACCESS_TOKEN
+        sync: false
+      - key: SM_SHOPIFY_WEBHOOK_SECRET
+        sync: false
