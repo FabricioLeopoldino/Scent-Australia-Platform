@@ -11,6 +11,7 @@ import {
   storeSession,
   clearSession,
   setActiveModule,
+  getActiveModule,
 } from './api.js';
 
 // Shell flow (PRD Appendix B): Login → forced password change → Module Picker
@@ -40,7 +41,11 @@ export default function App() {
 
   function handlePick(moduleKey) {
     setActiveModule(moduleKey); // B3 — persist active module
-    navigate(moduleKey === 'SA' ? '/sa' : '/sm');
+    // MUSE is a view over the SM module (D7 amendment): same routes/backend,
+    // the Layout renders MUSE-only navigation when active module is MUSE.
+    if (moduleKey === 'SA') navigate('/sa');
+    else if (moduleKey === 'MUSE') navigate('/sm/muse');
+    else navigate('/sm');
   }
 
   function backToPicker() {
@@ -73,7 +78,7 @@ export default function App() {
       </Route>
 
       <Route path="/sm/*?">
-        {hasModule('SM')
+        {hasModule('SM') || hasModule('MUSE')
           ? <SMWrapper user={user} onLogout={handleLogout} />
           : <RedirectToPicker onDone={backToPicker} />}
       </Route>
@@ -98,7 +103,9 @@ function SAWrapper({ user, onSwitchModule, onLogout }) {
 }
 
 function SMWrapper({ user, onLogout }) {
-  setActiveModule('SM'); // keep interceptors module-aware after deep reloads
+  // Keep interceptors module-aware after deep reloads; preserve MUSE view
+  // choice when already set (D7 amendment: MUSE = view over SM).
+  if (getActiveModule() !== 'MUSE') setActiveModule('SM');
   return <SMModule user={user} onLogout={onLogout} />;
 }
 

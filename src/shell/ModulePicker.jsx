@@ -19,20 +19,27 @@ const MODULES = [
     accent: '#b1545a',
   },
   {
+    // MUSE is a VIEW over the SM module (same backend/segments) — the tile
+    // opens the MUSE-only navigation. Entry requires SM (or explicit MUSE)
+    // access. PRD D7 amended 2026-07-09 at owner request.
     key: 'MUSE',
     title: 'MUSE',
-    subtitle: 'Own brand — coming soon',
+    subtitle: 'Own brand — dashboard · catalog · stock',
     icon: Sparkles,
     accent: '#d4b574',
-    comingSoon: true,
+    viewOf: 'SM',
   },
 ];
 
 export default function ModulePicker({ user, onPick, onLogout, onOpenUsers }) {
-  const visible = MODULES.filter(
-    (m) => m.comingSoon || (user.modules || []).includes(m.key)
-  );
-  const hasAny = visible.some((m) => !m.comingSoon);
+  const canEnter = (m) => {
+    const mods = user.modules || [];
+    if (mods.includes(m.key)) return true;
+    if (m.viewOf && mods.includes(m.viewOf)) return true;
+    return false;
+  };
+  const visible = MODULES.filter(canEnter);
+  const hasAny = visible.length > 0;
 
   return (
     <div className="center-screen" style={{ flexDirection: 'column', gap: 8 }}>

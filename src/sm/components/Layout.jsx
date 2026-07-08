@@ -43,13 +43,15 @@ const NAV_SECTIONS = [
     { path: '/bom-sm', label: 'Bill of Materials', icon: BookOpen, roles: ['root','admin','user'] },
     { path: '/sm-stock', label: 'Stock', icon: Package, roles: ['root','admin','user'] },
   ]},
-  { header: 'MUSE', items: [
+  // view:'muse' — shown ONLY when the MUSE tile was picked (D7 amendment:
+  // MUSE is a navigation view over this module; SM view hides these).
+  { header: 'MUSE', view: 'muse', items: [
     { path: '/muse', label: 'Dashboard', icon: Star, roles: ['root','admin','user'] },
     { path: '/muse/products', label: 'Catalog', icon: Star, roles: ['root','admin','user'] },
     { path: '/bom-muse', label: 'Bill of Materials', icon: BookOpen, roles: ['root','admin','user'] },
     { path: '/muse-stock', label: 'Stock', icon: Package, roles: ['root','admin','user'] },
   ]},
-  { header: 'HISTORY', items: [
+  { header: 'HISTORY', view: 'both', items: [
     { path: '/transactions', label: 'Transaction History', icon: History, roles: ['root','admin','user'] },
     { path: '/activity-log', label: 'Activity Log', icon: ScrollText, roles: ['root','admin'] },
   ]},
@@ -130,6 +132,13 @@ export default function Layout({ children }) {
         {/* Nav */}
         <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto' }}>
           {NAV_SECTIONS.map((section, sIdx) => {
+            // D7 amendment: the active tile decides the view —
+            //   MUSE tile → only view:'muse' + view:'both' sections
+            //   SM tile   → everything except view:'muse'
+            const activeView = (typeof localStorage !== 'undefined' && localStorage.getItem('platform_active_module')) === 'MUSE' ? 'muse' : 'sm'
+            const sectionView = section.view || 'sm'
+            if (activeView === 'muse' && sectionView === 'sm') return null
+            if (activeView === 'sm' && sectionView === 'muse') return null
             // Filter items by role first to know if section has any visible items
             const visibleItems = section.items.filter(it => it.roles.includes(user?.role))
             if (visibleItems.length === 0) return null

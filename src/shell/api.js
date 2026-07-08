@@ -45,7 +45,7 @@ export function getActiveModule() {
 export function apiBase(module) {
   const m = module || getActiveModule();
   if (m === 'SA') return '/api/sa';
-  if (m === 'SM') return '/api/sm';
+  if (m === 'SM' || m === 'MUSE') return '/api/sm'; // MUSE is a view over SM (D7)
   return '/api/platform';
 }
 
