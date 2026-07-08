@@ -126,3 +126,30 @@ export async function runPlatformMigrations() {
 
   console.log('[platform-db] Migrations complete.');
 }
+
+// ── Cross-schema migrations (run AFTER runSaStartupMigrations) ──────────
+// FR-XFER-9: sa.transactions carries a closed CHECK allowlist on `type`
+// (and SA's own startup migration recreates it with only ITS list on every
+// boot — so this must run after it, every boot, and also at the end of each
+// SA re-migration). Adds the two transfer types. This is the one sanctioned
+// exception to guardrail #7, scoped to exactly this constraint.
+export async function runCrossSchemaMigrations() {
+  await platformPool.query(`
+    DO $$
+    BEGIN
+      ALTER TABLE sa.transactions DROP CONSTRAINT IF EXISTS transactions_type_check;
+      ALTER TABLE sa.transactions ADD CONSTRAINT transactions_type_check
+        CHECK (type IN (
+          'add', 'remove', 'adjust', 'incoming', 'return',
+          'shopify_sale', 'shopify_reversal',
+          'formula_ready_used', 'formula_ready_restored',
+          'tech_transfer_out', 'tech_transfer_in',
+          'tech_remove',
+          'tech_return_from_tech', 'tech_return_to_main',
+          'tech_return_input',
+          'transfer_out', 'transfer_cancel_return'
+        ));
+    END$$;
+  `);
+  console.log('[platform-db] Cross-schema migrations complete (transfer types in sa CHECK).');
+}

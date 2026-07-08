@@ -6,9 +6,10 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { isDbConfigured, platformPool } from './db.js';
-import { runPlatformMigrations } from './platform/migrations.js';
+import { runPlatformMigrations, runCrossSchemaMigrations } from './platform/migrations.js';
 import { requireAuth, requireModule } from './platform/auth.js';
 import platformRouter from './platform/router.js';
+import transfersRouter from './platform/transfers.js';
 import { router as saRouter, runSaStartupMigrations } from './sa/index.js';
 import { shopifyWebhookReceiver } from './platform/webhooks.js';
 // CJS interop (Appendix A 9b): default import = module.exports
@@ -104,6 +105,7 @@ app.use('/api', (req, res, next) => {
 
 // ── Module routers ────────────────────────────────────────────────────────
 app.use('/api/platform', platformRouter);
+app.use('/api/platform', transfersRouter);
 
 // SA module — the production monolith mounted as a router (Phase 2b,
 // Appendix A conversion; SQL/business logic untouched, schema sa).
@@ -139,6 +141,9 @@ async function start() {
     // SA inline migrations (idempotent, no-ops on migrated data) — run on the
     // sa pool so unqualified DDL resolves to schema sa.
     await runSaStartupMigrations();
+    // MUST follow runSaStartupMigrations — SA recreates the transactions
+    // CHECK with only its own types every boot (FR-XFER-9).
+    await runCrossSchemaMigrations();
     // SM startup migrations create/maintain schema sm; then mirror platform
     // users into sm.users (id-aligned — FK integrity, audit finding 2026-07-08)
     await runSmStartupMigrations();

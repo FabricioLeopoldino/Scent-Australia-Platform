@@ -351,6 +351,29 @@ async function main() {
       await importUsers(tgt);
     }
 
+    if (!RECONCILE_ONLY) {
+      // FR-XFER-9: the restored production constraint lacks the transfer
+      // types — re-extend immediately so transfers never hit a stale CHECK.
+      await tgt.query(`
+        DO $$
+        BEGIN
+          ALTER TABLE sa.transactions DROP CONSTRAINT IF EXISTS transactions_type_check;
+          ALTER TABLE sa.transactions ADD CONSTRAINT transactions_type_check
+            CHECK (type IN (
+              'add', 'remove', 'adjust', 'incoming', 'return',
+              'shopify_sale', 'shopify_reversal',
+              'formula_ready_used', 'formula_ready_restored',
+              'tech_transfer_out', 'tech_transfer_in',
+              'tech_remove',
+              'tech_return_from_tech', 'tech_return_to_main',
+              'tech_return_input',
+              'transfer_out', 'transfer_cancel_return'
+            ));
+        END$$;
+      `);
+      console.log('[target] transactions CHECK extended with transfer types (FR-XFER-9).');
+    }
+
     // 6. Reconciliation (source reads stay inside the frozen snapshot txn)
     const allPass = await reconcile(srcQ, tgtQ);
 

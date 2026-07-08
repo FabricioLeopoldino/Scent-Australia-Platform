@@ -21,7 +21,7 @@ a module picker, and cross-system fragrance transfers.
 | 3a | SM routers mounted at /api/sm (auth swap, clean schema) | ✅ done (2026-07-08) — alg:none attack dead |
 | 3b | SM hardening (errors, uploads gate, CORS) | ✅ done (2026-07-09) |
 | 3c | SM frontend under /sm/* + flow regression | ✅ done (2026-07-09) — 20/20 green |
-| 4 | Cross-system transfers | — |
+| 4 | Cross-system transfers (links, 2-step, CHECK migration) | ✅ done (2026-07-09) — 17/17 green |
 | 5 | Shopify wiring | — |
 | 6–8 | Rehearsal → cutover → post-cutover | — |
 

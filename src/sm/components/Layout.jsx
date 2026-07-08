@@ -27,6 +27,7 @@ const NAV_SECTIONS = [
   ]},
   { header: 'OPERATIONS', items: [
     { path: '/barcode', label: 'Barcode Scanner', icon: ScanBarcode, roles: ['root','admin','user'] },
+    { path: '/transfers-in', label: 'Incoming Transfers', icon: Send, roles: ['root','admin','user'] },
     { path: '/incoming-orders', label: 'Incoming Orders', icon: Truck, roles: ['root','admin','user'] },
     { path: '/external-processing', label: 'External Processing', icon: Send, roles: ['root','admin','user'] },
     { path: '/suppliers', label: 'Suppliers', icon: Building2, roles: ['root','admin','user'] },
