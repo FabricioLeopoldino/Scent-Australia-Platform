@@ -1,4 +1,5 @@
 const express = require('express')
+const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query, withTransaction } = require('../db')
 const { auth, auditLog } = require('../auth')
@@ -219,7 +220,7 @@ router.post('/reservations/check-displacement', auth, async (req, res) => {
     }
 
     res.json({ priority, displacements, any_displacement: displacements.length > 0 })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/production-orders', auth, async (req, res) => {
@@ -244,7 +245,7 @@ router.get('/production-orders', auth, async (req, res) => {
       order.lines = lines.rows
     }
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // In-production quantities for MUSE finished goods — per master + fragrance.
@@ -261,7 +262,7 @@ router.get('/muse/in-production', auth, async (req, res) => {
        GROUP BY m.id, pol.fragrance_id`
     )
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/production-orders/:id', auth, async (req, res) => {
@@ -295,7 +296,7 @@ router.get('/production-orders/:id', auth, async (req, res) => {
     )
     order.external_processing = ep.rows
     res.json(order)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/production-orders', auth, async (req, res) => {
@@ -371,7 +372,7 @@ router.post('/production-orders', auth, async (req, res) => {
     res.status(201).json({ ...order, id: order.id, order_number: orderNumber, lines: linesRes.rows, client_name: clientRow?.name || null })
   } catch (e) {
     console.error(e)
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: sanitizeError(e) })
   }
 })
 
@@ -457,7 +458,7 @@ router.put('/production-orders/:id', auth, async (req, res) => {
     res.json({ ...cur.rows[0], client_id: client_id || null, order_type: order_type || 'STANDARD', due_date: due_date || null, notes: notes || null, lines: linesRes.rows, client_name: clientRow?.name || null })
   } catch (e) {
     console.error(e)
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: sanitizeError(e) })
   }
 })
 
@@ -511,7 +512,7 @@ router.put('/production-orders/:id/status', auth, async (req, res) => {
     const orderRow = await query(`SELECT order_number FROM production_orders WHERE id = $1`, [req.params.id])
     await auditLog(req.user.id, 'production_order_status_changed', 'production_order', parseInt(req.params.id), orderRow.rows[0]?.order_number, { status })
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // ?mode=cancel → soft-cancel (status=cancelled, stays visible in filter)
@@ -538,7 +539,7 @@ router.delete('/production-orders/:id', auth, async (req, res) => {
       await auditLog(userId, 'production_order_cancelled', 'production_order', parseInt(req.params.id), po.rows[0].order_number, {})
       res.json({ success: true, mode: 'cancelled' })
     }
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // ── External Processing ──────────────────────────────────────────────────────
@@ -575,7 +576,7 @@ router.post('/external-processing', auth, async (req, res) => {
     }
     await auditLog(req.user.id, 'external_processing_created', 'external_processing', result.rows[0].id, product_name, { processing_type, qty_sent })
     res.status(201).json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.put('/external-processing/:id/return', auth, async (req, res) => {
@@ -705,7 +706,7 @@ router.put('/external-processing/:id/return', auth, async (req, res) => {
 
     await auditLog(req.user.id, 'external_processing_returned', 'external_processing', item.id, item.product_name, { qty_returned: qtyReturned, newStatus })
     res.json({ success: true, status: newStatus, label_id: labelId })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.put('/external-processing/:id/mark-sent', auth, async (req, res) => {
@@ -717,7 +718,7 @@ router.put('/external-processing/:id/mark-sent', auth, async (req, res) => {
       [parseFloat(qty_sent), req.params.id]
     )
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.put('/external-processing/:id/close', auth, async (req, res) => {
@@ -728,7 +729,7 @@ router.put('/external-processing/:id/close', auth, async (req, res) => {
     )
     await auditLog(req.user.id, 'external_processing_closed', 'external_processing', parseInt(req.params.id), null, {})
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 module.exports = router

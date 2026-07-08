@@ -1,7 +1,8 @@
 const express = require('express')
+const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query } = require('../db')
-const { auth, requireRole, auditLog } = require('../auth')
+const { auth, requireRole, auditLog, requireUploads } = require('../auth')
 
 router.get('/products', auth, async (req, res) => {
   try {
@@ -34,7 +35,7 @@ router.get('/products', auth, async (req, res) => {
     if (has_attachments === '1') q += ` AND EXISTS (SELECT 1 FROM product_attachments WHERE product_id = p.id)`
     q += ` ORDER BY p.category, p.name`
     res.json((await query(q, params)).rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/products/:id', auth, async (req, res) => {
@@ -42,7 +43,7 @@ router.get('/products/:id', auth, async (req, res) => {
     const result = await query(`SELECT p.*, s.name as supplier_name FROM products p LEFT JOIN suppliers s ON p.supplier_id = s.id WHERE p.id = $1`, [req.params.id])
     if (!result.rows[0]) return res.status(404).json({ error: 'Not found' })
     res.json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/products', auth, async (req, res) => {
@@ -61,7 +62,7 @@ router.post('/products', auth, async (req, res) => {
     res.status(201).json(result.rows[0])
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ error: 'Product code already exists' })
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: sanitizeError(e) })
   }
 })
 
@@ -76,7 +77,7 @@ router.put('/products/:id', auth, async (req, res) => {
     res.json(result.rows[0])
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ error: 'Product code already exists' })
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: sanitizeError(e) })
   }
 })
 
@@ -85,15 +86,15 @@ router.patch('/products/:id/bin-location', auth, async (req, res) => {
     const result = await query(`UPDATE products SET bin_location = $1 WHERE id = $2 RETURNING *`, [req.body.bin_location || null, req.params.id])
     if (!result.rows[0]) return res.status(404).json({ error: 'Not found' })
     res.json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.patch('/products/:id/image', auth, async (req, res) => {
+router.patch('/products/:id/image', auth, requireUploads, async (req, res) => {
   try {
     const result = await query(`UPDATE products SET image_data = $1 WHERE id = $2 RETURNING id, name, image_data`, [req.body.image_data || null, req.params.id])
     if (!result.rows[0]) return res.status(404).json({ error: 'Not found' })
     res.json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.put('/products/:id/location', auth, async (req, res) => {
@@ -102,7 +103,7 @@ router.put('/products/:id/location', auth, async (req, res) => {
     if (!result.rows[0]) return res.status(404).json({ error: 'Not found' })
     await auditLog(req.user.id, 'product_location_updated', 'product', parseInt(req.params.id), result.rows[0].name, { bin_location: req.body.bin_location })
     res.json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // Soft archive by default — keeps history (transactions, reservations) intact.
@@ -131,7 +132,7 @@ router.delete('/products/:id', auth, async (req, res) => {
     await query(`UPDATE products SET archived = true, updated_at = NOW() WHERE id = $1`, [req.params.id])
     await auditLog(req.query.userId || req.user.id, 'product_archived', 'product', parseInt(req.params.id), prod.rows[0].name, {})
     res.json({ success: true, mode: 'archive' })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // Restore an archived product back to active.
@@ -142,7 +143,7 @@ router.post('/products/:id/restore', auth, async (req, res) => {
     await query(`UPDATE products SET archived = false, updated_at = NOW() WHERE id = $1`, [req.params.id])
     await auditLog(req.user.id, 'product_restored', 'product', parseInt(req.params.id), prod.rows[0].name, {})
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // Transactions
@@ -153,7 +154,7 @@ router.get('/products/:id/transactions', auth, async (req, res) => {
       [req.params.id]
     )
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // Fragrance strength log
@@ -164,7 +165,7 @@ router.get('/fragrances/:id/strength-log', auth, async (req, res) => {
       [req.params.id]
     )
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/fragrances/:id/strength-log', auth, async (req, res) => {
@@ -178,7 +179,7 @@ router.post('/fragrances/:id/strength-log', auth, async (req, res) => {
       [req.params.id, fragrance.rows[0].name, production_order_id || null, standard_pct || 25, actual_pct_used, was_adjusted || false, adjustment_reason || null, batch_reference || null, date_used || new Date().toISOString().split('T')[0], req.user.id]
     )
     res.status(201).json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // Attachments
@@ -191,10 +192,10 @@ router.get('/products/:id/attachments', auth, async (req, res) => {
       [req.params.id]
     )
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.post('/products/:id/attachments', auth, async (req, res) => {
+router.post('/products/:id/attachments', auth, requireUploads, async (req, res) => {
   try {
     const { filename, content_type, attachment_type, version, expires_at, file_data, notes } = req.body
     if (!filename || !content_type || !file_data) return res.status(400).json({ error: 'filename, content_type, file_data required' })
@@ -209,7 +210,7 @@ router.post('/products/:id/attachments', auth, async (req, res) => {
     )
     await auditLog(req.user.id, 'attachment_uploaded', 'product', parseInt(req.params.id), filename, { attachment_type, version })
     res.status(201).json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/products/:id/attachments/:attachId/download', auth, async (req, res) => {
@@ -222,7 +223,7 @@ router.get('/products/:id/attachments/:attachId/download', auth, async (req, res
     res.setHeader('Content-Disposition', `attachment; filename="${att.filename}"`)
     res.setHeader('Content-Length', buf.length)
     res.send(buf)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/products/:id/attachments/:attachId/view', auth, async (req, res) => {
@@ -236,7 +237,7 @@ router.get('/products/:id/attachments/:attachId/view', auth, async (req, res) =>
     res.setHeader('Content-Length', buf.length)
     res.setHeader('Cache-Control', 'private, max-age=300')
     res.send(buf)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.delete('/products/:id/attachments/:attachId', auth, requireRole('root', 'admin'), async (req, res) => {
@@ -245,7 +246,7 @@ router.delete('/products/:id/attachments/:attachId', auth, requireRole('root', '
     if (!result.rows[0]) return res.status(404).json({ error: 'Not found' })
     await auditLog(req.user.id, 'attachment_deleted', 'product', parseInt(req.params.id), result.rows[0].filename, {})
     res.json({ ok: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // Publish a product to Shopify as a draft (system stays source of truth for stock/price).
@@ -297,7 +298,7 @@ router.post('/products/:id/shopify/publish', auth, async (req, res) => {
     )
     await auditLog(req.user.id, 'product_published_to_shopify', 'product', p.id, p.name, { shopify_product_id: data.product.id })
     res.json(updated.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // Barcode lookup
@@ -311,7 +312,7 @@ router.get('/barcode/:code', auth, async (req, res) => {
       query(`SELECT DISTINCT pord.id, pord.order_number, pord.status, pord.due_date, poc.quantity_required, poc.quantity_debited, poc.id as component_id, poc.unit FROM production_order_components poc JOIN production_orders pord ON poc.production_order_id = pord.id WHERE poc.product_id = $1 AND pord.status IN ('draft','confirmed','queued','in_production') AND poc.quantity_debited < poc.quantity_required ORDER BY pord.due_date ASC NULLS LAST LIMIT 10`, [product.id])
     ])
     res.json({ ...product, open_pos: openPOs.rows, picking_orders: pickingOrders.rows })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 module.exports = router

@@ -1,0 +1,1032 @@
+/* SM stylesheet — auto-scoped under .sm-scope (Phase 3c) */
+.sm-scope { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* Show element only in one theme — used for swapping logos / images between themes */
+html.dark .sm-scope .theme-light-only { display: none !important; }
+html:not(.dark) .sm-scope .theme-dark-only { display: none !important; }
+
+/* ─── DESIGN SYSTEM TOKENS ─────────────────
+.sm-scope New tokens follow the Scent Stock Manager spec. Legacy aliases (--surface,
+   --text, --text-dim, --blue*) are kept so existing inline styles keep working
+   while we migrate page by page. */
+.sm-scope {
+  /* New spec tokens — warm espresso dark (2026-06-16) */
+  --bg:             #16110f;   /* deep espresso — page background */
+  --card-bg:        #1f1a16;   /* dark chocolate — card / panel */
+  --border:         rgba(255, 235, 220, 0.08);   /* warm-tinted alpha border */
+  --text-primary:   #e8eaf2;
+  --text-secondary: #b0957f;   /* warm taupe — secondary copy */
+  --text-muted:     rgba(232, 234, 242, 0.45);
+  --surface-2:      rgba(255, 235, 220, 0.04);   /* warm-tinted surface wash */
+  --accent:         #b1545a;
+  --accent-soft:    rgba(177, 84, 90, 0.16);   /* For active-state tints (sidebar etc) */
+  --accent-text:    #d98a8f;                    /* Deeper-readable accent for foreground use */
+  --accent-glow:    rgba(177, 84, 90, 0.6);    /* Used in text-shadow / box-shadow glows */
+  --shadow-glow:    0 0 20px rgba(177, 84, 90, 0.18);
+
+  /* Legacy aliases (still referenced by older inline styles) */
+  --blue:        #2563eb;
+  --blue-light:  #60a5fa;
+  --blue-glow:   rgba(177,84,90,0.2);
+  --surface:     var(--surface-2);
+  --border-h:    rgba(255,235,220,0.15);   /* warm-tinted hover border */
+  --text:        var(--text-primary);
+  --text-dim:    rgba(232,234,242,0.3);
+  --shadow-sm:   0 2px 8px rgba(0,0,0,0.45);
+  --shadow-md:   0 6px 24px rgba(0,0,0,0.55);
+}
+
+/* Light mode — adopts the MUSE brand palette (2026-06-04).
+.sm-scope Wine Stain (#612428) replaces the indigo accent. Parchment (#f2f0e6) as background,
+   Cloud Dancer-ish whites on cards, Deep Shadow (#1b0905) for body text, Olive Leaf for
+.sm-scope success, .sm-scope Warmed Clay for muted/secondary copy. The intent: light mode = editorial,
+   warm, MUSE-branded; dark mode = operational/technical. Toggle 🌙/🌞 in the sidebar. */
+html:not(.dark) {
+  --bg:             #f2f0e6;             /* Parchment — page background */
+  --card-bg:        #fbf9f1;             /* Cloud Dancer-ish — slightly lighter cards */
+  --border:         rgba(97, 36, 40, 0.14);     /* Wine Stain alpha */
+  --text-primary:   #1b0905;             /* Deep Shadow — body text */
+  --text-secondary: #5a3a36;             /* Wine Stain × Shadow blend */
+  --text-muted:     rgba(27, 9, 5, 0.45);
+  --surface-2:      rgba(97, 36, 40, 0.04);    /* Tinted wash for inputs/hover */
+  --accent:         #612428;             /* Wine Stain — the brand fill */
+  --accent-soft:    rgba(97, 36, 40, 0.12);    /* Wine Stain tint for active backgrounds */
+  --accent-text:    #4d1c20;             /* Deeper wine — readable text + glow legible */
+  --accent-glow:    rgba(97, 36, 40, 0.55);    /* Wine glow for text-shadow / box-shadow */
+  --shadow-glow:    0 0 22px rgba(97, 36, 40, 0.16);   /* Card / button ambient brand glow */
+
+  --surface:     var(--surface-2);
+  --border-h:    rgba(97, 36, 40, 0.28);
+  --text:        var(--text-primary);
+  --text-dim:    rgba(27, 9, 5, 0.30);
+  --shadow-sm:   0 2px 10px rgba(97, 36, 40, 0.08);
+  --shadow-md:   0 8px 28px rgba(97, 36, 40, 0.14);
+
+  /* MUSE palette extras — available to inline styles via var() */
+  --muse-wine:        #612428;   /* Wine Stain */
+  --muse-parchment:   #f2f0e6;   /* Parchment */
+  --muse-clay:        #8a5e52;   /* Warmed Clay */
+  --muse-olive:       #6b784d;   /* Olive Leaf */
+  --muse-shadow:      #1b0905;   /* Deep Shadow */
+  --muse-gold:        #c8a85e;   /* Metallic Gold (digital approx) */
+}
+
+/* Dark mode mirrors of those tokens so component code can reference them safely. */
+.sm-scope :root.dark, .sm-scope {
+  --muse-wine:        #b1545a;   /* lighter wine for legibility on espresso */
+  --muse-parchment:   #271e1a;   /* warm espresso mid-tone */
+  --muse-clay:        #b88a7d;
+  --muse-olive:       #9bb077;
+  --muse-shadow:      #ede9e4;
+  --muse-gold:        #d4b574;
+}
+
+.sm-scope {
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Subtle grid texture (tones down automatically in light mode) */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+.sm-scope linear-gradient(rgba(255, .sm-scope 255, .sm-scope 255, .sm-scope 0.013) 1px, .sm-scope transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.013) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+  z-index: 0;
+}
+html:not(.dark) body::before {
+  background-image:
+.sm-scope linear-gradient(rgba(28, .sm-scope 20, .sm-scope 16, .sm-scope 0.025) 1px, .sm-scope transparent 1px),
+    linear-gradient(90deg, rgba(28,20,16,0.025) 1px, transparent 1px);
+}
+
+.sm-scope { min-height: 100vh; position: relative; z-index: 1; }
+
+.sm-scope input, .sm-scope select, .sm-scope textarea, .sm-scope button { font-family: inherit; }
+
+/* ─── SCROLLBAR ───────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(177,84,90,0.25); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(177,84,90,0.45); }
+
+/* ─── BUTTONS (Scent Stock Manager spec) ───── */
+/* Editorial PREMIUM button — one standardized look across every page.
+   Wine gradient (top→deep) + a thin GOLD inset highlight + soft brand shadow +
+   brightness-on-hover and a subtle press. Reads "refined/elevated" (the tasteful
+   part of an Apple button) while staying matte and on-brand in BOTH themes.
+   Variants: primary · secondary · danger · ghost.  Sizes: (default) · sm · lg. */
+.sm-scope .btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 9px 18px; border-radius: 9px;
+  font-size: 13px; font-weight: 600; font-family: 'Inter', sans-serif; letter-spacing: 0.01em;
+  cursor: pointer; border: 1px solid transparent; white-space: nowrap;
+  transition: filter .2s ease, box-shadow .2s ease, transform .12s ease, background .2s ease, border-color .2s ease, color .2s ease;
+}
+.sm-scope .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.sm-scope .btn:active:not(:disabled) { transform: translateY(0.5px) scale(0.992); }
+.sm-scope .btn-sm { padding: 6px 12px; font-size: 12px; border-radius: 8px; gap: 6px; }
+.sm-scope .btn-lg { padding: 12px 22px; font-size: 14px; border-radius: 10px; }
+
+/* PRIMARY — dark (default): a slightly lifted wine so it pops on near-black */
+.sm-scope .btn-primary {
+  background: linear-gradient(180deg, #8a363d 0%, #6a262c 100%);
+  color: #fbeede;
+  border-color: rgba(0, 0, 0, 0.35);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 4px 14px rgba(177,84,90,0.2), inset 0 1px 0 rgba(212,181,116,0.22);
+}
+.sm-scope .btn-primary:hover:not(:disabled) {
+  filter: brightness(1.08); transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.45), 0 9px 22px rgba(177,84,90,0.28), inset 0 1px 0 rgba(212,181,116,0.3);
+}
+/* PRIMARY — light (MUSE): deep wine gradient, gold inset, soft brand shadow */
+html:not(.dark) .btn-primary {
+  background: linear-gradient(180deg, #6e2a2f 0%, #571f23 100%);
+  color: #f4ead6;
+  border-color: rgba(40, 12, 14, 0.5);
+  box-shadow: 0 1px 2px rgba(27,9,5,0.18), 0 4px 12px rgba(97,36,40,0.22), inset 0 1px 0 rgba(200,168,94,0.25);
+}
+html:not(.dark) .btn-primary:hover:not(:disabled) {
+  filter: brightness(1.06); transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(27,9,5,0.2), 0 8px 20px rgba(97,36,40,0.3), inset 0 1px 0 rgba(200,168,94,0.32);
+}
+
+/* SECONDARY — quiet outline */
+.sm-scope .btn-secondary { background: var(--surface-2); border-color: var(--border); color: var(--text-secondary); }
+.sm-scope .btn-secondary:hover:not(:disabled) { border-color: var(--border-h); color: var(--text-primary); }
+html:not(.dark) .sm-scope .btn-secondary { background: transparent; }
+html:not(.dark) .sm-scope .btn-secondary:hover:not(:disabled) { background: rgba(97, 36, 40, 0.06); }
+
+/* GHOST — text only, subtle hover wash */
+.sm-scope .btn-ghost { background: transparent; border-color: transparent; color: var(--text-secondary); }
+.sm-scope .btn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text-primary); }
+
+/* DANGER */
+.sm-scope .btn-danger { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3); color: #f87171; }
+.sm-scope .btn-danger:hover:not(:disabled) { background: rgba(239, 68, 68, 0.2); }
+html:not(.dark) .sm-scope .btn-danger { background: transparent; border-color: #b1545a; color: #a01b1b; }
+html:not(.dark) .sm-scope .btn-danger:hover:not(:disabled) { background: rgba(160, 27, 27, 0.08); }
+
+/* GHOST row-action icon button — quiet until hover (Apple/Linear). Used for the
+   per-row edit/print/attachments/history/delete actions across every table.
+   Transparent by default; soft wine wash + wine icon on hover; danger→red. */
+.sm-scope .icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; padding: 0; flex-shrink: 0;
+  background: transparent; border: 1px solid transparent; border-radius: 8px;
+  color: var(--text-muted); cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.sm-scope .icon-btn:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent-text); }
+.sm-scope .icon-btn:active:not(:disabled) { transform: translateY(0.5px); }
+.sm-scope .icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.sm-scope .icon-btn.danger:hover:not(:disabled) { background: rgba(192,57,43,0.12); color: #c0392b; }
+html.dark .sm-scope .icon-btn.danger:hover:not(:disabled) { background: rgba(245,131,124,0.14); color: #f5837c; }
+/* text-action variant (e.g. "Adjust") — same ghost, auto width with a label */
+.sm-scope .icon-btn-text { width: auto; padding: 0 11px; gap: 6px; font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 600; }
+
+/* Scrollbar — Wine Stain accent in light mode */
+html:not(.dark) .sm-scope ::-webkit-scrollbar-thumb { background: rgba(97, 36, 40, 0.25); }
+html:not(.dark) .sm-scope ::-webkit-scrollbar-thumb:hover { background: rgba(97, 36, 40, 0.45); }
+
+/* ─── CARD ────────────────────────────────── */
+.sm-scope .card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  position: relative;
+  overflow: visible;
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+.sm-scope .card:hover {
+  border-color: var(--border-h);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+/* Top shimmer line — adapts per theme (wine in light, soft-white in dark) */
+.sm-scope .card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 8%; right: 8%; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.07), transparent);
+  border-radius: 50%; pointer-events: none;
+}
+html:not(.dark) .card {
+  box-shadow: 0 2px 12px rgba(27, 9, 5, 0.06);
+}
+html:not(.dark) .card:hover {
+  box-shadow: 0 6px 20px rgba(27, 9, 5, 0.1), 0 0 24px rgba(97, 36, 40, 0.06);
+  border-color: rgba(97, 36, 40, 0.28);
+}
+html:not(.dark) .card::before {
+  background: linear-gradient(90deg, transparent, rgba(97, 36, 40, 0.35), transparent);
+}
+
+/* ─── INPUTS ──────────────────────────────── */
+.sm-scope .inp-focus:focus {
+  outline: none;
+  border-color: rgba(177,84,90,0.5) !important;
+  box-shadow: 0 0 0 3px rgba(177,84,90,0.12);
+}
+html:not(.dark) .inp-focus:focus {
+  border-color: rgba(97, 36, 40, 0.55) !important;
+  box-shadow: 0 0 0 3px rgba(97, 36, 40, 0.12);
+}
+
+/* ─── SIDEBAR ACTIVE GLOW ─────────────────── */
+.sm-scope .nav-active-glow {
+  text-shadow: 0 0 10px rgba(177,84,90,0.9), 0 0 20px rgba(177,84,90,0.4) !important;
+}
+/* Light mode (MUSE) — Wine Stain glow with darker readable text.
+   SA_ScentSystem trick: use deeper wine (#4d1c20) for the text so it's legible
+   on parchment, and the GLOW uses the standard wine (#612428) — the contrast
+   between the two creates the "alive" feel that pure-flat colors lack. */
+html:not(.dark) .nav-active-glow {
+  color: #4d1c20 !important;
+  text-shadow: none !important;   /* no glow on parchment — left border carries active state */
+}
+
+/* ─── ANIMATIONS ──────────────────────────── */
+@keyframes slideIn {
+.sm-scope from { opacity: 0; transform: translateX(20px); }
+.sm-scope to { opacity: 1; transform: translateX(0); }
+}
+@keyframes fadeIn {
+.sm-scope from { opacity: 0; transform: translateY(6px); }
+.sm-scope to { opacity: 1; transform: translateY(0); }
+}
+@keyframes dotDrift {
+  0%   { transform: translate(0,0); }
+  25%  { transform: translate(-14px,-14px); }
+  50%  { transform: translate(0,-28px); }
+  75%  { transform: translate(14px,-14px); }
+  100% { transform: translate(0,0); }
+}
+@keyframes pulse-dot {
+  0%,100% { opacity: 0.4; }
+  50%      { opacity: 0.8; }
+}
+/* Neon glow used when navigating into the BOM page from a master drawer —
+   shows which master card corresponds to the one the user came from. */
+@keyframes bom-glow {
+  0%   { box-shadow: 0 0 0 0 rgba(96,165,250,0); border-color: rgba(96,165,250,0.0); }
+  20%  { box-shadow: 0 0 22px 6px rgba(96,165,250,0.65); border-color: rgba(96,165,250,1); }
+  60%  { box-shadow: 0 0 18px 4px rgba(96,165,250,0.5); border-color: rgba(96,165,250,0.9); }
+  100% { box-shadow: 0 0 0 0 rgba(96,165,250,0); border-color: rgba(96,165,250,0.4); }
+}
+.sm-scope .bom-card-glow {
+  animation: bom-glow 3.5s ease-out 1;
+}
+
+/* ─── MODAL (Scent Stock Manager spec) ─────── */
+.sm-scope .modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  /* NOTE: NO backdrop-filter on overlay either — any ancestor with
+     backdrop-filter creates a containing block, which would break
+     position:fixed dropdowns rendered from inside the modal. */
+  padding: 20px;
+}
+.sm-scope .modal {
+  background: rgba(16, 11, 9, 0.98);   /* warm espresso modal bg */
+  /* NOTE: deliberately NO backdrop-filter here — it creates a containing block
+     for position:fixed descendants and breaks SearchSelect dropdowns that
+     escape via fixed positioning. The overlay's blur is enough visually. */
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  max-width: 620px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255,255,255,0.06);
+  position: relative;
+  z-index: 10000;
+  animation: fadeIn 0.18s ease;
+}
+.sm-scope .modal-sm { max-width: 420px; }
+.sm-scope .modal-lg { max-width: 720px; }
+.sm-scope .modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 24px 32px;
+  border-bottom: 1px solid var(--border);
+}
+.sm-scope .modal-header h2 {
+  font-size: 18px;
+  font-weight: 700;
+  font-family: 'Playfair Display', serif;
+  margin: 0 0 3px;
+  color: var(--text-primary);
+}
+.sm-scope .modal-header p {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+}
+.sm-scope .modal-close {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  cursor: pointer;
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 8px;
+  font-size: 18px; line-height: 1;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+.sm-scope .modal-close:hover {
+  background: rgba(255,255,255,0.1);
+  color: var(--text-primary);
+}
+.sm-scope .modal form { padding: 24px 32px; }
+.sm-scope .modal-body { padding: 24px 32px; }
+.sm-scope .modal-footer {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  padding: 20px 32px;
+  border-top: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 0 0 20px 20px;
+}
+
+/* Light-mode (MUSE) modal overrides — Cloud Dancer card with Wine glow accents */
+html:not(.dark) .modal-overlay { background: rgba(27, 9, 5, 0.35); } /* Deep Shadow tint */
+html:not(.dark) .modal {
+  background: #fbf9f1;
+  border: 1px solid rgba(97, 36, 40, 0.18);
+  /* Layered shadow + inset highlight + ambient wine glow — gives the modal depth
+     and brand-presence without going dark. */
+  box-shadow:
+.sm-scope 0 24px 80px rgba(27, .sm-scope 9, .sm-scope 5, .sm-scope 0.16),
+.sm-scope 0 0 60px rgba(97, .sm-scope 36, .sm-scope 40, .sm-scope 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  position: relative;
+  overflow: hidden;
+}
+/* Top-edge wine shimmer line — SA_ScentSystem trick: 1px gradient at the top
+   sells the illusion that light is hitting the card from above. */
+html:not(.dark) .modal::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 10%; right: 10%; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(97, 36, 40, 0.45), transparent);
+  pointer-events: none;
+  z-index: 2;
+}
+/* Radial wine glow in the corner — subtle, brand-y, not noisy */
+html:not(.dark) .modal::after {
+  content: '';
+  position: absolute;
+  top: -50px; right: -50px;
+  width: 200px; height: 200px;
+  background: radial-gradient(circle, rgba(97, 36, 40, 0.08) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+/* Make sure modal content sits above the ::after decoration */
+html:not(.dark) .sm-scope .modal > * { position: relative; z-index: 1; }
+html:not(.dark) .sm-scope .modal-header { border-bottom-color: rgba(97, 36, 40, 0.14); }
+html:not(.dark) .sm-scope .modal-header h2 { color: #1b0905; }
+html:not(.dark) .sm-scope .modal-header p { color: #5a3a36; }
+html:not(.dark) .modal-close {
+  background: rgba(97, 36, 40, 0.06);
+  border-color: rgba(97, 36, 40, 0.18);
+  color: #5a3a36;
+}
+html:not(.dark) .modal-close:hover {
+  background: rgba(97, 36, 40, 0.12);
+  color: #1b0905;
+}
+html:not(.dark) .modal-footer {
+  background: rgba(97, 36, 40, 0.04);
+  border-top-color: rgba(97, 36, 40, 0.12);
+}
+
+/* ─── FORM UTILITIES (Scent Stock Manager spec) ─── */
+.sm-scope .form-group { margin-bottom: 16px; }
+.sm-scope .form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+.sm-scope .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.sm-scope .form-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+.sm-scope .form-col-2 { grid-column: 1 / -1; }
+
+.sm-scope .form-group label,
+.sm-scope .label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sm-scope .input {
+  width: 100%;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: 'Inter', sans-serif;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.sm-scope .input:focus {
+  border-color: rgba(177,84,90,0.5);
+  box-shadow: 0 0 0 3px rgba(177,84,90,0.1);
+}
+.sm-scope .input::placeholder { color: var(--text-muted); }
+
+/* Light-mode (MUSE) — inputs sit on parchment, wine focus ring with glow */
+html:not(.dark) .input {
+  background: #ffffff;
+  border-color: rgba(97, 36, 40, 0.18);
+  color: #1b0905;
+  box-shadow: inset 0 1px 2px rgba(27, 9, 5, 0.04);
+}
+html:not(.dark) .input:focus {
+  border-color: rgba(97, 36, 40, 0.55);
+  box-shadow:
+.sm-scope 0 0 0 3px rgba(97, .sm-scope 36, .sm-scope 40, .sm-scope 0.12),
+    0 0 18px rgba(97, 36, 40, 0.12);
+}
+html:not(.dark) .sm-scope .input::placeholder { color: rgba(27, 9, 5, 0.4); }
+html:not(.dark) .form-group label,
+html:not(.dark) .sm-scope .label { color: #5a3a36; }
+
+/* ─── NATIVE <select> DROPDOWN FIX ────────────
+   The popup list of <select> uses OS-level styling by default — that's why every
+   modal showed a white dropdown on dark mode. color-scheme tells the browser to
+   render form controls in dark mode; option/optgroup get explicit colors so the
+   popup matches the rest of the UI. */
+.sm-scope select {
+  color-scheme: dark;
+}
+.sm-scope select option,
+.sm-scope select optgroup {
+  background: #1f1a16;   /* espresso dropdown bg */
+  color: #e8eaf2;
+}
+html:not(.dark) .sm-scope select { color-scheme: light; }
+html:not(.dark) select option,
+html:not(.dark) select optgroup {
+  background: #fbf9f1;     /* Cloud Dancer */
+  color: #1b0905;          /* Deep Shadow */
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIGHT MODE — INLINE STYLE OVERRIDES (MUSE palette)
+   ═══════════════════════════════════════════════════════════════════════════
+   Most pages use hard-coded color strings inline in JSX (legacy from before the
+   design system existed). Migrating all of them to CSS vars would touch 50+
+   files. Instead, this sheet uses [style*="..."] attribute selectors with
+   !important to re-skin inline styles in light mode without touching components.
+
+   Rule of thumb: any inline color value used in 5+ places gets a remap here.
+   It is OK that a selector matches background AND border-color on the same
+   element — both get repainted to MUSE-equivalent values, no harm done.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Dark page / card backgrounds → Parchment / Cloud Dancer ──────────────── */
+/* NOTE: browsers normalize inline hex to rgb() form, so we match BOTH formats.
+   `#13132b` becomes `rgb(19, 19, 43)` in the live DOM attribute, etc. */
+html:not(.dark) [style*="rgb(19, 19, 43)"],
+html:not(.dark) [style*="rgb(26, 28, 46)"],
+html:not(.dark) [style*="rgb(30, 30, 58)"],
+html:not(.dark) [style*="rgb(30, 32, 53)"],
+html:not(.dark) [style*="rgb(15, 17, 23)"] {
+  background-color: #fbf9f1 !important;     /* Cloud Dancer for cards/modals */
+}
+html:not(.dark) [style*="rgb(14, 14, 26)"],
+html:not(.dark) [style*="rgb(7, 7, 13)"] {
+  background-color: #f2f0e6 !important;     /* Parchment for page-level bgs */
+}
+
+/* ── White-alpha surfaces (cards, hover states, dividers) ─────────────────── */
+html:not(.dark) [style*="rgba(255,255,255,0.04)"],
+html:not(.dark) [style*="rgba(255, 255, 255, 0.04)"],
+html:not(.dark) [style*="rgba(255,255,255,0.05)"],
+html:not(.dark) [style*="rgba(255, 255, 255, 0.05)"],
+html:not(.dark) [style*="rgba(255,255,255,0.06)"],
+html:not(.dark) [style*="rgba(255, 255, 255, 0.06)"] {
+  background-color: rgba(97, 36, 40, 0.04) !important;       /* Wine wash */
+  border-color: rgba(97, 36, 40, 0.18) !important;
+}
+html:not(.dark) [style*="rgba(255,255,255,0.08)"],
+html:not(.dark) [style*="rgba(255, 255, 255, 0.08)"],
+html:not(.dark) [style*="rgba(255,255,255,0.1)"],
+html:not(.dark) [style*="rgba(255, 255, 255, 0.1)"],
+html:not(.dark) [style*="rgba(255,255,255,0.12)"],
+html:not(.dark) [style*="rgba(255, 255, 255, 0.12)"] {
+  border-color: rgba(97, 36, 40, 0.22) !important;
+}
+
+/* ── Light text colors → Deep Shadow / muted browns ───────────────────────── */
+/* Browser normalizes #e8eaf2 → rgb(232, 234, 242). Match both forms. */
+html:not(.dark) [style*="rgb(232, 234, 242)"]:not([style*="background"]) {
+  color: rgba(27, 9, 5, 0.85) !important;
+}
+/* For elements where rgb(232,234,242) IS the background (rare), repaint to cream */
+html:not(.dark) [style*="background: rgb(232, 234, 242)"],
+html:not(.dark) [style*="background:rgb(232, 234, 242)"] {
+  background-color: #fbf9f1 !important;
+}
+/* rgba(232, 234, 242, X) at various alphas — all dim/muted text. Map by alpha tier. */
+html:not(.dark) [style*="rgba(232, 234, 242, 0.4)"],
+html:not(.dark) [style*="rgba(232, 234, 242, 0.45)"],
+html:not(.dark) [style*="rgba(232, 234, 242, 0.5)"],
+html:not(.dark) [style*="rgba(232, 234, 242, 0.55)"] {
+  color: rgba(27, 9, 5, 0.6) !important;
+}
+html:not(.dark) [style*="rgba(232, 234, 242, 0.6)"],
+html:not(.dark) [style*="rgba(232, 234, 242, 0.65)"],
+html:not(.dark) [style*="rgba(232, 234, 242, 0.7)"],
+html:not(.dark) [style*="rgba(232, 234, 242, 0.75)"],
+html:not(.dark) [style*="rgba(232, 234, 242, 0.8)"],
+html:not(.dark) [style*="rgba(232, 234, 242, 0.85)"],
+html:not(.dark) [style*="rgba(232, 234, 242, 0.9)"] {
+  color: rgba(27, 9, 5, 0.82) !important;
+}
+html:not(.dark) [style*="rgba(232, 234, 242, 0.2)"],
+html:not(.dark) [style*="rgba(232, 234, 242, 0.25)"],
+html:not(.dark) [style*="rgba(232, 234, 242, 0.3)"],
+html:not(.dark) [style*="rgba(232, 234, 242, 0.35)"] {
+  color: rgba(27, 9, 5, 0.42) !important;
+}
+
+/* ── Input fields (the common "rgba(255,255,255,0.06)" + border "0.12") ───── */
+html:not(.dark) input[type="text"],
+html:not(.dark) input[type="number"],
+html:not(.dark) input[type="email"],
+html:not(.dark) input[type="password"],
+html:not(.dark) input[type="date"],
+html:not(.dark) input[type="search"],
+html:not(.dark) input:not([type]),
+html:not(.dark) textarea,
+html:not(.dark) select {
+  background-color: #ffffff !important;
+  color: #1b0905 !important;
+  border-color: rgba(97, 36, 40, 0.22) !important;
+}
+html:not(.dark) input::placeholder,
+html:not(.dark) textarea::placeholder {
+  color: rgba(27, 9, 5, 0.4) !important;
+}
+html:not(.dark) input:focus,
+html:not(.dark) textarea:focus,
+html:not(.dark) select:focus {
+  border-color: rgba(97, 36, 40, 0.55) !important;
+  box-shadow: 0 0 0 3px rgba(97, 36, 40, 0.12) !important;
+  outline: none !important;
+}
+
+/* ── Borders using rgba(255,255,255,...) when used as solid border ────────── */
+html:not(.dark) [style*="border: 1px solid rgba(255,255,255,0.07)"],
+html:not(.dark) [style*="border: 1px solid rgba(255, 255, 255, 0.07)"],
+html:not(.dark) [style*="border: 1px solid rgba(255,255,255,0.08)"],
+html:not(.dark) [style*="border: 1px solid rgba(255, 255, 255, 0.08)"],
+html:not(.dark) [style*="border: 1px solid rgba(255,255,255,0.1)"],
+html:not(.dark) [style*="border: 1px solid rgba(255, 255, 255, 0.1)"],
+html:not(.dark) [style*="border: 1px solid rgba(255,255,255,0.12)"],
+html:not(.dark) [style*="border: 1px solid rgba(255, 255, 255, 0.12)"] {
+  border-color: rgba(97, 36, 40, 0.22) !important;
+}
+
+/* ── Overlays (modal backdrops) — soften pure black → Deep Shadow tint ────── */
+html:not(.dark) [style*="background: rgba(0,0,0,0.65)"],
+html:not(.dark) [style*="background: rgba(0, 0, 0, 0.65)"],
+html:not(.dark) [style*="background: rgba(0,0,0,0.7)"],
+html:not(.dark) [style*="background: rgba(0, 0, 0, 0.7)"],
+html:not(.dark) [style*="background: rgba(0,0,0,0.75)"],
+html:not(.dark) [style*="background: rgba(0, 0, 0, 0.75)"],
+html:not(.dark) [style*="background: rgba(0,0,0,0.85)"],
+html:not(.dark) [style*="background: rgba(0, 0, 0, 0.85)"] {
+  background-color: rgba(27, 9, 5, 0.35) !important;     /* Deep Shadow translucent */
+}
+
+/* ── Accent indigo (#60a5fa / #2563eb / etc) → Wine Stain ──────────────────
+   Used in lots of pages as the "info/primary" color. In light mode they look
+   garish against parchment. Map the most common ones (matching rgb() form
+   since browsers normalize hex into rgb in the live style attribute). */
+html:not(.dark) [style*="color: rgb(96, 165, 250)"]:not([style*="background"]) {
+  color: #612428 !important;                /* Wine Stain */
+}
+html:not(.dark) [style*="background: rgb(37, 99, 235)"],
+html:not(.dark) [style*="background-color: rgb(37, 99, 235)"] {
+  background-color: #612428 !important;
+  color: #f2f0e6 !important;
+}
+
+/* DARK — purge stray inline blues → wine (mirror of the light remap above; the
+   brand is wine in BOTH themes now). Hits "New" buttons (#2563eb bg) and info
+   text/icons (#60a5fa). One lever for every page that still hardcodes blue. */
+html.dark .sm-scope [style*="background: rgb(37, .sm-scope 99, .sm-scope 235)"],
+html.dark .sm-scope [style*="background-color: rgb(37, .sm-scope 99, .sm-scope 235)"] {
+  background-color: #7e2e34 !important;   /* mid-wine, white text stays legible */
+}
+html.dark .sm-scope [style*="color: rgb(96, .sm-scope 165, .sm-scope 250)"]:not([style*="background"]) {
+  color: #d98a8f !important;              /* rose-wine for blue text/icons on dark */
+}
+
+/* ═══ DARK ESPRESSO — inline navy remap (2026-06-16) ══════════════════════════
+   Pages with hardcoded navy bg (#0a0f1e #0f1629 #0f1117 etc) as inline styles are
+   caught here and mapped to the warm espresso palette. Mirrors the light-mode remap
+   technique. The token change above handles CSS-var-using components; this catches
+   leftover inline strings. Browser normalises hex→rgb(), so we match rgb() form. */
+
+/* Deep navies → main espresso bg (#16110f = rgb(22,17,15)) */
+html.dark .sm-scope [style*="background: rgb(10, .sm-scope 15, .sm-scope 30)"],
+html.dark .sm-scope [style*="background-color: rgb(10, .sm-scope 15, .sm-scope 30)"],
+html.dark .sm-scope [style*="background: rgb(7, .sm-scope 7, .sm-scope 13)"],
+html.dark .sm-scope [style*="background-color: rgb(7, .sm-scope 7, .sm-scope 13)"],
+html.dark .sm-scope [style*="background: rgb(10, .sm-scope 10, .sm-scope 20)"],
+html.dark .sm-scope [style*="background-color: rgb(10, .sm-scope 10, .sm-scope 20)"],
+html.dark .sm-scope [style*="background: rgb(13, .sm-scope 16, .sm-scope 28)"],
+html.dark .sm-scope [style*="background-color: rgb(13, .sm-scope 16, .sm-scope 28)"] {
+  background-color: #16110f !important;
+}
+
+/* Mid navies (panels, cards, drawers) → espresso card bg (#1f1a16) */
+html.dark .sm-scope [style*="background: rgb(15, .sm-scope 22, .sm-scope 41)"],
+html.dark .sm-scope [style*="background-color: rgb(15, .sm-scope 22, .sm-scope 41)"],
+html.dark .sm-scope [style*="background: rgb(15, .sm-scope 17, .sm-scope 23)"],
+html.dark .sm-scope [style*="background-color: rgb(15, .sm-scope 17, .sm-scope 23)"],
+html.dark .sm-scope [style*="background: rgb(19, .sm-scope 19, .sm-scope 43)"],
+html.dark .sm-scope [style*="background-color: rgb(19, .sm-scope 19, .sm-scope 43)"],
+html.dark .sm-scope [style*="background: rgb(26, .sm-scope 28, .sm-scope 46)"],
+html.dark .sm-scope [style*="background-color: rgb(26, .sm-scope 28, .sm-scope 46)"],
+html.dark .sm-scope [style*="background: rgb(30, .sm-scope 30, .sm-scope 58)"],
+html.dark .sm-scope [style*="background-color: rgb(30, .sm-scope 30, .sm-scope 58)"],
+html.dark .sm-scope [style*="background: rgb(30, .sm-scope 32, .sm-scope 53)"],
+html.dark .sm-scope [style*="background-color: rgb(30, .sm-scope 32, .sm-scope 53)"],
+html.dark .sm-scope [style*="background: rgb(18, .sm-scope 18, .sm-scope 40)"],
+html.dark .sm-scope [style*="background-color: rgb(18, .sm-scope 18, .sm-scope 40)"],
+html.dark .sm-scope [style*="background: rgb(22, .sm-scope 24, .sm-scope 42)"],
+html.dark .sm-scope [style*="background-color: rgb(22, .sm-scope 24, .sm-scope 42)"] {
+  background-color: #1f1a16 !important;
+}
+
+/* ── STATUS COLORS → MUSE-coherent light palette (2026-06-05) ───────────────
+   AUDIT FINDING (replaces the old "yellows translate OK" assumption — they don't
+   as TEXT): the app paints status with a pastel rainbow (green/violet/pink/amber/
+   orange/red) tuned for the DARK background. As `color:` on parchment those
+   pastels fall below 3:1 and clash with the wine brand. Their *backgrounds* use
+   low-alpha rgba tints which read fine — so we repaint ONLY the text (solid hex /
+   alpha hex used as `color:`), never the tints. Every target below is ≥4.5:1 on
+   #f2f0e6 / #fbf9f1 and stays within the warm/earthy MUSE register. Dark mode is
+   untouched. Each rule matches both `color: rgb(r,g,b)` and `color: rgba(r,g,b,a)`.
+   NOTE: this extends the inline-remap layer on purpose — it's the fast, reversible
+   light-mode fix. The eventual cleanup (tokens, delete this block) is MASTER §11. */
+
+/* Greens → Olive Leaf (success / SAFE / positive) */
+html:not(.dark) [style*="color: rgb(74, 222, 128)"],
+html:not(.dark) [style*="color: rgba(74, 222, 128"],
+html:not(.dark) [style*="color: rgb(52, 211, 153)"],
+html:not(.dark) [style*="color: rgba(52, 211, 153"],
+html:not(.dark) [style*="color: rgb(34, 197, 94)"],
+html:not(.dark) [style*="color: rgba(34, 197, 94"],
+html:not(.dark) [style*="color: rgb(16, 185, 129)"],
+html:not(.dark) [style*="color: rgba(16, 185, 129"] {
+  color: #4f5e34 !important;
+}
+
+/* Violets / purples → Mulberry (info / Major Client / secondary accent).
+   Bridges wine & violet so it reads as "branded", not a stray pastel. */
+html:not(.dark) [style*="color: rgb(167, 139, 250)"],
+html:not(.dark) [style*="color: rgba(167, 139, 250"],
+html:not(.dark) [style*="color: rgb(192, 132, 252)"],
+html:not(.dark) [style*="color: rgba(192, 132, 252"],
+html:not(.dark) [style*="color: rgb(139, 92, 246)"],
+html:not(.dark) [style*="color: rgba(139, 92, 246"],
+html:not(.dark) [style*="color: rgb(168, 85, 247)"],
+html:not(.dark) [style*="color: rgba(168, 85, 247"] {
+  color: #6b3f6e !important;
+}
+
+/* Pinks / fuchsia → Rose-wine */
+html:not(.dark) [style*="color: rgb(244, 114, 182)"],
+html:not(.dark) [style*="color: rgba(244, 114, 182"],
+html:not(.dark) [style*="color: rgb(232, 121, 249)"],
+html:not(.dark) [style*="color: rgba(232, 121, 249"],
+html:not(.dark) [style*="color: rgb(236, 72, 153)"],
+html:not(.dark) [style*="color: rgba(236, 72, 153"],
+html:not(.dark) [style*="color: rgb(217, 70, 239)"],
+html:not(.dark) [style*="color: rgba(217, 70, 239"] {
+  color: #9d3b5e !important;
+}
+
+/* Amber → amber-brown (warning / ATTENTION). Bright amber as text is ~1.5:1. */
+html:not(.dark) [style*="color: rgb(251, 191, 36)"],
+html:not(.dark) [style*="color: rgba(251, 191, 36"],
+html:not(.dark) [style*="color: rgb(245, 158, 11)"],
+html:not(.dark) [style*="color: rgba(245, 158, 11"] {
+  color: #8a6d1f !important;
+}
+
+/* Orange → burnt orange (caution / LOW STOCK) */
+html:not(.dark) [style*="color: rgb(251, 146, 60)"],
+html:not(.dark) [style*="color: rgba(251, 146, 60"],
+html:not(.dark) [style*="color: rgb(249, 115, 22)"],
+html:not(.dark) [style*="color: rgba(249, 115, 22"] {
+  color: #b4530a !important;
+}
+
+/* Salmon red → medium danger red (error / CRITICAL stock). Kept distinct from
+   the deep OUT-of-stock red below so the 5-tier never collapses to one color. */
+html:not(.dark) [style*="color: rgb(248, 113, 113)"],
+html:not(.dark) [style*="color: rgba(248, 113, 113"] {
+  color: #c0392b !important;
+}
+
+/* Strong red → deep danger red (OUT OF STOCK / destructive). Distinct from wine. */
+html:not(.dark) [style*="color: rgb(239, 68, 68)"],
+html:not(.dark) [style*="color: rgba(239, 68, 68"],
+html:not(.dark) [style*="color: rgb(220, 38, 38)"],
+html:not(.dark) [style*="color: rgba(220, 38, 38"] {
+  color: #a01b1b !important;
+}
+
+/* Solid indicator dots (background is a solid pastel, not a tint) → match text */
+html:not(.dark) [style*="background: rgb(74, 222, 128)"],
+html:not(.dark) .sm-scope [style*="background-color: rgb(74, .sm-scope 222, .sm-scope 128)"] { background-color: #6b784d !important; }
+html:not(.dark) [style*="background: rgb(167, 139, 250)"],
+html:not(.dark) .sm-scope [style*="background-color: rgb(167, .sm-scope 139, .sm-scope 250)"] { background-color: #8a5a8d !important; }
+
+/* ── Sidebar specifically — keep it readable, slightly tinted parchment ──── */
+html:not(.dark) aside[style*="background: var(--card-bg)"],
+html:not(.dark) aside[style*="background:var(--card-bg)"] {
+  background: #ede8da !important;          /* slightly darker than page bg */
+  border-right: 1px solid rgba(97, 36, 40, 0.15) !important;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   GLOW UTILITIES (work in both themes — adapt to var(--accent-glow))
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Card with a top-edge shimmer line — applied via class="card-shimmer".
+   In dark mode it's a thin white pulse; in light mode it's a wine pulse.
+   Adds depth without being noisy. */
+.sm-scope .card-shimmer {
+  position: relative;
+}
+.sm-scope .card-shimmer::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 10%; right: 10%; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.12), transparent);
+  pointer-events: none;
+  border-radius: 50%;
+}
+html:not(.dark) .card-shimmer::before {
+  background: linear-gradient(90deg, transparent, rgba(97, 36, 40, 0.35), transparent);
+}
+
+/* Radial corner glow — apply via class="card-glow". Top-right by default.
+   Subtle "light source" feel borrowed from SA_ScentSystem stat cards. */
+.sm-scope .card-glow {
+  position: relative;
+  overflow: hidden;
+}
+.sm-scope .card-glow::after {
+  content: '';
+  position: absolute;
+  top: -22px; right: -22px;
+  width: 90px; height: 90px;
+  background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+  opacity: 0.18;
+  pointer-events: none;
+}
+
+/* Stat-value gets a subtle text-shadow glow in light mode so big numbers don't feel
+   flat against parchment. Apply via class="stat-glow". */
+.sm-scope .stat-glow {
+  text-shadow: 0 0 18px var(--accent-glow);
+}
+html.dark .sm-scope .stat-glow {
+  text-shadow: 0 0 16px var(--accent-glow), 0 0 32px var(--accent-glow);
+}
+
+/* ── Last-line-of-defense — h1/h2/h3 force-readable in light mode ──────────
+   Headings often have explicit color: '#e8eaf2' inline. Set default text on the
+   body level so any element without a more-specific color inherits dark brown. */
+html:not(.dark) body {
+  color: #1b0905;
+}
+/* Catch-all for headings — page titles, section titles all need to be readable */
+html:not(.dark) h1[style*="rgb(232, 234, 242)"],
+html:not(.dark) h2[style*="rgb(232, 234, 242)"],
+html:not(.dark) h3[style*="rgb(232, 234, 242)"],
+html:not(.dark) h4[style*="rgb(232, 234, 242)"] {
+  color: #1b0905 !important;
+}
+
+/* ── Bonus: tab/chip pills using rgba(255,255,255,X) backgrounds in MQ etc ── */
+html:not(.dark) [style*="rgba(255, 255, 255, 0.04)"],
+html:not(.dark) [style*="rgba(255, 255, 255, 0.05)"],
+html:not(.dark) [style*="rgba(255, 255, 255, 0.06)"] {
+  background-color: rgba(97, 36, 40, 0.05) !important;
+}
+html:not(.dark) [style*="rgba(255, 255, 255, 0.08)"],
+html:not(.dark) [style*="rgba(255, 255, 255, 0.1)"],
+html:not(.dark) [style*="rgba(255, 255, 255, 0.12)"] {
+  background-color: rgba(97, 36, 40, 0.08) !important;
+  border-color: rgba(97, 36, 40, 0.22) !important;
+}
+
+/* ── Modal-overlay backdrops — match Deep Shadow tint regardless of opacity ── */
+html:not(.dark) [style*="rgba(0, 0, 0, 0.6"],
+html:not(.dark) [style*="rgba(0, 0, 0, 0.65)"],
+html:not(.dark) [style*="rgba(0, 0, 0, 0.7"],
+html:not(.dark) [style*="rgba(0, 0, 0, 0.75)"],
+html:not(.dark) [style*="rgba(0, 0, 0, 0.8"],
+html:not(.dark) [style*="rgba(0, 0, 0, 0.85)"],
+html:not(.dark) [style*="rgba(0, 0, 0, 0.9"] {
+  background-color: rgba(27, 9, 5, 0.4) !important;
+}
+
+/* ─── LOGIN PAGE ──────────────────────────── */
+.sm-scope .login-bg {
+  position: fixed; inset: 0; overflow: hidden;
+  background: #07070d;
+}
+.sm-scope .login-bg::before {
+  content: '';
+  position: absolute; inset: -50%;
+  background-image: radial-gradient(circle, rgba(255,255,255,0.1) 1px, transparent 1px);
+  background-size: 28px 28px;
+  animation: dotDrift 20s linear infinite;
+}
+.sm-scope .login-bg::after {
+  content: '';
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%,-50%);
+  width: 640px; height: 640px;
+  background: radial-gradient(circle, rgba(177,84,90,0.07) 0%, transparent 70%);
+}
+.sm-scope .login-card {
+  background: rgba(10,10,20,0.88);
+  border: 1px solid rgba(255,255,255,0.09);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border-radius: 22px;
+  padding: 52px 48px;
+  max-width: 460px; width: 100%;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.75), inset 0 1px 0 rgba(255,255,255,0.06);
+  position: relative; z-index: 2;
+  animation: fadeIn 0.35s ease;
+}
+.sm-scope .login-card::before {
+  content: '';
+  position: absolute; top: 0; left: 10%; right: 10%; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(177,84,90,0.55), transparent);
+  border-radius: 50%;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   EDITORIAL LAYER — MUSE (2026-06-05)
+   The "soul" layer: Playfair display voice + gold-as-precious-detail + editorial
+   atoms. ADDITIVE & opt-in — these are utility classes you apply to elements;
+   nothing here restyles existing markup, so dark mode and current pages are
+   untouched until a page opts in. Atoms read theme tokens, so they adapt to both
+   themes; the full editorial "paper" feel blooms in light (MUSE) mode.
+   See design-system/MASTER.md §5 and design-system/muse-editorial-mockup.html.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Gold tokens (decorative line + a darker, text-legible ink) */
+:root.dark, :root { --gold: #d4b574; --gold-ink: #d4b574; }
+html:not(.dark) .sm-scope  { --gold: #c8a85e; --gold-ink: #9c7a32; }
+
+/* Field & popover surfaces — match native inputs: pure WHITE in light (not a
+   muddy wine wash), clean neutral dark in dark. Used by SearchSelect & custom
+   dropdowns so they look identical to <input>/<textarea>. */
+:root.dark, :root { --field-bg: rgba(255,255,255,0.05); --popover-bg: #1f1a16; }
+html:not(.dark) .sm-scope  { --field-bg: #ffffff; --popover-bg: #ffffff; }
+
+/* Inline-styled form fields → clean WHITE in light. The earlier `textarea`/bare
+   selectors lose specificity to the `[style*="rgba(255,255,255,..)"]` wine-wash
+   remap (so textareas were rendering muddy tan). These `[style]`-qualified rules
+   outrank the wash, so every inline-styled input/textarea/select is white like
+   the native ones — matching the dropdown. */
+html:not(.dark) input[style],
+html:not(.dark) textarea[style],
+html:not(.dark) select[style] {
+  background-color: #ffffff !important;
+}
+
+.sm-scope .serif { font-family: 'Playfair Display', serif; }
+.sm-scope .mono { font-family: 'JetBrains Mono', monospace; }
+
+/* Refined / luxury icons — thin monoline. Lucide renders <svg class="lucide">
+   with a stroke-width="2" attribute; this CSS overrides it to 1.5 across the whole
+   app in ONE rule (CSS beats the presentation attribute). Color is left to each
+   icon, so status icons stay meaningfully colored. */
+.sm-scope .lucide { stroke-width: 1.5; }
+
+/* Small-caps tracked label — the editorial "byline" voice */
+.sm-scope .eyebrow {
+  font-size: 10.5px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.22em; color: var(--text-secondary);
+}
+
+/* Hairline gold rule + centered ornament (· EST. MMXXVI ·) */
+.sm-scope .gold-rule { height: 1px; border: 0; background: linear-gradient(90deg, transparent, var(--gold), transparent); }
+.sm-scope .ornament { display: flex; align-items: center; gap: 14px; color: var(--gold-ink); }
+.sm-scope .ornament::before, .sm-scope .ornament::after { content: ''; height: 1px; flex: 1; background: linear-gradient(90deg, transparent, var(--gold) 60%, transparent); }
+.sm-scope .ornament span { font-size: 10px; letter-spacing: 0.32em; text-transform: uppercase; white-space: nowrap; }
+
+/* Editorial page header — section number + Playfair title + italic subtitle + rule */
+.sm-scope .ed-head { margin-bottom: 28px; }
+.sm-scope .ed-kicker { display: flex; align-items: baseline; gap: 14px; margin-bottom: 6px; }
+.sm-scope .ed-kicker .num { font-family: 'Playfair Display', serif; font-size: 15px; font-style: italic; color: var(--gold-ink); }
+.sm-scope .ed-title { font-family: 'Playfair Display', serif; font-weight: 800; font-size: clamp(30px, 4vw, 42px); line-height: 1.05; letter-spacing: 0.005em; color: var(--text-primary); }
+.sm-scope .ed-sub { font-family: 'Playfair Display', serif; font-style: italic; color: var(--text-secondary); font-size: 16px; margin-top: 8px; }
+.sm-scope .ed-rule { margin-top: 22px; height: 1px; background: linear-gradient(90deg, var(--border-h), transparent); }
+
+/* Airy list — borderless rows separated by hairlines (refined / decluttered). */
+.sm-scope .ed-list { display: flex; flex-direction: column; }
+.sm-scope .ed-li { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 13px 4px; border-top: 1px solid var(--border); transition: background .15s; }
+.sm-scope .ed-li:first-child { border-top: 0; }
+.sm-scope .ed-li:hover { background: linear-gradient(90deg, transparent, var(--surface-2) 55%, transparent); }
+
+/* Big serif KPI number — magazine, not spreadsheet */
+.sm-scope .kpi-num { font-family: 'Playfair Display', serif; font-weight: 800; font-size: 46px; line-height: 1; letter-spacing: 0.01em; color: var(--text-primary); }
+.sm-scope .kpi-num.wine { color: var(--accent-text); }
+
+/* Dark stays OPERATIONAL ("frozen"): content headers keep the heavier sans, so
+   only LIGHT mode blooms into editorial Playfair (the defaults above). Brand
+   chrome (sidebar/login wordmark) stays Playfair in BOTH themes — it's the brand
+   signature; only page-content type differs by theme. */
+/* ── SYSTEM-WIDE editorial headings — BOTH themes (user chose "editorial nos dois
+   modos"). Every page title is `fontFamily: 'Archivo Black'` inline (44 across 29
+   files); swap them all to Playfair. Modal titles handled on the .modal-header h2
+   rule. Dark = editorial-dark, light = editorial-light. Reversible. */
+.sm-scope [style*="Archivo Black"] {
+  font-family: 'Playfair Display', serif !important;
+  font-weight: 700 !important;
+  letter-spacing: 0 !important;
+}
+
+/* Editorial status pill (color + the earthy MUSE register). Pair with a label. */
+.sm-scope .pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 999px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em;
+}
+.sm-scope .pill svg { width: 11px; height: 11px; }
+html:not(.dark) .sm-scope .pill.ok { background: rgba(107,120,77,.12); color: #4f5e34; }
+html:not(.dark) .sm-scope .pill.att { background: rgba(200,168,94,.16); color: #8a6d1f; }
+html:not(.dark) .sm-scope .pill.low { background: rgba(180,83,10,.10);  color: #b4530a; }
+html:not(.dark) .sm-scope .pill.crit { background: rgba(192,57,43,.10);  color: #c0392b; }
+html:not(.dark) .sm-scope .pill.out { background: rgba(160,27,27,.10);  color: #a01b1b; }
+html:not(.dark) .sm-scope .pill.info { background: rgba(107,63,110,.10); color: #6b3f6e; }
+html:not(.dark) .sm-scope .pill.wine { background: rgba(97,36,40,.10);   color: #612428; }
+.sm-scope .pill.ok { background: rgba(74,222,128,.12);  color: #4ade80; }
+.sm-scope .pill.att { background: rgba(251,191,36,.14);  color: #fbbf24; }
+.sm-scope .pill.low { background: rgba(251,146,60,.14);  color: #fb923c; }
+.sm-scope .pill.crit { background: rgba(248,113,113,.14); color: #f87171; }
+.sm-scope .pill.out { background: rgba(239,68,68,.14);   color: #ef4444; }
+.sm-scope .pill.info { background: rgba(167,139,250,.14); color: #a78bfa; }
+.sm-scope .pill.wine { background: rgba(177,84,90,.16);   color: #b1545a; }
+
+/* ── Editorial login — a fixed parchment "cover", independent of app theme ──
+   Hardcoded MUSE palette (NOT theme tokens) so it renders editorial-light even
+   though <html> defaults to .dark. Grain + a soft wine glow = paper. */
+.sm-scope .login-ed {
+  position: fixed; inset: 0; overflow: hidden;
+  background: #f2f0e6;
+  display: flex; align-items: center; justify-content: center; padding: 40px 20px;
+  /* Force editorial-light tokens locally so the atoms render parchment-correct
+     even though <html> defaults to .dark (login is a fixed light cover). */
+  --text-primary: #1b0905; --text-secondary: #5a3a36; --accent-text: #4d1c20;
+  --border-h: rgba(97,36,40,.28); --gold: #c8a85e; --gold-ink: #9c7a32;
+}
+.login-ed::before { /* paper grain */
+  content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .5;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+}
+.login-ed::after { /* wine glow */
+  content: ''; position: absolute; top: 50%; left: 50%; width: 760px; height: 760px;
+  transform: translate(-50%,-50%);
+  background: radial-gradient(circle, rgba(97,36,40,.06), transparent 68%); pointer-events: none;
+}

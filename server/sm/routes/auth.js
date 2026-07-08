@@ -1,4 +1,5 @@
 const express = require('express')
+const { sanitizeError } = require('../errors')
 const bcrypt = require('bcryptjs')
 const router = express.Router()
 const { query } = require('../db')
@@ -49,7 +50,7 @@ router.get('/users', auth, requireRole('root', 'admin'), async (req, res) => {
   try {
     const result = await query(`SELECT id, name, role, must_change_password, created_at FROM users ORDER BY name`)
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/users', auth, requireRole('root'), async (req, res) => {
@@ -66,7 +67,7 @@ router.post('/users', auth, requireRole('root'), async (req, res) => {
     res.status(201).json({ ...result.rows[0], temp_password: pw })
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ error: 'Name already exists' })
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: sanitizeError(e) })
   }
 })
 
@@ -78,7 +79,7 @@ router.put('/users/:id', auth, requireRole('root'), async (req, res) => {
       [name, role, req.params.id]
     )
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/users/:id/reset-password', auth, requireRole('root'), async (req, res) => {
@@ -87,7 +88,7 @@ router.post('/users/:id/reset-password', auth, requireRole('root'), async (req, 
     const hash = await bcrypt.hash(pw, 10)
     await query(`UPDATE users SET password_hash = $1, must_change_password = true WHERE id = $2`, [hash, req.params.id])
     res.json({ success: true, temp_password: pw })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.delete('/users/:id', auth, requireRole('root'), async (req, res) => {
@@ -95,7 +96,7 @@ router.delete('/users/:id', auth, requireRole('root'), async (req, res) => {
     if (parseInt(req.params.id) === req.user.id) return res.status(400).json({ error: 'Cannot delete yourself' })
     await query(`DELETE FROM users WHERE id = $1`, [req.params.id])
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 module.exports = router

@@ -1,4 +1,5 @@
 const express = require('express')
+const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query } = require('../db')
 const { auth, auditLog } = require('../auth')
@@ -8,7 +9,7 @@ router.get('/production-orders/:id/shipping', auth, async (req, res) => {
   try {
     const labels = await query(`SELECT * FROM shipping_labels WHERE production_order_id = $1 ORDER BY created_at DESC`, [req.params.id])
     res.json({ labels: labels.rows, easypost_configured: !!process.env.EASYPOST_API_KEY })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/shipping/rates', auth, async (req, res) => {
@@ -40,7 +41,7 @@ router.post('/shipping/rates', auth, async (req, res) => {
     })
     if (result.data.error) return res.status(400).json({ error: result.data.error.message || 'EasyPost error' })
     res.json({ configured: true, shipment_id: result.data.id, rates: result.data.rates || [] })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/shipping/buy', auth, async (req, res) => {
@@ -58,7 +59,7 @@ router.post('/shipping/buy', auth, async (req, res) => {
     await auditLog(req.user.id, 'shipping_label_created', 'shipping_label', label.rows[0].id,
       `${carrier} label for order #${production_order_id}`, { tracking: result.data.tracking_code })
     res.status(201).json(label.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/shipping/manual', auth, async (req, res) => {
@@ -73,7 +74,7 @@ router.post('/shipping/manual', auth, async (req, res) => {
     await auditLog(req.user.id, 'shipping_label_manual', 'shipping_label', label.rows[0].id,
       `Manual label for order #${production_order_id}`, { carrier, tracking_number })
     res.status(201).json(label.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.delete('/shipping/:id', auth, async (req, res) => {
@@ -86,7 +87,7 @@ router.delete('/shipping/:id', auth, async (req, res) => {
     }
     await query(`UPDATE shipping_labels SET status = 'voided' WHERE id = $1`, [req.params.id])
     res.json({ ok: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 module.exports = router

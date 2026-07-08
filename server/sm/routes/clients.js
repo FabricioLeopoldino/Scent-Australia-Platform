@@ -1,7 +1,8 @@
 const express = require('express')
+const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query } = require('../db')
-const { auth, auditLog } = require('../auth')
+const { auth, auditLog, requireUploads } = require('../auth')
 
 router.get('/clients', auth, async (req, res) => {
   try {
@@ -12,7 +13,7 @@ router.get('/clients', auth, async (req, res) => {
     if (is_large_client !== undefined) { params.push(is_large_client === 'true'); q += ` AND is_large_client = $${params.length}` }
     q += ` ORDER BY name`
     res.json((await query(q, params)).rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/clients/:id', auth, async (req, res) => {
@@ -20,7 +21,7 @@ router.get('/clients/:id', auth, async (req, res) => {
     const result = await query(`SELECT * FROM clients WHERE id = $1`, [req.params.id])
     if (!result.rows[0]) return res.status(404).json({ error: 'Not found' })
     res.json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/clients', auth, async (req, res) => {
@@ -37,7 +38,7 @@ router.post('/clients', auth, async (req, res) => {
     )
     await auditLog(req.user.id, 'client_created', 'client', result.rows[0].id, name, {})
     res.status(201).json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.put('/clients/:id', auth, async (req, res) => {
@@ -53,7 +54,7 @@ router.put('/clients/:id', auth, async (req, res) => {
     )
     if (!result.rows[0]) return res.status(404).json({ error: 'Not found' })
     res.json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/clients/:id/labels', auth, async (req, res) => {
@@ -72,7 +73,7 @@ router.get('/clients/:id/labels', auth, async (req, res) => {
        ORDER BY cl.label_name, cl.artwork_version`,
       [req.params.id]
     )).rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/clients/:id/labels', auth, async (req, res) => {
@@ -84,15 +85,15 @@ router.post('/clients/:id/labels', auth, async (req, res) => {
       [req.params.id, label_name, artwork_version || 'v1', supplier || null, quantity || 0, notes || null, applicable_product_type || null, image_data || null]
     )
     res.status(201).json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.patch('/client-labels/:id/image', auth, async (req, res) => {
+router.patch('/client-labels/:id/image', auth, requireUploads, async (req, res) => {
   try {
     const r = await query(`UPDATE client_labels SET image_data = $1 WHERE id = $2 RETURNING id, label_name, image_data`, [req.body.image_data || null, req.params.id])
     if (!r.rows[0]) return res.status(404).json({ error: 'Not found' })
     res.json(r.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/clients/:id/labels/receive', auth, async (req, res) => {
@@ -105,7 +106,7 @@ router.post('/clients/:id/labels/receive', auth, async (req, res) => {
       [client_label_id, req.params.id, quantity, notes || null, req.user.id]
     )
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.put('/clients/:clientId/labels/:labelId/obsolete', auth, async (req, res) => {
@@ -113,21 +114,21 @@ router.put('/clients/:clientId/labels/:labelId/obsolete', auth, async (req, res)
     const { is_obsolete } = req.body
     await query(`UPDATE client_labels SET is_obsolete = $1 WHERE id = $2 AND client_id = $3`, [is_obsolete, req.params.labelId, req.params.clientId])
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.delete('/clients/:id', auth, async (req, res) => {
   try {
     await query(`DELETE FROM clients WHERE id = $1`, [req.params.id])
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.delete('/clients/:clientId/labels/:labelId', auth, async (req, res) => {
   try {
     await query(`DELETE FROM client_labels WHERE id = $1 AND client_id = $2`, [req.params.labelId, req.params.clientId])
     res.json({ ok: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/clients/:id/orders', auth, async (req, res) => {
@@ -142,7 +143,7 @@ router.get('/clients/:id/orders', auth, async (req, res) => {
       [req.params.id]
     )
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/clients/:id/products', auth, async (req, res) => {
@@ -153,7 +154,7 @@ router.get('/clients/:id/products', auth, async (req, res) => {
       [req.params.id]
     )
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/client-products/:id/bom', auth, async (req, res) => {
@@ -169,7 +170,7 @@ router.get('/client-products/:id/bom', auth, async (req, res) => {
       [req.params.id]
     )
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/client-products/:id/bom', auth, async (req, res) => {
@@ -182,14 +183,14 @@ router.post('/client-products/:id/bom', auth, async (req, res) => {
       [req.params.id, client_stock_id || null, general_product_id || null, parseFloat(quantity_per_unit) || 1, unit || 'units', notes || null]
     )
     res.json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.delete('/client-products/:id/bom/:entryId', auth, async (req, res) => {
   try {
     await query(`DELETE FROM client_product_bom WHERE id = $1 AND product_id = $2`, [req.params.entryId, req.params.id])
     res.json({ ok: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // External SKU Mapping feature removed 2026-05-28 — was unused dead weight.
@@ -199,7 +200,7 @@ router.delete('/client-products/:id/bom/:entryId', auth, async (req, res) => {
 router.get('/clients/:id/stock', auth, async (req, res) => {
   try {
     res.json((await query(`SELECT cs.* FROM client_stock cs WHERE client_id = $1 ORDER BY product_name`, [req.params.id])).rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/clients/:id/stock/receive', auth, async (req, res) => {
@@ -236,7 +237,7 @@ router.post('/clients/:id/stock/receive', auth, async (req, res) => {
       )
     }
     res.json(record)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/client-stock', auth, async (req, res) => {
@@ -247,7 +248,7 @@ router.get('/client-stock', auth, async (req, res) => {
     if (search) { params.push(`%${search}%`); q += ` AND (cs.product_name ILIKE $1 OR cs.product_code ILIKE $1 OR c.name ILIKE $1)` }
     q += ` ORDER BY c.name, cs.category, cs.product_name`
     res.json((await query(q, params)).rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/client-labels', auth, async (req, res) => {
@@ -268,15 +269,15 @@ router.get('/client-labels', auth, async (req, res) => {
     if (search) { params.push(`%${search}%`); q += ` AND (cl.label_name ILIKE $1 OR c.name ILIKE $1)` }
     q += ` ORDER BY c.name, cl.label_name, cl.artwork_version`
     res.json((await query(q, params)).rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.patch('/client-stock/:id/image', auth, async (req, res) => {
+router.patch('/client-stock/:id/image', auth, requireUploads, async (req, res) => {
   try {
     const r = await query(`UPDATE client_stock SET image_data = $1 WHERE id = $2 RETURNING id, product_name, image_data`, [req.body.image_data || null, req.params.id])
     if (!r.rows[0]) return res.status(404).json({ error: 'Not found' })
     res.json(r.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/client-stock/:id/add', auth, async (req, res) => {
@@ -288,7 +289,7 @@ router.post('/client-stock/:id/add', auth, async (req, res) => {
     await query(`INSERT INTO client_stock_transactions (client_stock_id, client_id, type, quantity, unit, notes, user_id) VALUES ($1,$2,'add',$3,$4,$5,$6)`,
       [req.params.id, r.rows[0].client_id, quantity, r.rows[0].unit, notes || null, req.user.id])
     res.json(r.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/client-stock/:id/remove', auth, async (req, res) => {
@@ -300,7 +301,7 @@ router.post('/client-stock/:id/remove', auth, async (req, res) => {
     await query(`INSERT INTO client_stock_transactions (client_stock_id, client_id, type, quantity, unit, notes, user_id) VALUES ($1,$2,'remove',$3,$4,$5,$6)`,
       [req.params.id, r.rows[0].client_id, quantity, r.rows[0].unit, notes || null, req.user.id])
     res.json(r.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/client-stock/:id/adjust', auth, async (req, res) => {
@@ -312,7 +313,7 @@ router.post('/client-stock/:id/adjust', auth, async (req, res) => {
     await query(`INSERT INTO client_stock_transactions (client_stock_id, client_id, type, quantity, unit, notes, user_id) VALUES ($1,$2,'adjust',$3,$4,$5,$6)`,
       [req.params.id, r.rows[0].client_id, new_stock, r.rows[0].unit, notes || null, req.user.id])
     res.json(r.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/client-stock/:id/history', auth, async (req, res) => {
@@ -322,14 +323,14 @@ router.get('/client-stock/:id/history', auth, async (req, res) => {
       [req.params.id]
     )
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.delete('/client-stock/:id', auth, async (req, res) => {
   try {
     await query(`DELETE FROM client_stock WHERE id = $1`, [req.params.id])
     res.json({ ok: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.put('/client-stock/:id', auth, async (req, res) => {
@@ -342,7 +343,7 @@ router.put('/client-stock/:id', auth, async (req, res) => {
     )
     if (!r.rows[0]) return res.status(404).json({ error: 'Not found' })
     res.json(r.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/client-stock/next-lc-code', auth, async (req, res) => {
@@ -351,7 +352,7 @@ router.get('/client-stock/next-lc-code', auth, async (req, res) => {
     let nextNum = 1
     if (r.rows[0]) nextNum = parseInt(r.rows[0].product_code.replace('LC_', '')) + 1
     res.json({ code: `LC_${String(nextNum).padStart(5, '0')}` })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 module.exports = router

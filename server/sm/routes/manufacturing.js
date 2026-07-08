@@ -1,4 +1,5 @@
 const express = require('express')
+const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query, withTransaction } = require('../db')
 const { auth, auditLog } = require('../auth')
@@ -58,7 +59,7 @@ router.get('/manufacturing/queue', auth, async (req, res) => {
     }
 
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // Internal helper — runs full "start production" logic (debit stock + create job).
@@ -195,7 +196,7 @@ router.post('/manufacturing/:id/start', auth, async (req, res) => {
 
     const result = await startProductionInternal(parseInt(req.params.id), req.user.id, 'in_production')
     res.json(result.job)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 
@@ -432,7 +433,7 @@ router.post('/manufacturing/:id/complete', auth, async (req, res) => {
 
     await auditLog(req.user.id, 'production_completed', 'production_order', parseInt(req.params.id), order.rows[0].order_number, { line_leftovers_count: (line_leftovers || []).length })
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/manufacturing/:id/lines/:lineId/filling-done', auth, async (req, res) => {
@@ -449,7 +450,7 @@ router.post('/manufacturing/:id/lines/:lineId/filling-done', auth, async (req, r
     const ord1 = await query(`SELECT order_number FROM production_orders WHERE id = $1`, [req.params.id])
     await auditLog(req.user.id, 'line_filling_done', 'production_order', parseInt(req.params.id), ord1.rows[0]?.order_number, { line: l.product_type, newStatus })
     res.json({ success: true, line_status: newStatus })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/manufacturing/:id/lines/:lineId/labeling-done', auth, async (req, res) => {
@@ -465,7 +466,7 @@ router.post('/manufacturing/:id/lines/:lineId/labeling-done', auth, async (req, 
     const ord2 = await query(`SELECT order_number FROM production_orders WHERE id = $1`, [req.params.id])
     await auditLog(req.user.id, 'line_labeling_done', 'production_order', parseInt(req.params.id), ord2.rows[0]?.order_number, { line: line.rows[0].product_type, newStatus })
     res.json({ success: true, line_status: newStatus })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/manufacturing/:id/lines/:lineId/packing-done', auth, async (req, res) => {
@@ -477,7 +478,7 @@ router.post('/manufacturing/:id/lines/:lineId/packing-done', auth, async (req, r
     ])
     await auditLog(req.user.id, 'line_packing_done', 'production_order', parseInt(req.params.id), ord3.rows[0]?.order_number, { line: lineRow3.rows[0]?.product_type })
     res.json({ success: true, line_status: 'done' })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/manufacturing/:id/lines/:lineId/send-for-filling', auth, async (req, res) => {
@@ -494,7 +495,7 @@ router.post('/manufacturing/:id/lines/:lineId/send-for-filling', auth, async (re
     ])
     await auditLog(req.user.id, 'line_sent_for_filling', 'production_order', parseInt(req.params.id), ord4.rows[0]?.order_number, { line: lineRow4.rows[0]?.product_type, supplier: supplier || null })
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/manufacturing/:id/lines/:lineId/receive-from-filling', auth, async (req, res) => {
@@ -515,7 +516,7 @@ router.post('/manufacturing/:id/lines/:lineId/receive-from-filling', auth, async
     const ord5 = await query(`SELECT order_number FROM production_orders WHERE id = $1`, [req.params.id])
     await auditLog(req.user.id, 'line_received_from_filling', 'production_order', parseInt(req.params.id), ord5.rows[0]?.order_number, { line: l.product_type })
     res.json({ success: true, line_status: newStatus })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/ready-formula/available', auth, async (req, res) => {
@@ -529,7 +530,7 @@ router.get('/ready-formula/available', auth, async (req, res) => {
       [`%${fragrance.rows[0].name}%`]
     )
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 module.exports = router

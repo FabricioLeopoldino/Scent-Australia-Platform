@@ -1,4 +1,5 @@
 const express = require('express')
+const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query } = require('../db')
 const { auth, auditLog } = require('../auth')
@@ -38,7 +39,7 @@ router.get('/packing-records', auth, async (req, res) => {
     if (production_order_id) { params.push(production_order_id); q += ` AND pr.production_order_id = $${params.length}` }
     q += ` ORDER BY pr.created_at DESC`
     res.json((await query(q, params)).rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/packing-records/:id', auth, async (req, res) => {
@@ -73,7 +74,7 @@ router.get('/packing-records/:id', auth, async (req, res) => {
       WHERE pr.id = $1`, [req.params.id])
     if (!result.rows[0]) return res.status(404).json({ error: 'Not found' })
     res.json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/packing-records', auth, async (req, res) => {
@@ -96,7 +97,7 @@ router.post('/packing-records', auth, async (req, res) => {
     await auditLog(req.user.id, 'packing_record_created', 'packing_record', result.rows[0].id,
       `Packing record for order #${production_order_id}`, { pallet_count, packed_by })
     res.status(201).json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 module.exports = router

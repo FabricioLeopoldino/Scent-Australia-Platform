@@ -1,4 +1,5 @@
 const express = require('express')
+const { sanitizeError } = require('../errors')
 const router = express.Router()
 const crypto = require('crypto')
 
@@ -47,7 +48,7 @@ router.get('/shopify/callback', async (req, res) => {
       res.status(400).send(`OAuth failed: ${JSON.stringify(data)}`)
     }
   } catch (e) {
-    res.status(500).send(`Error: ${e.message}`)
+    res.status(500).send('Internal server error')
   }
 })
 

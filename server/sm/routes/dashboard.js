@@ -1,4 +1,5 @@
 const express = require('express')
+const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query } = require('../db')
 const { auth } = require('../auth')
@@ -17,7 +18,7 @@ router.get('/dashboard/priority-watchlist', auth, async (req, res) => {
       LIMIT 20
     `)
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/dashboard/active-orders', auth, async (req, res) => {
@@ -31,7 +32,7 @@ router.get('/dashboard/active-orders', auth, async (req, res) => {
       LIMIT 20
     `)
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/dashboard/candles-in-progress', auth, async (req, res) => {
@@ -45,7 +46,7 @@ router.get('/dashboard/candles-in-progress', auth, async (req, res) => {
       ORDER BY po.created_at DESC
     `)
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/dashboard/labels-pending', auth, async (req, res) => {
@@ -60,7 +61,7 @@ router.get('/dashboard/labels-pending', auth, async (req, res) => {
       ORDER BY pol.labels_eta ASC NULLS LAST
     `)
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/dashboard/stats', auth, async (req, res) => {
@@ -79,7 +80,7 @@ router.get('/dashboard/stats', auth, async (req, res) => {
       pending_pos: pendingPos.status === 'fulfilled' ? parseInt(pendingPos.value.rows[0].count) : 0,
       large_clients: largeClients.status === 'fulfilled' ? largeClients.value.rows : [],
     })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/dashboard/external-processing', auth, async (req, res) => {
@@ -94,7 +95,7 @@ router.get('/dashboard/external-processing', auth, async (req, res) => {
        LIMIT 25`
     )
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/dashboard/incoming-summary', auth, async (req, res) => {
@@ -110,7 +111,7 @@ router.get('/dashboard/incoming-summary', auth, async (req, res) => {
        LIMIT 20`
     )
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/dashboard/warehouse-queue', auth, async (req, res) => {
@@ -140,7 +141,7 @@ router.get('/dashboard/warehouse-queue', auth, async (req, res) => {
     res.json(result.rows)
   } catch (e) {
     console.error('[dashboard/warehouse-queue]', e.message)
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: sanitizeError(e) })
   }
 })
 
@@ -159,7 +160,7 @@ router.get('/dashboard/draft-orders', auth, async (req, res) => {
        LIMIT 20`
     )
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // Dashboard alerts (reservation displacements, etc.)
@@ -176,7 +177,7 @@ router.get('/dashboard/alerts', auth, async (req, res) => {
     q += ` ORDER BY da.created_at DESC LIMIT 50`
     const result = await query(q)
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/dashboard/alerts/:id/acknowledge', auth, async (req, res) => {
@@ -187,7 +188,7 @@ router.post('/dashboard/alerts/:id/acknowledge', auth, async (req, res) => {
     )
     if (!result.rows[0]) return res.status(404).json({ error: 'Alert not found' })
     res.json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/dashboard/alerts/acknowledge-all', auth, async (req, res) => {
@@ -197,7 +198,7 @@ router.post('/dashboard/alerts/acknowledge-all', auth, async (req, res) => {
       [req.user.id]
     )
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 module.exports = router

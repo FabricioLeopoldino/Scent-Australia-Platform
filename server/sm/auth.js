@@ -35,4 +35,14 @@ async function auditLog(userId, action, entityType, entityId, entityName, detail
   }
 }
 
-module.exports = { auth, requireRole, auditLog }
+// FEATURE_UPLOADS gate (PRD D4): SM stores images/attachments as base64 in
+// Neon — heavy on the 0.5 GB free tier. Dedicated upload endpoints are
+// blocked until the flag is enabled (UI hides them too).
+function requireUploads(req, res, next) {
+  if (process.env.FEATURE_UPLOADS !== 'true') {
+    return res.status(403).json({ error: 'Uploads are disabled on the platform (feature flag)' })
+  }
+  next()
+}
+
+module.exports = { auth, requireRole, auditLog, requireUploads }

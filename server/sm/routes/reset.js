@@ -1,4 +1,5 @@
 const express = require('express')
+const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query } = require('../db')
 const { auth } = require('../auth')
@@ -41,7 +42,7 @@ router.post('/reset-database', auth, async (req, res) => {
 
     res.json({ success: true, message: 'Database cleared. Schema and users preserved.' })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: sanitizeError(e) })
   }
 })
 

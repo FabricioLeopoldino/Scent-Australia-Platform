@@ -1,4 +1,5 @@
 const express = require('express')
+const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query } = require('../db')
 const { auth, requireRole } = require('../auth')
@@ -14,7 +15,7 @@ router.get('/audit', auth, requireRole('root', 'admin'), async (req, res) => {
     if (to) { params.push(to); q += ` AND al.created_at <= $${params.length}` }
     q += ` ORDER BY al.created_at DESC LIMIT 1000`
     res.json((await query(q, params)).rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 module.exports = router

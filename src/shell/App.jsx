@@ -5,6 +5,7 @@ import ChangePassword from './ChangePassword.jsx';
 import ModulePicker from './ModulePicker.jsx';
 import UserManagement from './UserManagement.jsx';
 import SAModule from '../sa/SAModule.jsx';
+import SMModule from '../sm/SMModule.jsx';
 import {
   getStoredUser,
   storeSession,
@@ -73,7 +74,7 @@ export default function App() {
 
       <Route path="/sm/*?">
         {hasModule('SM')
-          ? <SMPlaceholder onBack={backToPicker} onLogout={handleLogout} />
+          ? <SMWrapper user={user} onLogout={handleLogout} />
           : <RedirectToPicker onDone={backToPicker} />}
       </Route>
 
@@ -96,24 +97,13 @@ function SAWrapper({ user, onSwitchModule, onLogout }) {
   return <SAModule user={user} onSwitchModule={onSwitchModule} onLogout={onLogout} />;
 }
 
+function SMWrapper({ user, onLogout }) {
+  setActiveModule('SM'); // keep interceptors module-aware after deep reloads
+  return <SMModule user={user} onLogout={onLogout} />;
+}
+
 // B5 — no access → back to picker
 function RedirectToPicker({ onDone }) {
   onDone();
   return null;
-}
-
-// Replaced by the real SM module UI in Phase 3c.
-function SMPlaceholder({ onBack, onLogout }) {
-  return (
-    <div className="center-screen" style={{ flexDirection: 'column', gap: 14 }}>
-      <h1 style={{ fontSize: 22 }}>Scented Merchandise</h1>
-      <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>
-        Module UI arrives in Phase 3. Access guard verified — you are inside the SM module.
-      </p>
-      <div style={{ display: 'flex', gap: 12 }}>
-        <button className="btn btn-ghost" onClick={onBack}>Switch module</button>
-        <button className="btn btn-ghost btn-danger-ghost" onClick={onLogout}>Logout</button>
-      </div>
-    </div>
-  );
 }

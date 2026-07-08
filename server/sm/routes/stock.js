@@ -1,4 +1,5 @@
 const express = require('express')
+const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query, withTransaction } = require('../db')
 const { auth, requireRole, auditLog } = require('../auth')
@@ -10,7 +11,7 @@ router.post('/stock/add', auth, async (req, res) => {
     if (!product_id || !quantity || quantity <= 0) return res.status(400).json({ error: 'product_id and positive quantity required' })
     const p = await adjustProductStock(product_id, quantity, 'add', notes, req.user.id)
     res.json(p)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/stock/remove', auth, async (req, res) => {
@@ -19,7 +20,7 @@ router.post('/stock/remove', auth, async (req, res) => {
     if (!product_id || !quantity || quantity <= 0) return res.status(400).json({ error: 'product_id and positive quantity required' })
     const p = await adjustProductStock(product_id, -quantity, 'remove', notes, req.user.id)
     res.json(p)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/stock/adjust', auth, async (req, res) => {
@@ -34,7 +35,7 @@ router.post('/stock/adjust', auth, async (req, res) => {
       return adjustProductStock(product_id, delta, 'adjust', notes, req.user.id, null, null, tq)
     })
     res.json(p)
-  } catch (e) { res.status(e.message === 'Product not found' ? 404 : 500).json({ error: e.message }) }
+  } catch (e) { res.status(e.message === 'Product not found' ? 404 : 500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/purchase-orders', auth, async (req, res) => {
@@ -45,7 +46,7 @@ router.get('/purchase-orders', auth, async (req, res) => {
     if (product_id) { params.push(product_id); q += ` AND po.product_id = $${params.length}` }
     q += ` ORDER BY po.created_at DESC`
     res.json((await query(q, params)).rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/products/:id/incoming', auth, async (req, res) => {
@@ -61,7 +62,7 @@ router.post('/products/:id/incoming', auth, async (req, res) => {
     )
     await auditLog(req.user.id, 'po_created', 'product', parseInt(req.params.id), prod.rows[0].name, { quantity, supplier })
     res.status(201).json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/settings', auth, async (req, res) => {
@@ -70,7 +71,7 @@ router.get('/settings', auth, async (req, res) => {
     const obj = {}
     result.rows.forEach(r => { obj[r.key] = r.value })
     res.json(obj)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.put('/settings', auth, requireRole('admin', 'root'), async (req, res) => {
@@ -80,7 +81,7 @@ router.put('/settings', auth, requireRole('admin', 'root'), async (req, res) => 
       await query(`INSERT INTO system_settings (key, value, updated_at) VALUES ($1,$2,NOW()) ON CONFLICT (key) DO UPDATE SET value=$2, updated_at=NOW()`, [key, String(value)])
     }
     res.json({ ok: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/purchase-orders/:poId/receive', auth, async (req, res) => {
@@ -123,7 +124,7 @@ router.post('/purchase-orders/:poId/receive', auth, async (req, res) => {
 
     await auditLog(req.user.id, 'po_received', 'product', record.product_id, record.product_name, { quantity_received: received, po_id: record.id, discrepancy_reason })
     res.json({ success: true, new_status: newStatus })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.delete('/purchase-orders/:poId', auth, async (req, res) => {
@@ -141,7 +142,7 @@ router.delete('/purchase-orders/:poId', auth, async (req, res) => {
       await auditLog(req.user.id, 'po_cancelled', 'product', record.product_id, record.product_name, { po_id: req.params.poId })
     }
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/transactions', auth, async (req, res) => {
@@ -155,7 +156,7 @@ router.get('/transactions', auth, async (req, res) => {
     if (to) { params.push(to); q += ` AND t.created_at <= $${params.length}` }
     q += ` ORDER BY t.created_at DESC LIMIT ${parseInt(limit) || 5000}`
     res.json((await query(q, params)).rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 module.exports = router

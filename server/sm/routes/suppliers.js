@@ -1,4 +1,5 @@
 const express = require('express')
+const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query } = require('../db')
 const { auth } = require('../auth')
@@ -11,7 +12,7 @@ router.get('/suppliers', auth, async (req, res) => {
     if (search) { params.push(`%${search}%`); q += ` AND s.name ILIKE $${params.length}` }
     q += ` GROUP BY s.id ORDER BY s.name`
     res.json((await query(q, params)).rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/suppliers', auth, async (req, res) => {
@@ -23,7 +24,7 @@ router.post('/suppliers', auth, async (req, res) => {
       [name, contact_name || null, contact_email || null, contact_phone || null, website || null, lead_time || null, notes || null]
     )
     res.status(201).json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.put('/suppliers/:id', auth, async (req, res) => {
@@ -35,14 +36,14 @@ router.put('/suppliers/:id', auth, async (req, res) => {
     )
     if (!result.rows[0]) return res.status(404).json({ error: 'Not found' })
     res.json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.delete('/suppliers/:id', auth, async (req, res) => {
   try {
     await query(`DELETE FROM suppliers WHERE id = $1`, [req.params.id])
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 module.exports = router

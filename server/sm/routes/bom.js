@@ -1,4 +1,5 @@
 const express = require('express')
+const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query } = require('../db')
 const { auth, auditLog } = require('../auth')
@@ -30,7 +31,7 @@ async function saveBomSnapshot(productType, action, userId) {
 router.get('/bom-rules', auth, async (req, res) => {
   try {
     res.json((await query(`SELECT * FROM bom_rules ORDER BY product_type, component_type`)).rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.put('/bom-rules/:id', auth, async (req, res) => {
@@ -41,7 +42,7 @@ router.put('/bom-rules/:id', auth, async (req, res) => {
     if (!result.rows[0]) return res.status(404).json({ error: 'Rule not found' })
     await auditLog(req.user.id, 'bom_rule_updated', 'bom_rule', parseInt(req.params.id), null, { quantity_per_unit })
     res.json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/bom-preview', auth, async (req, res) => {
@@ -174,7 +175,7 @@ router.post('/bom-preview', auth, async (req, res) => {
       result.push(components)
     }
     res.json(result)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/product-bom/:productType', auth, async (req, res) => {
@@ -196,7 +197,7 @@ router.get('/product-bom/:productType', auth, async (req, res) => {
       [req.params.productType]
     )
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/product-bom/:productType/history', auth, async (req, res) => {
@@ -206,7 +207,7 @@ router.get('/product-bom/:productType/history', auth, async (req, res) => {
       [req.params.productType]
     )
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/product-bom/:productType/rollback', auth, async (req, res) => {
@@ -235,7 +236,7 @@ router.post('/product-bom/:productType/rollback', auth, async (req, res) => {
       [req.params.productType]
     )
     res.json(updated.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/product-bom', auth, async (req, res) => {
@@ -277,7 +278,7 @@ router.post('/product-bom', auth, async (req, res) => {
     }
     await auditLog(req.user.id, 'product_bom_added', 'product_bom', result.rows[0].id, entityName, { product_type, source: client_stock_id ? 'client_stock' : 'general' })
     res.status(201).json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.put('/product-bom/:id', auth, async (req, res) => {
@@ -290,7 +291,7 @@ router.put('/product-bom/:id', auth, async (req, res) => {
     if (!result.rows[0]) return res.status(404).json({ error: 'Not found' })
     await saveBomSnapshot(result.rows[0].product_type, 'edit', req.user.id)
     res.json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.delete('/product-bom/:id', auth, async (req, res) => {
@@ -300,7 +301,7 @@ router.delete('/product-bom/:id', auth, async (req, res) => {
     await query(`UPDATE product_bom SET is_active = false WHERE id = $1`, [req.params.id])
     if (productType) await saveBomSnapshot(productType, 'delete', req.user.id)
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 module.exports = router

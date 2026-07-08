@@ -1,4 +1,5 @@
 const express = require('express')
+const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query } = require('../db')
 const { auth } = require('../auth')
@@ -17,7 +18,7 @@ router.get('/major-clients', auth, async (req, res) => {
        ORDER BY c.name`
     )
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // Get Major Client detail + their masters
@@ -40,7 +41,7 @@ router.get('/major-clients/:id', auth, async (req, res) => {
     )
 
     res.json({ ...clientRes.rows[0], masters: masters.rows })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // Major Client's full stock summary: client_stock components + orders awaiting ship
@@ -117,7 +118,7 @@ router.get('/major-clients/:id/stock-summary', auth, async (req, res) => {
       awaiting_ship_grouped: Object.values(grouped),
       awaiting_ship_total_units: awaitingShip.rows.reduce((s, r) => s + parseInt(r.quantity), 0),
     })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 module.exports = router

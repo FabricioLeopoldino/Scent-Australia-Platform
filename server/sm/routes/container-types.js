@@ -1,4 +1,5 @@
 const express = require('express')
+const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query } = require('../db')
 const { auth, auditLog } = require('../auth')
@@ -12,7 +13,7 @@ router.get('/container-types', auth, async (req, res) => {
       : `SELECT * FROM container_types WHERE archived = false ORDER BY name ASC`
     const result = await query(q)
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/container-types/:id', auth, async (req, res) => {
@@ -20,7 +21,7 @@ router.get('/container-types/:id', auth, async (req, res) => {
     const result = await query(`SELECT * FROM container_types WHERE id = $1`, [req.params.id])
     if (!result.rows[0]) return res.status(404).json({ error: 'Container type not found' })
     res.json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.post('/container-types', auth, async (req, res) => {
@@ -36,7 +37,7 @@ router.post('/container-types', auth, async (req, res) => {
     res.status(201).json(result.rows[0])
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ error: 'Container type code already exists' })
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: sanitizeError(e) })
   }
 })
 
@@ -59,7 +60,7 @@ router.put('/container-types/:id', auth, async (req, res) => {
     res.json(result.rows[0])
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ error: 'Container type code already exists' })
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: sanitizeError(e) })
   }
 })
 
@@ -73,7 +74,7 @@ router.post('/container-types/:id/restore', auth, async (req, res) => {
     if (!result.rows[0]) return res.status(404).json({ error: 'Container type not found' })
     await auditLog(req.user.id, 'container_type_restored', 'container_type', parseInt(req.params.id), result.rows[0].name, {})
     res.json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // DELETE — soft (archive) by default, hard delete with ?permanent=1
@@ -113,7 +114,7 @@ router.delete('/container-types/:id', auth, async (req, res) => {
     if (!result.rows[0]) return res.status(404).json({ error: 'Container type not found' })
     await auditLog(req.user.id, 'container_type_archived', 'container_type', parseInt(req.params.id), result.rows[0].name, {})
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 module.exports = router

@@ -1,4 +1,5 @@
 const express = require('express')
+const { sanitizeError } = require('../errors')
 const router = express.Router()
 const crypto = require('crypto')
 const { query, withTransaction } = require('../db')
@@ -166,7 +167,7 @@ router.get('/shopify-webhook/recent', auth, async (req, res) => {
        FROM production_orders WHERE shopify_draft_order_id IS NOT NULL ORDER BY updated_at DESC LIMIT 10`
     )
     res.json({ webhooks_processed: received.rows, orders_with_shopify: orders.rows })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 router.get('/shopify-sync/status', auth, async (req, res) => {
@@ -180,7 +181,7 @@ router.get('/shopify-sync/status', auth, async (req, res) => {
       `SELECT id, action_type, attempts, last_error, created_at FROM pending_shopify_sync WHERE status = 'failed' ORDER BY created_at DESC LIMIT 20`
     )
     res.json({ counts, failed_items: failed.rows })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 module.exports = router

@@ -1,4 +1,5 @@
 const express = require('express')
+const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query, withTransaction } = require('../db')
 const { auth, auditLog } = require('../auth')
@@ -44,7 +45,7 @@ router.get('/product-types', auth, async (req, res) => {
        ORDER BY p.segment, p.name`
     )
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // GET /api/masters?segment=MUSE|STANDARD|MAJOR&client_id=X — filtered list
@@ -76,7 +77,7 @@ router.get('/masters', auth, async (req, res) => {
     q += ` ORDER BY p.name`
     const result = await query(q, params)
     res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // GET /api/masters/:id — full detail (master + BOM + fragrances + variants)
@@ -133,7 +134,7 @@ router.get('/masters/:id', auth, async (req, res) => {
       fragrances: fragRes.rows,
       variants: variantsRes.rows,
     })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // POST /api/masters — create master + (optional) generate variants
@@ -263,7 +264,7 @@ router.post('/masters', auth, async (req, res) => {
     res.status(201).json(result)
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ error: 'Product code already exists' })
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: sanitizeError(e) })
   }
 })
 
@@ -290,7 +291,7 @@ router.put('/masters/:id', auth, async (req, res) => {
     if (!result.rows[0]) return res.status(404).json({ error: 'Master not found' })
     await auditLog(req.user.id, 'master_updated', 'product', parseInt(req.params.id), result.rows[0].name, req.body)
     res.json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // DELETE /api/masters/:id — soft archive (preserves variants/stock/history)
@@ -303,7 +304,7 @@ router.delete('/masters/:id', auth, async (req, res) => {
     if (!result.rows[0]) return res.status(404).json({ error: 'Master not found' })
     await auditLog(req.user.id, 'master_archived', 'product', parseInt(req.params.id), result.rows[0].name, { segment: result.rows[0].segment })
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // POST /api/masters/:id/fragrances — add fragrance, auto-create variant if MUSE
@@ -354,7 +355,7 @@ router.post('/masters/:id/fragrances', auth, async (req, res) => {
 
     await auditLog(req.user.id, 'master_fragrance_added', 'product', master.id, master.name, { fragrance_id, variant_created: result.variant_id })
     res.json({ success: true, ...result })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 // DELETE /api/masters/:id/fragrances/:fragId — remove fragrance, archive variant (preserves stock history)
@@ -383,7 +384,7 @@ router.delete('/masters/:id/fragrances/:fragId', auth, async (req, res) => {
 
     await auditLog(req.user.id, 'master_fragrance_removed', 'product', master.id, master.name, { fragrance_id: parseInt(req.params.fragId) })
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 module.exports = router
