@@ -96,7 +96,27 @@ async function reconcile(srcQ, tgtQ) {
   add('table set', srcTables.join(','), tgtTables.join(','), srcTables.join(',') === tgtTables.join(','));
 
   // 2. Row count per table
+  // `users` is the one sanctioned divergence: platform-only users (seeded
+  // Root, users created in the platform) are MIRRORED into sa.users for FK
+  // integrity. Check: every source user exists intact in target; extras must
+  // all be registered platform users.
   for (const t of srcTables) {
+    if (t === 'users') {
+      const srcUsers = (await srcQ(`SELECT COUNT(*) FROM public.users`)).rows[0].count;
+      const matched = (
+        await tgtQ(`SELECT COUNT(*) FROM sa.users s
+                    WHERE EXISTS (SELECT 1 FROM platform.users p
+                                  WHERE p.sa_user_id = s.id::text AND p.name = s.name)`)
+      ).rows[0].count;
+      add('rows: users (source preserved)', srcUsers, matched);
+      const extras = (
+        await tgtQ(`SELECT COUNT(*) FROM sa.users s
+                    WHERE NOT EXISTS (SELECT 1 FROM platform.users p WHERE p.sa_user_id = s.id::text)
+                      AND NOT EXISTS (SELECT 1 FROM platform.users p WHERE p.id = s.id)`)
+      ).rows[0].count;
+      add('users: unexplained extras', 0, extras, String(extras) === '0');
+      continue;
+    }
     const s = (await srcQ(`SELECT COUNT(*) FROM public."${t}"`)).rows[0].count;
     const g = tgtTables.includes(t)
       ? (await tgtQ(`SELECT COUNT(*) FROM sa."${t}"`)).rows[0].count
@@ -152,11 +172,26 @@ async function reconcile(srcQ, tgtQ) {
 }
 
 // ── User import (§11.4) ───────────────────────────────────────────────────
+// ID ALIGNMENT (audit finding 2026-07-08): sa.audit_log, sa.transactions,
+// sa.purchase_orders and sa.scented_product_groups all carry FK constraints
+// to sa.users(id), and SA routes write req.user.id (the PLATFORM id) into
+// them. Therefore:
+//   1. Users are imported PRESERVING their sa.users id, so platform id ==
+//      sa id for every migrated user.
+//   2. Every platform-only user (seeded Root, users created later) is
+//      MIRRORED into sa.users under the same id, so the FKs always resolve
+//      and Activity Log name joins stay correct.
+// The platform router repeats the mirror on user create/delete (see
+// router.js) — this function re-establishes the invariant on each run.
 async function importUsers(tgt) {
-  console.log('[users] Importing sa.users → platform.users (upsert by name)...');
+  console.log('[users] Importing sa.users → platform.users (ids preserved)...');
+
+  // Re-align: drop previously imported users (platform-only users survive).
+  await tgt.query(`DELETE FROM platform.users WHERE sa_user_id IS NOT NULL`);
+
   const res = await tgt.query(`
-    INSERT INTO platform.users (name, password_hash, role, must_change_password, sa_user_id)
-    SELECT name, password, role, COALESCE(must_change_password, false), id::text
+    INSERT INTO platform.users (id, name, password_hash, role, must_change_password, sa_user_id)
+    SELECT id, name, password, role, COALESCE(must_change_password, false), id::text
     FROM sa.users
     ON CONFLICT (name) DO UPDATE SET
       password_hash = EXCLUDED.password_hash,
@@ -165,6 +200,27 @@ async function importUsers(tgt) {
       sa_user_id = EXCLUDED.sa_user_id
     RETURNING id, name, role
   `);
+  await tgt.query(`
+    SELECT setval(pg_get_serial_sequence('platform.users','id'),
+                  GREATEST((SELECT COALESCE(MAX(id),1) FROM platform.users), 1))
+  `);
+
+  // Mirror platform-only users into sa.users (same id; hash reused only to
+  // satisfy NOT NULL — SA no longer has a login path).
+  const mirrored = await tgt.query(`
+    INSERT INTO sa.users (id, name, password, role, must_change_password)
+    SELECT p.id, p.name, p.password_hash, p.role, false
+    FROM platform.users p
+    WHERE NOT EXISTS (SELECT 1 FROM sa.users s WHERE s.id = p.id)
+    ON CONFLICT DO NOTHING
+    RETURNING id, name
+  `);
+  await tgt.query(`
+    SELECT setval(pg_get_serial_sequence('sa.users','id'),
+                  GREATEST((SELECT COALESCE(MAX(id),1) FROM sa.users),
+                           (SELECT COALESCE(MAX(id),1) FROM platform.users)))
+  `);
+
   // Default module access (additive — never strips manual grants):
   // everyone → SA; root → also SM. Technicians get SA only.
   await tgt.query(`
@@ -177,8 +233,20 @@ async function importUsers(tgt) {
     SELECT id, 'SM' FROM platform.users WHERE role = 'root' AND sa_user_id IS NOT NULL
     ON CONFLICT DO NOTHING
   `);
-  console.log(`[users] Imported/updated ${res.rowCount} users (SA passwords preserved — bcrypt hashes copied as-is).`);
-  for (const u of res.rows) console.log(`         · ${u.name} (${u.role})`);
+
+  console.log(`[users] Imported ${res.rowCount} users with sa ids preserved; mirrored ${mirrored.rowCount} platform-only users into sa.users.`);
+
+  // Invariant check: every platform user must now exist in sa.users with the same id
+  const broken = await tgt.query(`
+    SELECT p.id, p.name FROM platform.users p
+    LEFT JOIN sa.users s ON s.id = p.id
+    WHERE s.id IS NULL
+  `);
+  if (broken.rows.length > 0) {
+    console.error('[users] ❌ ID-alignment invariant broken for:', JSON.stringify(broken.rows));
+    throw new Error('User id alignment failed');
+  }
+  console.log('[users] ✅ ID-alignment invariant verified (platform.users ⊆ sa.users by id).');
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────

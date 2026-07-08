@@ -437,8 +437,9 @@ export default function ProductManagement({ user }) {
   // ── PO Bulk Import handlers ──────────────────────────────────────────
   const handleDownloadTemplate = async () => {
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch('/api/po/template', { headers: { Authorization: `Bearer ${token}` } });
+      // Platform port: the fetch interceptor injects the Bearer token — the
+      // manual header (old 'token' localStorage key) would override it with null.
+      const res = await fetch('/api/po/template');
       if (!res.ok) throw new Error('Download failed');
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);

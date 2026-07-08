@@ -1700,7 +1700,7 @@ router.delete('/attachments/:id', async (req, res) => {
       return res.status(404).json({ error: 'Attachment not found' });
     }
     
-    const filePath = join(__dirname, '../uploads', result.rows[0].stored_file_name);
+    const filePath = join(__dirname, '../../uploads', result.rows[0].stored_file_name);
     if (existsSync(filePath)) {
       await fs.unlink(filePath);
     }

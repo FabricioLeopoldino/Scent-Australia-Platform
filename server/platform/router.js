@@ -1,6 +1,6 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
-import { platformPool } from '../db.js';
+import { platformPool, saPool } from '../db.js';
 import {
   makeToken,
   loginLimiter,
@@ -27,6 +27,38 @@ async function setUserModules(userId, modules) {
       `INSERT INTO platform.user_modules (user_id, module) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
       [userId, m]
     );
+  }
+}
+
+// ID-alignment mirror (audit finding 2026-07-08): sa.audit_log/transactions/
+// purchase_orders/scented_product_groups have FKs to sa.users(id), and SA
+// routes write req.user.id (platform id). Every platform user must therefore
+// exist in sa.users under the SAME id. Best-effort: before the SA migration
+// runs, sa.users doesn't exist yet — warn and continue (SA module has no
+// data to operate on in that state anyway).
+async function mirrorUserToSa(user, passwordHash) {
+  try {
+    await saPool.query(
+      `INSERT INTO users (id, name, password, role, must_change_password)
+       VALUES ($1, $2, $3, $4, false)
+       ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, role = EXCLUDED.role`,
+      [user.id, user.name, passwordHash, user.role]
+    );
+    await saPool.query(
+      `SELECT setval(pg_get_serial_sequence('users','id'),
+                     GREATEST((SELECT COALESCE(MAX(id),1) FROM users), $1))`,
+      [user.id]
+    );
+  } catch (e) {
+    console.warn('[users] sa.users mirror skipped:', e.message);
+  }
+}
+
+async function removeUserFromSa(userId) {
+  try {
+    await saPool.query(`DELETE FROM users WHERE id = $1`, [userId]);
+  } catch (e) {
+    console.warn('[users] sa.users mirror-delete skipped:', e.message);
   }
 }
 
@@ -159,6 +191,9 @@ router.post('/users', requireRole('root'), async (req, res) => {
     const finalModules = role === 'technician' && requested.length === 0 ? ['SA'] : requested;
     await setUserModules(user.id, finalModules);
 
+    // Keep sa.users id-aligned (FK integrity for SA audit/transactions)
+    await mirrorUserToSa(user, hash);
+
     await auditLog(req.user.id, 'user_created', 'user', user.id, { name: user.name, role, modules: finalModules });
     res.status(201).json({ user: publicUser(user, finalModules), tempPassword });
   } catch (e) {
@@ -249,6 +284,7 @@ router.delete('/users/:id', requireRole('root'), async (req, res) => {
 
     // History preserved: audit_log/transfers reference via ON DELETE SET NULL (FR-USER-4)
     await platformPool.query(`DELETE FROM platform.users WHERE id = $1`, [userId]);
+    await removeUserFromSa(userId); // sa-side FKs nullify history, same as production SA
     await auditLog(req.user.id, 'user_deleted', 'user', userId, { name: target.rows[0].name });
     res.json({ success: true });
   } catch (e) {
