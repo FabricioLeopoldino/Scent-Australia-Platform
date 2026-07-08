@@ -1,5 +1,7 @@
 import crypto from 'crypto';
 import { saWebhookHandler } from '../sa/index.js';
+import smModule from '../sm/index.cjs';
+const { smWebhookHandler } = smModule;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Platform webhook receiver — PRD §10 (FR-HOOK-2..6)
@@ -81,9 +83,9 @@ export async function shopifyWebhookReceiver(req, res) {
   }
 
   if (SM_TOPICS.has(topic)) {
-    // SM handler lands in Phase 3a/5 — acknowledge so Shopify doesn't retry.
-    console.log(`[webhook] SM topic ${topic} acknowledged (handler arrives in Phase 3/5)`);
-    return res.status(200).json({ received: true, pending: 'sm_handler_phase3' });
+    // SM handler re-verifies HMAC on req.rawBody with the same aliased
+    // secret (harmless double check), then matches by 'SM Order: SM-###'.
+    return smWebhookHandler(req, res);
   }
 
   console.log(`[webhook] Unhandled topic ${topic} — acknowledged`);

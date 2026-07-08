@@ -14,6 +14,8 @@
 
 const express = require('express')
 const { query, runStartupMigrations } = require('./db')
+const { smWebhookHandler } = require('./routes/webhooks')
+const { startSyncCron, registerWebhooks } = require('./services/shopify-sync')
 
 const smRouter = express.Router()
 
@@ -69,4 +71,11 @@ async function syncPlatformUsersToSm() {
   console.log('[sm] ✅ platform.users mirrored into sm.users (id-aligned).')
 }
 
-module.exports = { smRouter, runSmStartupMigrations: runStartupMigrations, syncPlatformUsersToSm }
+module.exports = {
+  smRouter,
+  runSmStartupMigrations: runStartupMigrations,
+  syncPlatformUsersToSm,
+  smWebhookHandler,
+  smStartSyncCron: startSyncCron,
+  smRegisterWebhooks: registerWebhooks,
+}

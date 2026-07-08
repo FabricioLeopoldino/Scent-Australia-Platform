@@ -31,6 +31,7 @@ async function processDraftOrder(payload) {
     [payload.production_order_id]
   )
 
+  // FR-HOOK-5 (shared store): no SKUs on SM draft-order line items.
   const lineItems = lines.rows.map(l => ({
     title: `${l.master_name || l.product_type.replace(/_/g, ' ')} — ${l.fragrance_name || 'N/A'}`,
     quantity: l.quantity,
@@ -149,11 +150,18 @@ function startSyncCron() {
 async function registerWebhooks() {
   const domain = process.env.SHOPIFY_SHOP_DOMAIN
   const token  = process.env.SHOPIFY_ACCESS_TOKEN
-  const host   = process.env.RENDER_EXTERNAL_URL || `https://${process.env.SHOPIFY_SHOP_DOMAIN?.replace('.myshopify.com', '')}.onrender.com`
+  // PLATFORM PORT (Phase 5): callback targets the platform receiver at the
+  // public platform URL. https-only guard prevents local dev boots from
+  // registering localhost callbacks against the real store.
+  const host   = process.env.PLATFORM_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL
 
   if (!domain || !token) return
+  if (!host || !host.startsWith('https://')) {
+    console.log('[shopify-webhooks] No public https URL — skipping registration (local dev)')
+    return
+  }
 
-  const callbackUrl = `${host}/api/webhook/shopify`
+  const callbackUrl = `${host}/api/webhook/shopify/sa` // platform receiver, shared SA store (OD1)
   const topics = ['orders/paid', 'orders/cancelled']
 
   for (const topic of topics) {

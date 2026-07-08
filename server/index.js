@@ -14,7 +14,7 @@ import { router as saRouter, runSaStartupMigrations } from './sa/index.js';
 import { shopifyWebhookReceiver } from './platform/webhooks.js';
 // CJS interop (Appendix A 9b): default import = module.exports
 import smModule from './sm/index.cjs';
-const { smRouter, runSmStartupMigrations, syncPlatformUsersToSm } = smModule;
+const { smRouter, runSmStartupMigrations, syncPlatformUsersToSm, smStartSyncCron, smRegisterWebhooks } = smModule;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,6 +34,25 @@ process.env.SHOPIFY_WEBHOOK_SECRET =
   process.env.SA_SHOPIFY_WEBHOOK_SECRET ||
   process.env.SCENT_SHOPIFY_WEBHOOK_SECRET ||
   '';
+
+// Outbound Shopify (Phase 5, OD1: one physical store). SA legacy names +
+// SM legacy names both resolve to the SA store credentials.
+// SHOPIFY_SYNC_ENABLED is intentionally NOT aliased until cutover — it
+// would make SA auto-create Shopify products from staging activity.
+process.env.SHOPIFY_STORE_NAME =
+  process.env.SHOPIFY_STORE_NAME ||
+  process.env.SA_SHOPIFY_STORE_NAME ||
+  process.env.SCENT_SHOPIFY_STORE_NAME ||
+  '';
+process.env.SHOPIFY_ACCESS_TOKEN =
+  process.env.SHOPIFY_ACCESS_TOKEN ||
+  process.env.SA_SHOPIFY_ACCESS_TOKEN ||
+  process.env.SCENT_SHOPIFY_ACCESS_TOKEN ||
+  '';
+process.env.SHOPIFY_SHOP_DOMAIN =
+  process.env.SHOPIFY_SHOP_DOMAIN ||
+  process.env.SM_SHOPIFY_STORE_DOMAIN ||
+  (process.env.SHOPIFY_STORE_NAME ? `${process.env.SHOPIFY_STORE_NAME}.myshopify.com` : '');
 
 // Trust Render's load balancer so express-rate-limit reads the real client IP
 app.set('trust proxy', 1);
@@ -148,6 +167,11 @@ async function start() {
     // users into sm.users (id-aligned — FK integrity, audit finding 2026-07-08)
     await runSmStartupMigrations();
     await syncPlatformUsersToSm();
+    // Phase 5: Shopify retry-queue cron (drains pending_shopify_sync) and
+    // SM topic auto-registration — registration self-skips without a public
+    // https URL, so local dev never touches the real store.
+    smStartSyncCron();
+    smRegisterWebhooks().catch((e) => console.warn('[shopify-webhooks] registration failed:', e.message));
   } else if (IS_PRODUCTION) {
     console.error('[fatal] PLATFORM_DATABASE_URL is required in production.');
     process.exit(1);

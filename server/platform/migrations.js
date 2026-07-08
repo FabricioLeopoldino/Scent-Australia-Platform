@@ -106,6 +106,14 @@ export async function runPlatformMigrations() {
     )
   `);
 
+  // ── Shopify store config (Phase 5, OD1: single physical store) ─────────
+  await q(`
+    INSERT INTO platform.shopify_stores (key, domain, api_version, topics, enabled)
+    VALUES ('sa', 'sainternalstore7811121.myshopify.com', '2025-01',
+            '["fulfillments/create","fulfillments/update","orders/paid","orders/cancelled"]'::jsonb, true)
+    ON CONFLICT (key) DO NOTHING
+  `);
+
   // ── Seed root user if none exist (SA pattern: default password + forced change) ──
   // Replaced by the real SA user import at Phase 2a (scripts/migrate-sa.js).
   const userCount = await q(`SELECT COUNT(*) FROM platform.users`);

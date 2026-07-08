@@ -8,7 +8,7 @@ const { enqueueDraftOrder } = require('../services/shopify-sync')
 
 const processingOrders = new Set()
 
-router.post('/webhook/shopify', async (req, res) => {
+async function smWebhookHandler(req, res) {
   const topic = req.headers['x-shopify-topic'] || 'unknown'
   console.log(`[webhook] received topic=${topic}`)
 
@@ -16,7 +16,7 @@ router.post('/webhook/shopify', async (req, res) => {
   const secret = process.env.SHOPIFY_WEBHOOK_SECRET || process.env.SHOPIFY_API_SECRET
   if (secret) {
     const hmac = req.headers['x-shopify-hmac-sha256']
-    const body = Buffer.isBuffer(req.body) ? req.body : Buffer.from(typeof req.body === 'string' ? req.body : JSON.stringify(req.body))
+    const body = req.rawBody || (Buffer.isBuffer(req.body) ? req.body : Buffer.from(typeof req.body === 'string' ? req.body : JSON.stringify(req.body)))
     const digest = crypto.createHmac('sha256', secret).update(body).digest('base64')
     if (!hmac || digest !== hmac) {
       console.warn(`[webhook] HMAC mismatch — topic=${topic} expected=${digest} got=${hmac}`)
@@ -86,7 +86,8 @@ router.post('/webhook/shopify', async (req, res) => {
   } catch (e) {
     console.error('[webhook] error:', e.message)
   }
-})
+}
+router.post('/webhook/shopify', smWebhookHandler)
 
 router.post('/shopify/draft-order', auth, async (req, res) => {
   try {
@@ -110,6 +111,8 @@ router.post('/shopify/draft-order', auth, async (req, res) => {
       [production_order_id]
     )
 
+    // FR-HOOK-5 (shared store): SM draft-order line items MUST NOT carry SKUs —
+    // the SA webhook debits by SKU match; a SKU here would cross-debit SA stock.
     const lineItems = lines.rows.map(l => ({
       title: `${l.master_name || l.product_type.replace(/_/g, ' ')} — ${l.fragrance_name || 'N/A'}`,
       quantity: l.quantity,
@@ -185,3 +188,4 @@ router.get('/shopify-sync/status', auth, async (req, res) => {
 })
 
 module.exports = router
+module.exports.smWebhookHandler = smWebhookHandler
