@@ -9,6 +9,7 @@ import { isDbConfigured, platformPool } from './db.js';
 import { runPlatformMigrations } from './platform/migrations.js';
 import { requireAuth, requireModule } from './platform/auth.js';
 import platformRouter from './platform/router.js';
+import { router as saRouter, runSaStartupMigrations } from './sa/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -88,11 +89,14 @@ app.use('/api', (req, res, next) => {
 // ── Module routers ────────────────────────────────────────────────────────
 app.use('/api/platform', platformRouter);
 
-// SA/SM stubs — the requireModule guard is live NOW (testable per Phase 1
-// verification); the real routers replace the 501 handlers in Phases 2b/3a.
-app.use('/api/sa', requireModule('SA'), (_req, res) =>
-  res.status(501).json({ error: 'SA module not yet mounted (Phase 2)' })
-);
+// SA module — the production monolith mounted as a router (Phase 2b,
+// Appendix A conversion; SQL/business logic untouched, schema sa).
+app.use('/api/sa', requireModule('SA'), saRouter);
+
+// SA legacy uploads (multer, disk) served at platform level
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// SM stub — replaced by the real routers in Phase 3a.
 app.use('/api/sm', requireModule('SM'), (_req, res) =>
   res.status(501).json({ error: 'SM module not yet mounted (Phase 3)' })
 );
@@ -114,6 +118,9 @@ if (IS_PRODUCTION) {
 async function start() {
   if (isDbConfigured()) {
     await runPlatformMigrations();
+    // SA inline migrations (idempotent, no-ops on migrated data) — run on the
+    // sa pool so unqualified DDL resolves to schema sa.
+    await runSaStartupMigrations();
   } else if (IS_PRODUCTION) {
     console.error('[fatal] PLATFORM_DATABASE_URL is required in production.');
     process.exit(1);
