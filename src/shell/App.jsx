@@ -1,49 +1,50 @@
 import { useState } from 'react';
+import { Route, Switch, useLocation } from 'wouter';
 import Login from './Login.jsx';
 import ChangePassword from './ChangePassword.jsx';
 import ModulePicker from './ModulePicker.jsx';
 import UserManagement from './UserManagement.jsx';
+import SAModule from '../sa/SAModule.jsx';
 import {
   getStoredUser,
   storeSession,
   clearSession,
   setActiveModule,
-  getActiveModule,
 } from './api.js';
 
 // Shell flow (PRD Appendix B): Login → forced password change → Module Picker
-// → module screens. SA/SM module UIs land in Phases 2c/3c — until then a
-// placeholder confirms module entry and guard behavior.
+// → module routes (/sa/*, /sm/*). URL-driven via wouter; module guards per B5.
 export default function App() {
   const [user, setUser] = useState(getStoredUser);
-  const [screen, setScreen] = useState(() => (getActiveModule() ? 'module' : 'picker'));
+  const [, navigate] = useLocation();
 
   function handleLogin(token, userData) {
     storeSession(token, userData);
     setUser(userData);
-    setScreen('picker'); // B1/B2 — always land on the picker
+    setActiveModule(null);
+    navigate('/'); // B1/B2 — always land on the picker
   }
 
   function handlePasswordChanged(token, userData) {
     storeSession(token, userData);
     setUser(userData);
-    setScreen('picker');
+    navigate('/');
   }
 
   function handleLogout() {
     clearSession();
     setUser(null);
-    setScreen('picker');
+    navigate('/');
   }
 
   function handlePick(moduleKey) {
     setActiveModule(moduleKey); // B3 — persist active module
-    setScreen('module');
+    navigate(moduleKey === 'SA' ? '/sa' : '/sm');
   }
 
   function backToPicker() {
     setActiveModule(null);
-    setScreen('picker');
+    navigate('/');
   }
 
   if (!user) return <Login onLogin={handleLogin} />;
@@ -52,46 +53,60 @@ export default function App() {
     return <ChangePassword user={user} onChanged={handlePasswordChanged} onLogout={handleLogout} />;
   }
 
-  if (screen === 'users' && user.role === 'root') {
-    return <UserManagement currentUser={user} onBack={() => setScreen('picker')} />;
-  }
+  const hasModule = (m) => (user.modules || []).includes(m);
 
-  if (screen === 'module') {
-    const active = getActiveModule();
-    // B5 — no access → back to picker
-    if (!active || !(user.modules || []).includes(active)) {
-      setActiveModule(null);
-      return (
+  return (
+    <Switch>
+      <Route path="/users">
+        {user.role === 'root'
+          ? <UserManagement currentUser={user} onBack={backToPicker} />
+          : <RedirectToPicker onDone={backToPicker} />}
+      </Route>
+
+      <Route path="/sa" nest>
+        {hasModule('SA')
+          ? <SAWrapper user={user} onSwitchModule={backToPicker} onLogout={handleLogout} />
+          : <RedirectToPicker onDone={backToPicker} />}
+      </Route>
+
+      <Route path="/sm" nest>
+        {hasModule('SM')
+          ? <SMPlaceholder onBack={backToPicker} onLogout={handleLogout} />
+          : <RedirectToPicker onDone={backToPicker} />}
+      </Route>
+
+      <Route>
         <ModulePicker
           user={user}
           onPick={handlePick}
           onLogout={handleLogout}
-          onOpenUsers={() => setScreen('users')}
+          onOpenUsers={() => navigate('/users')}
         />
-      );
-    }
-    return <ModulePlaceholder moduleKey={active} onBack={backToPicker} onLogout={handleLogout} />;
-  }
-
-  return (
-    <ModulePicker
-      user={user}
-      onPick={handlePick}
-      onLogout={handleLogout}
-      onOpenUsers={() => setScreen('users')}
-    />
+      </Route>
+    </Switch>
   );
 }
 
-// Replaced by the real module UIs in Phases 2c (SA) and 3c (SM).
-function ModulePlaceholder({ moduleKey, onBack, onLogout }) {
-  const names = { SA: 'Scent Stock Manager', SM: 'Scented Merchandise' };
-  const phase = moduleKey === 'SA' ? 'Phase 2' : 'Phase 3';
+function SAWrapper({ user, onSwitchModule, onLogout }) {
+  // Ensure the interceptor prefixes /api → /api/sa for SA pages even after
+  // a full page reload directly on an /sa/* URL.
+  setActiveModule('SA');
+  return <SAModule user={user} onSwitchModule={onSwitchModule} onLogout={onLogout} />;
+}
+
+// B5 — no access → back to picker
+function RedirectToPicker({ onDone }) {
+  onDone();
+  return null;
+}
+
+// Replaced by the real SM module UI in Phase 3c.
+function SMPlaceholder({ onBack, onLogout }) {
   return (
     <div className="center-screen" style={{ flexDirection: 'column', gap: 14 }}>
-      <h1 style={{ fontSize: 22 }}>{names[moduleKey] || moduleKey}</h1>
+      <h1 style={{ fontSize: 22 }}>Scented Merchandise</h1>
       <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>
-        Module UI arrives in {phase}. Access guard verified — you are inside the {moduleKey} module.
+        Module UI arrives in Phase 3. Access guard verified — you are inside the SM module.
       </p>
       <div style={{ display: 'flex', gap: 12 }}>
         <button className="btn btn-ghost" onClick={onBack}>Switch module</button>

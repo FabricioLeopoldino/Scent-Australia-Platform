@@ -49,11 +49,21 @@ export function apiBase(module) {
   return '/api/platform';
 }
 
+// Paths that must never be module-prefixed
+const NON_MODULE_PREFIXES = ['/api/platform', '/api/sa', '/api/sm', '/api/webhook', '/api/health'];
+
 // Global fetch patch — call once from main.jsx before the app renders.
+// FR-AUTH-7 + PRD §7.4: legacy module pages keep calling fetch('/api/...');
+// the interceptor rewrites those to the active module's base (/api/sa|/api/sm)
+// so page code stays byte-identical to the original systems.
 export function installFetchInterceptor() {
   const _fetch = window.fetch.bind(window);
   window.fetch = (url, options = {}) => {
     if (typeof url === 'string' && url.startsWith('/api/')) {
+      const active = getActiveModule();
+      if (active && !NON_MODULE_PREFIXES.some((p) => url === p || url.startsWith(p + '/'))) {
+        url = apiBase(active) + url.slice('/api'.length);
+      }
       const token = getToken();
       if (token) {
         options = { ...options, headers: { Authorization: `Bearer ${token}`, ...options.headers } };

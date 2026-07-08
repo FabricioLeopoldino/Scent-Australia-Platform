@@ -16,7 +16,8 @@ a module picker, and cross-system fragrance transfers.
 | 1 | Platform core (auth, users, module picker) | ✅ done (2026-07-07) — verified against Neon |
 | 2a | SA migration script + reconciliation | ✅ done (2026-07-08) — ALL PASS in 81s, corrupt-test FAILs correctly |
 | 2b | SA monolith → /api/sa router (Appendix A) | ✅ done (2026-07-08) — 85 routes live, SQL byte-identical |
-| 2c–2d | SA frontend port + webhook/regression | — |
+| 2c | SA frontend under /sa/* (18 pages) | ✅ done (2026-07-08) — build + SPA smoke OK |
+| 2d | SA webhook + full regression | — |
 | 3a–3c | SM module port + hardening | — |
 | 4 | Cross-system transfers | — |
 | 5 | Shopify wiring | — |
