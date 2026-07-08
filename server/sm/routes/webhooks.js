@@ -13,7 +13,7 @@ async function smWebhookHandler(req, res) {
   console.log(`[webhook] received topic=${topic}`)
 
   // HMAC verification — for API-registered webhooks, secret = SHOPIFY_API_SECRET (client secret)
-  const secret = process.env.SHOPIFY_WEBHOOK_SECRET || process.env.SHOPIFY_API_SECRET
+  const secret = req.hmacVerified ? null : (process.env.SHOPIFY_WEBHOOK_SECRET || process.env.SHOPIFY_API_SECRET)
   if (secret) {
     const hmac = req.headers['x-shopify-hmac-sha256']
     const body = req.rawBody || (Buffer.isBuffer(req.body) ? req.body : Buffer.from(typeof req.body === 'string' ? req.body : JSON.stringify(req.body)))

@@ -17,14 +17,22 @@ const { smWebhookHandler } = smModule;
 // and handed to the module handler (which also reads req.rawBody).
 // ═══════════════════════════════════════════════════════════════════════
 
+// A single physical store can sign with TWO different keys:
+//   - admin-created webhooks (SA's fulfillments/*) sign with the
+//     Notifications-page secret
+//   - API-registered webhooks (SM's orders/*) sign with the custom app's
+//     API SECRET KEY (shpss_...) — the trap the old Muse repo hit too
+// The receiver therefore accepts a LIST of candidate secrets per store.
 const STORE_SECRETS = {
-  sa: () =>
-    process.env.SA_SHOPIFY_WEBHOOK_SECRET ||
-    process.env.SCENT_SHOPIFY_WEBHOOK_SECRET, // owner's Render env-group alias
-  sm: () =>
-    process.env.SM_SHOPIFY_WEBHOOK_SECRET ||
-    process.env.SA_SHOPIFY_WEBHOOK_SECRET || // phase 1: same physical store
-    process.env.SCENT_SHOPIFY_WEBHOOK_SECRET,
+  sa: () => [
+    process.env.SA_SHOPIFY_WEBHOOK_SECRET || process.env.SCENT_SHOPIFY_WEBHOOK_SECRET, // manual/admin webhooks
+    process.env.SA_SHOPIFY_API_SECRET || process.env.SHOPIFY_API_SECRET,               // API-registered webhooks
+  ].filter(Boolean),
+  sm: () => [
+    process.env.SM_SHOPIFY_WEBHOOK_SECRET,
+    process.env.SA_SHOPIFY_WEBHOOK_SECRET || process.env.SCENT_SHOPIFY_WEBHOOK_SECRET, // phase 1: same physical store
+    process.env.SA_SHOPIFY_API_SECRET || process.env.SHOPIFY_API_SECRET,
+  ].filter(Boolean),
 };
 
 // Topics → module. SA and SM topic sets are disjoint by design (guardrails:
@@ -39,8 +47,8 @@ export async function shopifyWebhookReceiver(req, res) {
   const secretFn = STORE_SECRETS[store];
   if (!secretFn) return res.status(404).json({ error: 'Unknown store' });
 
-  const secret = secretFn();
-  if (!secret) {
+  const secrets = secretFn();
+  if (secrets.length === 0) {
     if (process.env.NODE_ENV === 'production') {
       console.error(`[webhook] No webhook secret configured for store "${store}" — rejecting`);
       return res.status(500).json({ error: 'Webhook secret not configured' });
@@ -48,21 +56,25 @@ export async function shopifyWebhookReceiver(req, res) {
     console.warn(`[webhook] No secret for store "${store}" — dev mode, skipping HMAC`);
   }
 
-  // ── HMAC on the raw bytes (FR-HOOK-6) ──────────────────────────────────
+  // ── HMAC on the raw bytes (FR-HOOK-6) — any candidate secret may match ──
   const rawBody = Buffer.isBuffer(req.body)
     ? req.body
     : Buffer.from(typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {}));
 
-  if (secret) {
+  if (secrets.length > 0) {
     const hmacHeader = req.headers['x-shopify-hmac-sha256'];
     if (!hmacHeader) return res.status(401).json({ error: 'Missing webhook signature' });
-    const digest = crypto.createHmac('sha256', secret).update(rawBody).digest('base64');
-    const trusted = Buffer.from(digest);
     const received = Buffer.from(hmacHeader);
-    if (trusted.length !== received.length || !crypto.timingSafeEqual(trusted, received)) {
+    const matched = secrets.some((secret) => {
+      const digest = Buffer.from(crypto.createHmac('sha256', secret).update(rawBody).digest('base64'));
+      return digest.length === received.length && crypto.timingSafeEqual(digest, received);
+    });
+    if (!matched) {
       console.warn(`[webhook] HMAC mismatch — store=${store} topic=${topic}`);
       return res.status(401).json({ error: 'Invalid webhook signature' });
     }
+    // Module handlers may skip their internal recheck — receiver is authoritative.
+    req.hmacVerified = true;
   }
 
   // ── Parse + hand off with SA-handler expectations intact ───────────────
