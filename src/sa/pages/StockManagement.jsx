@@ -155,7 +155,7 @@ export default function StockManagement({ user }) {
     <div className="container" style={{ paddingTop: '40px' }}>
       <div className="page-header">
         <h2 className="page-title">STOCK MANAGEMENT</h2>
-        <LiquidMetalButton label="Tech Stock" width={130} onClick={() => window.location.href = '/tech-stock'} />
+        <LiquidMetalButton label="Tech Stock" width={130} onClick={() => window.location.href = '/sa/tech-stock'} />
       </div>
 
       {/* Filters */}

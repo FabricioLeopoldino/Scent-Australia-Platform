@@ -63,13 +63,15 @@ export default function App() {
           : <RedirectToPicker onDone={backToPicker} />}
       </Route>
 
-      <Route path="/sa" nest>
+      {/* No `nest` here — SAModule's own <Router base="/sa"> is the single
+          prefixer. nest + base together double-prefixed links to /sa/sa/... */}
+      <Route path="/sa/*?">
         {hasModule('SA')
           ? <SAWrapper user={user} onSwitchModule={backToPicker} onLogout={handleLogout} />
           : <RedirectToPicker onDone={backToPicker} />}
       </Route>
 
-      <Route path="/sm" nest>
+      <Route path="/sm/*?">
         {hasModule('SM')
           ? <SMPlaceholder onBack={backToPicker} onLogout={handleLogout} />
           : <RedirectToPicker onDone={backToPicker} />}

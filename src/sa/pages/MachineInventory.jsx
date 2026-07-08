@@ -359,7 +359,7 @@ export default function MachineInventory({ user }) {
 
       {/* Action Buttons */}
       <div style={{ display: 'flex', gap: 12, marginBottom: '24px', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
-        <LiquidMetalButton label="🧩 Diffuser BOM" width={168} onClick={() => window.location.href = '/diffuser-bom'} />
+        <LiquidMetalButton label="🧩 Diffuser BOM" width={168} onClick={() => window.location.href = '/sa/diffuser-bom'} />
         {['admin', 'root'].includes(user?.role) && (
           <button
             className="btn btn-primary"

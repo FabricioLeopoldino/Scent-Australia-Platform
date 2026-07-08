@@ -645,7 +645,7 @@ export default function ProductManagement({ user }) {
 
         {/* Right-side group: BOM + Add Product */}
         <div style={{ display: 'flex', gap: 12, marginLeft: 'auto', alignItems: 'center' }}>
-          <LiquidMetalButton label="🧩 BOM" width={108} onClick={() => window.location.href = '/bom'} />
+          <LiquidMetalButton label="🧩 BOM" width={108} onClick={() => window.location.href = '/sa/bom'} />
           {['admin', 'root'].includes(user.role) && (
             <button
               className="btn btn-primary"
