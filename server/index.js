@@ -10,6 +10,7 @@ import { runPlatformMigrations } from './platform/migrations.js';
 import { requireAuth, requireModule } from './platform/auth.js';
 import platformRouter from './platform/router.js';
 import { router as saRouter, runSaStartupMigrations } from './sa/index.js';
+import { shopifyWebhookReceiver } from './platform/webhooks.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,6 +18,18 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+
+// ── Env aliases for the SA module (legacy names) ─────────────────────────
+// ONLY the webhook secret is aliased: the SA handler re-verifies HMAC under
+// its legacy name (harmless — same bytes, same secret). Outbound Shopify
+// creds (SHOPIFY_ACCESS_TOKEN / STORE_NAME / SYNC_ENABLED) are deliberately
+// NOT aliased until Phase 5 so no test or staging run can write to the
+// production Shopify store.
+process.env.SHOPIFY_WEBHOOK_SECRET =
+  process.env.SHOPIFY_WEBHOOK_SECRET ||
+  process.env.SA_SHOPIFY_WEBHOOK_SECRET ||
+  process.env.SCENT_SHOPIFY_WEBHOOK_SECRET ||
+  '';
 
 // Trust Render's load balancer so express-rate-limit reads the real client IP
 app.set('trust proxy', 1);
@@ -101,7 +114,9 @@ app.use('/api/sm', requireModule('SM'), (_req, res) =>
   res.status(501).json({ error: 'SM module not yet mounted (Phase 3)' })
 );
 
-// Phase 5: app.post('/api/webhook/shopify/:store', webhookReceiver)
+// Webhook receiver (PRD §10) — public, HMAC-authed; raw body preserved by
+// the express.raw mount above. Registered in Shopify only at cutover.
+app.post('/api/webhook/shopify/:store', shopifyWebhookReceiver);
 
 // ── Static frontend + SPA catch-all ──────────────────────────────────────
 if (IS_PRODUCTION) {
