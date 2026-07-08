@@ -11,6 +11,9 @@ import { requireAuth, requireModule } from './platform/auth.js';
 import platformRouter from './platform/router.js';
 import { router as saRouter, runSaStartupMigrations } from './sa/index.js';
 import { shopifyWebhookReceiver } from './platform/webhooks.js';
+// CJS interop (Appendix A 9b): default import = module.exports
+import smModule from './sm/index.cjs';
+const { smRouter, runSmStartupMigrations, syncPlatformUsersToSm } = smModule;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -109,10 +112,10 @@ app.use('/api/sa', requireModule('SA'), saRouter);
 // SA legacy uploads (multer, disk) served at platform level
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-// SM stub — replaced by the real routers in Phase 3a.
-app.use('/api/sm', requireModule('SM'), (_req, res) =>
-  res.status(501).json({ error: 'SM module not yet mounted (Phase 3)' })
-);
+// SM module — original CJS routers behind platform auth (Phase 3a).
+// routes/auth.js, routes/reset.js and the OAuth flow are deliberately
+// NOT mounted (superseded / dangerous / Phase 5).
+app.use('/api/sm', requireModule('SM'), smRouter);
 
 // Webhook receiver (PRD §10) — public, HMAC-authed; raw body preserved by
 // the express.raw mount above. Registered in Shopify only at cutover.
@@ -136,6 +139,10 @@ async function start() {
     // SA inline migrations (idempotent, no-ops on migrated data) — run on the
     // sa pool so unqualified DDL resolves to schema sa.
     await runSaStartupMigrations();
+    // SM startup migrations create/maintain schema sm; then mirror platform
+    // users into sm.users (id-aligned — FK integrity, audit finding 2026-07-08)
+    await runSmStartupMigrations();
+    await syncPlatformUsersToSm();
   } else if (IS_PRODUCTION) {
     console.error('[fatal] PLATFORM_DATABASE_URL is required in production.');
     process.exit(1);
