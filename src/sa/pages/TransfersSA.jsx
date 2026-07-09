@@ -235,6 +235,13 @@ export default function TransfersSA({ user }) {
               </div>
               <button className="btn btn-primary" disabled={!saPick || !smPick} onClick={() => createLink(saPick, smPick)}>Link</button>
             </div>
+            {pickers.sm_products.length === 0 && (
+              <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-secondary)' }}>
+                No matching SM fragrance{searchQ ? ` for "${searchQ}"` : ''}. Create it first in{' '}
+                <strong>Scented Merchandise → Stock Management → New Product</strong> (category Fragrance),
+                then come back here to link it.
+              </div>
+            )}
             {pickers.suggestions.length > 0 && (
               <div style={{ marginTop: 14 }}>
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>Suggested matches (same name):</div>
