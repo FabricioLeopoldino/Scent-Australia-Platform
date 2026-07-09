@@ -48,6 +48,20 @@ router.get('/product-links', requireRole('root', 'admin'), async (_req, res) => 
   }
 });
 
+// Read-only link map for SM UI badges (any SM user, not just admins):
+// which SM fragrances are linked to which SA oil (code/name for display).
+router.get('/product-links/sm-map', requireModuleAccess('SM'), async (_req, res) => {
+  try {
+    const r = await platformPool.query(
+      `SELECT sm_product_id, sa_product_id, sa_code, sa_name FROM platform.product_links`
+    );
+    res.json(r.rows);
+  } catch (e) {
+    console.error('[links/sm-map]', e.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Pickers + naive name-match suggestions
 router.get('/product-links/suggest', requireRole('root', 'admin'), async (req, res) => {
   try {

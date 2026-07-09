@@ -77,7 +77,20 @@ export default function StockManagement() {
   const [barcodeCopies, setBarcodeCopies] = useState(1)
   const [attachModal, setAttachModal] = useState(null)
   const [allProducts, setAllProducts] = useState([]) // full list — for unique code suggestion
+  const [saLinks, setSaLinks] = useState({}) // sm_product_id → {sa_code, sa_name} (fragrance transfer links)
   const { addToast } = useToast()
+
+  // SA link badges — which fragrances are linked to an SA oil (visual only;
+  // codes stay independent per system, the link table is the source of truth).
+  useEffect(() => {
+    axios.get('/api/platform/product-links/sm-map', api())
+      .then(r => {
+        const map = {}
+        for (const row of r.data) map[row.sm_product_id] = row
+        setSaLinks(map)
+      })
+      .catch(() => {}) // badge is optional decoration — never block the page
+  }, [])
 
   function printBarcode() {
     if (!barcodeTarget) return
@@ -473,6 +486,14 @@ export default function StockManagement() {
                         <div style={{ fontSize: 13, fontWeight: 600, color: '#e8eaf2', display: 'flex', alignItems: 'center', gap: 6 }}>
                           {p.name}
                           {p.archived && <span style={{ background: 'rgba(248,113,113,0.12)', color: '#f87171', padding: '1px 7px', borderRadius: 20, fontSize: 9, fontWeight: 800, letterSpacing: 0.4 }}>ARCHIVED</span>}
+                          {p.category === 'FRAGRANCE' && !p._source && saLinks[p.id] && (
+                            <span
+                              title={`Linked to SA fragrance oil "${saLinks[p.id].sa_name}" (${saLinks[p.id].sa_code}) — receives stock via transfers`}
+                              style={{ background: 'rgba(96,165,250,0.12)', color: '#60a5fa', border: '1px solid rgba(96,165,250,0.25)', padding: '1px 7px', borderRadius: 20, fontSize: 9, fontWeight: 800, letterSpacing: 0.4, fontFamily: 'monospace', cursor: 'help', whiteSpace: 'nowrap' }}
+                            >
+                              ⇄ SA {saLinks[p.id].sa_code}
+                            </span>
+                          )}
                         </div>
                         {!isClientStock && (
                           <span style={{ background: `${CAT_COLORS[p.category]}20`, color: CAT_COLORS[p.category], padding: '1px 7px', borderRadius: 20, fontSize: 10, fontWeight: 700 }}>
