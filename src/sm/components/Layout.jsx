@@ -65,6 +65,11 @@ export default function Layout({ children }) {
   const [location, navigate] = useLocation()
   const { user, logout } = useAuth()
 
+  // D7 amendment: the active tile decides the view (and the sidebar brand) —
+  //   MUSE tile → MU:SE mark + only view:'muse'/'both' sections
+  //   SM tile   → Scented Merchandise brand + everything except view:'muse'
+  const activeView = (typeof localStorage !== 'undefined' && localStorage.getItem('platform_active_module')) === 'MUSE' ? 'muse' : 'sm'
+
   const sidebarWidth = collapsed ? 64 : 220
 
   function toggleTheme() {
@@ -96,12 +101,20 @@ export default function Layout({ children }) {
           display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'space-between',
           minHeight: 64
         }}>
-          {!collapsed && (
+          {!collapsed && activeView === 'muse' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {/* MU:SE editorial mark + Scented Merchandise system name — kept together */}
+              {/* MUSE view — the MU:SE editorial mark is the brand */}
               <img src="/logos/muse-logo-parchment.svg" alt="MU:SE" className="theme-dark-only" style={{ height: 22, display: 'block' }} />
               <img src="/logos/muse-logo-wine.svg" alt="MU:SE" className="theme-light-only" style={{ height: 22, display: 'block' }} />
-              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+              <div style={{ fontSize: 8.5, fontWeight: 600, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                Own Brand
+              </div>
+            </div>
+          )}
+          {!collapsed && activeView === 'sm' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {/* SM view — Scented Merchandise wordmark (D7: MUSE mark lives on its own tile) */}
+              <div>
                 <div className="serif" style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.02em', lineHeight: 1.1 }}>
                   Scented Merchandise
                 </div>
@@ -111,10 +124,15 @@ export default function Layout({ children }) {
               </div>
             </div>
           )}
-          {collapsed && (
+          {collapsed && activeView === 'muse' && (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
               <img src="/logos/muse-colon-parchment.svg" alt="MU:SE" className="theme-dark-only" style={{ height: 22 }} />
               <img src="/logos/muse-colon-wine.svg" alt="MU:SE" className="theme-light-only" style={{ height: 22 }} />
+            </div>
+          )}
+          {collapsed && activeView === 'sm' && (
+            <div className="serif" style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.06em' }}>
+              SM
             </div>
           )}
           <button
@@ -132,10 +150,6 @@ export default function Layout({ children }) {
         {/* Nav */}
         <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto' }}>
           {NAV_SECTIONS.map((section, sIdx) => {
-            // D7 amendment: the active tile decides the view —
-            //   MUSE tile → only view:'muse' + view:'both' sections
-            //   SM tile   → everything except view:'muse'
-            const activeView = (typeof localStorage !== 'undefined' && localStorage.getItem('platform_active_module')) === 'MUSE' ? 'muse' : 'sm'
             const sectionView = section.view || 'sm'
             if (activeView === 'muse' && sectionView === 'sm') return null
             if (activeView === 'sm' && sectionView === 'muse') return null

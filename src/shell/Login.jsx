@@ -35,7 +35,10 @@ export default function Login({ onLogin }) {
     <div className="center-screen">
       <div className="card" style={{ width: '100%', maxWidth: 400 }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <h1 style={{ fontSize: 22, marginBottom: 6 }}>Scent Australia</h1>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>
+            <img src="/logo-dark.png" alt="Scent Australia" className="brand-logo-dark" style={{ height: 56 }} />
+            <img src="/logo-light.png" alt="Scent Australia" className="brand-logo-light" style={{ height: 56 }} />
+          </div>
           <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Platform sign in</p>
         </div>
         <form onSubmit={handleSubmit}>

@@ -5312,6 +5312,11 @@ async function runStartupMigrations() {
     // The original constraint only covers legacy types. Drop and recreate to
     // include the 5 new tech types. DO $$ block is idempotent (constraint may
     // already be updated on a re-deploy).
+    // PLATFORM DIVERGENCE (FR-XFER-9): 'transfer_out' and
+    // 'transfer_cancel_return' added — cross-system transfers write those
+    // rows into sa.transactions; without them this ADD CONSTRAINT fails on
+    // every boot after the first transfer (rolling back the DO block and
+    // skipping the rest of this migration).
     await pool.query(`
       DO $$
       BEGIN
@@ -5324,7 +5329,8 @@ async function runStartupMigrations() {
             'tech_transfer_out', 'tech_transfer_in',
             'tech_remove',
             'tech_return_from_tech', 'tech_return_to_main',
-            'tech_return_input'
+            'tech_return_input',
+            'transfer_out', 'transfer_cancel_return'
           ));
       END$$;
     `);

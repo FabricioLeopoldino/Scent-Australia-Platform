@@ -54,7 +54,7 @@ export default function ProductReturns({ user }) {
   const filteredProducts = allItems.filter(p => {
     if (categoryFilter === 'FORMULA') return p.category === 'FORMULA';
     if (categoryFilter !== 'ALL' && p.category !== categoryFilter) return false;
-    if (categoryFilter === 'ALL' && p.category === 'FORMULA' && !searchTerm) return false; // formulas só aparecem com busca ou tab própria
+    if (categoryFilter === 'ALL' && p.category === 'FORMULA' && !searchTerm) return false; // formulas only appear via search or their own tab
     if (!searchTerm) return true;
     const s = searchTerm.toLowerCase();
     return (

@@ -9,7 +9,7 @@ const toDateStr = (d) => {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
-}; // YYYY-MM-DD usando hora local (não UTC)
+}; // YYYY-MM-DD using local time (not UTC)
 
 const getPreset = (key) => {
   const now = new Date();

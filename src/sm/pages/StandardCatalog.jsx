@@ -394,7 +394,7 @@ function MasterCard({ master, onClick, onEdit, onDelete, onZoom, highlight }) {
   )
 }
 
-// Drawer com BOMEditor inline
+// Drawer with inline BOMEditor
 function StandardMasterDrawer({ master, onClose }) {
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9000, display: 'flex', justifyContent: 'flex-end' }}>

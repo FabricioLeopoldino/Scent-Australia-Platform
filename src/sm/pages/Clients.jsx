@@ -893,7 +893,7 @@ export default function Clients() {
               </div>
               <div className="form-group">
                 <label className="label">Notes</label>
-                <textarea value={newProductForm.notes} onChange={e => setNewProductForm(f => ({ ...f, notes: e.target.value }))} rows={2} placeholder="Descrição do produto..." className="input" style={{ resize: 'none' }} />
+                <textarea value={newProductForm.notes} onChange={e => setNewProductForm(f => ({ ...f, notes: e.target.value }))} rows={2} placeholder="Product description..." className="input" style={{ resize: 'none' }} />
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="label">Product Photo</label>

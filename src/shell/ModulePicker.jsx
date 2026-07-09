@@ -44,6 +44,10 @@ export default function ModulePicker({ user, onPick, onLogout, onOpenUsers }) {
   return (
     <div className="center-screen" style={{ flexDirection: 'column', gap: 8 }}>
       <div style={{ textAlign: 'center', marginBottom: 26 }}>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
+          <img src="/logo-dark.png" alt="Scent Australia" className="brand-logo-dark" style={{ height: 48 }} />
+          <img src="/logo-light.png" alt="Scent Australia" className="brand-logo-light" style={{ height: 48 }} />
+        </div>
         <h1 style={{ fontSize: 24, marginBottom: 8 }}>Scent Australia Platform</h1>
         <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>
           Welcome, <strong>{user.name}</strong> — choose a system
