@@ -30,6 +30,7 @@ const TYPE_LABELS = {
   tech_transfer:          { label: 'Tech Transfer',           color: '#fb923c' },
   tech_remove:            { label: 'Tech Remove',             color: '#f87171' },
   tech_return:            { label: 'Tech Return',             color: '#34d399' },
+  tech_batch:             { label: 'Tech Batch (Scanner)',    color: '#c084fc' },
 };
 
 const CATEGORY_LABELS = {
@@ -290,6 +291,26 @@ export default function ActivityLog({ user }) {
                       }
                     } else if (log.action === 'formula_deleted') {
                       notesDisplay = `${d.product_code} · ${d.tag}`;
+                    } else if (log.action === 'tech_transfer' || log.action === 'tech_remove' || log.action === 'tech_return') {
+                      const ml = d.quantity || 0;
+                      const qtyStr = d.unit === 'mL'
+                        ? `${(ml / 1000).toLocaleString('en-AU', { maximumFractionDigits: 3 })} L`
+                        : `${ml} ${d.unit || ''}`;
+                      notesDisplay = qtyStr + (d.notes ? ` · ${d.notes}` : '');
+                    } else if (log.action === 'tech_batch') {
+                      const actionLabels = { transfer: '↗ Transfer', remove: '↘ Remove', return: '↩ Return to Main', 'return-input': '↙ Return Tech' };
+                      const results = Array.isArray(d.results) ? d.results : [];
+                      const totalMl = results.reduce((s, r) => s + (r.quantity || 0), 0);
+                      const oilList = results.map(r => {
+                        const L = r.unit === 'mL'
+                          ? `${(r.quantity / 1000).toLocaleString('en-AU', { maximumFractionDigits: 2 })} L`
+                          : `${r.quantity} ${r.unit}`;
+                        return `${r.name} (${L})`;
+                      }).join(' · ');
+                      const totalStr = totalMl > 0
+                        ? ` — ${(totalMl / 1000).toLocaleString('en-AU', { maximumFractionDigits: 2 })} L total`
+                        : '';
+                      notesDisplay = `${actionLabels[d.action] || d.action}${totalStr}${oilList ? ` · ${oilList}` : ''}${d.notes ? ` · ${d.notes}` : ''}`;
                     } else if (log.action === 'formula_ready_received') {
                       const ml = d.quantityMl || 0;
                       const total = d.newTotalMl || 0;

@@ -5665,6 +5665,154 @@ router.post('/tech-stock/return-input', async (req, res) => {
   }
 });
 
+// POST /api/tech-stock/batch — execute a batch of tech operations from the scanner flow
+// (SA v2.8.0 upgrade, ported 2026-07-10 — Appendix A conversion: app.→router., /api strip)
+router.post('/tech-stock/batch', async (req, res) => {
+  if (!TECH_ROLES.includes(req.user.role)) return res.status(403).json({ error: 'Not authorised' });
+  const { action, items, notes } = req.body;
+  if (!['transfer', 'remove', 'return', 'return-input'].includes(action)) {
+    return res.status(400).json({ error: 'Invalid action' });
+  }
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'items array required' });
+  }
+
+  const batchRef = `BATCH_${Date.now()}`;
+  const batchNote = notes ? `[${batchRef}] ${notes}` : `[${batchRef}]`;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const results = [];
+
+    for (const item of items) {
+      const qty = parseFloat(item.quantity);
+      if (!item.productId || isNaN(qty) || qty <= 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Each item requires productId and a positive quantity' });
+      }
+
+      if (action === 'transfer') {
+        const pRes = await client.query(
+          `SELECT id, "productCode", name, "currentStock", unit FROM products WHERE id = $1 AND category = 'OILS' FOR UPDATE`,
+          [item.productId]
+        );
+        if (!pRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: `Product not found: ${item.productId}` }); }
+        const p = pRes.rows[0];
+        const mainStock = parseFloat(p.currentStock);
+        if (qty > mainStock) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `Insufficient main stock for ${p.name}. Available: ${mainStock} ${p.unit}` });
+        }
+        const newMain = mainStock - qty;
+        await client.query(`UPDATE products SET "currentStock" = $1 WHERE id = $2`, [newMain, item.productId]);
+        const tsRes = await client.query(
+          `INSERT INTO tech_stock (product_id, quantity, updated_at) VALUES ($1, $2, NOW())
+           ON CONFLICT (product_id) DO UPDATE SET quantity = tech_stock.quantity + $2, updated_at = NOW()
+           RETURNING quantity`,
+          [item.productId, qty]
+        );
+        const newTech = parseFloat(tsRes.rows[0].quantity);
+        await client.query(
+          `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes) VALUES ($1,$2,$3,'OILS','tech_transfer_out',$4,$5,$6,$7)`,
+          [item.productId, p.productCode, p.name, qty, p.unit, newMain, batchNote]
+        );
+        await client.query(
+          `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes) VALUES ($1,$2,$3,'OILS','tech_transfer_in',$4,$5,$6,$7)`,
+          [item.productId, p.productCode, p.name, qty, p.unit, newTech, batchNote]
+        );
+        results.push({ productId: item.productId, name: p.name, code: p.productCode, quantity: qty, unit: p.unit, mainAfter: newMain, techAfter: newTech });
+
+      } else if (action === 'remove') {
+        const pRes = await client.query(
+          `SELECT p.id, p."productCode", p.name, p.unit, COALESCE(ts.quantity, 0) AS tech_qty
+           FROM products p LEFT JOIN tech_stock ts ON ts.product_id = p.id
+           WHERE p.id = $1 AND p.category = 'OILS' FOR UPDATE OF p`,
+          [item.productId]
+        );
+        if (!pRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: `Product not found: ${item.productId}` }); }
+        const p = pRes.rows[0];
+        const techQty = parseFloat(p.tech_qty);
+        if (qty > techQty) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `Insufficient tech stock for ${p.name}. Available: ${techQty} ${p.unit}` });
+        }
+        const newTech = techQty - qty;
+        await client.query(`UPDATE tech_stock SET quantity = $1, updated_at = NOW() WHERE product_id = $2`, [newTech, item.productId]);
+        await client.query(
+          `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes) VALUES ($1,$2,$3,'OILS','tech_remove',$4,$5,$6,$7)`,
+          [item.productId, p.productCode, p.name, qty, p.unit, newTech, batchNote]
+        );
+        results.push({ productId: item.productId, name: p.name, code: p.productCode, quantity: qty, unit: p.unit, techAfter: newTech });
+
+      } else if (action === 'return') {
+        const pRes = await client.query(
+          `SELECT p.id, p."productCode", p.name, p."currentStock", p.unit, COALESCE(ts.quantity, 0) AS tech_qty
+           FROM products p LEFT JOIN tech_stock ts ON ts.product_id = p.id
+           WHERE p.id = $1 AND p.category = 'OILS' FOR UPDATE OF p`,
+          [item.productId]
+        );
+        if (!pRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: `Product not found: ${item.productId}` }); }
+        const p = pRes.rows[0];
+        const techQty = parseFloat(p.tech_qty);
+        const mainStock = parseFloat(p.currentStock);
+        if (qty > techQty) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `Insufficient tech stock for ${p.name}. Available: ${techQty} ${p.unit}` });
+        }
+        const newTech = techQty - qty;
+        const newMain = mainStock + qty;
+        await client.query(`UPDATE tech_stock SET quantity = $1, updated_at = NOW() WHERE product_id = $2`, [newTech, item.productId]);
+        await client.query(`UPDATE products SET "currentStock" = $1 WHERE id = $2`, [newMain, item.productId]);
+        await client.query(
+          `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes) VALUES ($1,$2,$3,'OILS','tech_return_from_tech',$4,$5,$6,$7)`,
+          [item.productId, p.productCode, p.name, qty, p.unit, newTech, batchNote]
+        );
+        await client.query(
+          `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes) VALUES ($1,$2,$3,'OILS','tech_return_to_main',$4,$5,$6,$7)`,
+          [item.productId, p.productCode, p.name, qty, p.unit, newMain, batchNote]
+        );
+        results.push({ productId: item.productId, name: p.name, code: p.productCode, quantity: qty, unit: p.unit, mainAfter: newMain, techAfter: newTech });
+
+      } else if (action === 'return-input') {
+        const pRes = await client.query(
+          `SELECT p.id, p."productCode", p.name, p.unit FROM products p WHERE p.id = $1 AND p.category = 'OILS' FOR UPDATE`,
+          [item.productId]
+        );
+        if (!pRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: `Product not found: ${item.productId}` }); }
+        const p = pRes.rows[0];
+        const tsRes = await client.query(
+          `INSERT INTO tech_stock (product_id, quantity, updated_at) VALUES ($1, $2, NOW())
+           ON CONFLICT (product_id) DO UPDATE SET quantity = tech_stock.quantity + $2, updated_at = NOW()
+           RETURNING quantity`,
+          [item.productId, qty]
+        );
+        const newTech = parseFloat(tsRes.rows[0].quantity);
+        await client.query(
+          `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes) VALUES ($1,$2,$3,'OILS','tech_return_input',$4,$5,$6,$7)`,
+          [item.productId, p.productCode, p.name, qty, p.unit, newTech, batchNote]
+        );
+        results.push({ productId: item.productId, name: p.name, code: p.productCode, quantity: qty, unit: p.unit, techAfter: newTech });
+      }
+    }
+
+    const actionLabels = { transfer: 'Transfer ↗', remove: 'Remove ↘', return: 'Return to Main ↩', 'return-input': 'Return Tech ↙' };
+    await client.query(
+      `INSERT INTO audit_log (user_id, action, entity_type, entity_id, entity_name, details)
+       VALUES ($1, 'tech_batch', 'tech_stock', $2, $3, $4)`,
+      [req.user.id, batchRef, `${actionLabels[action]} — ${items.length} oil(s)`, JSON.stringify({ action, batchRef, itemCount: items.length, results, notes: notes || null })]
+    );
+
+    await client.query('COMMIT');
+    res.json({ success: true, batchRef, action, results });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('POST /api/tech-stock/batch error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
+  }
+});
+
 // PUT /api/tech-stock/:productId/config — root sets target_quantity and/or is_tech_active
 router.put('/tech-stock/:productId/config', async (req, res) => {
   if (req.user.role !== 'root') return res.status(403).json({ error: 'Only root can configure tech stock' });
