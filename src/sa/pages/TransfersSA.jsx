@@ -22,6 +22,7 @@ export default function TransfersSA({ user }) {
   const [searchQ, setSearchQ] = useState('');
   const [saPick, setSaPick] = useState('');
   const [smPick, setSmPick] = useState('');
+  const [linking, setLinking] = useState(false);
 
   const isAdmin = ['root', 'admin'].includes(user?.role);
 
@@ -85,19 +86,32 @@ export default function TransfersSA({ user }) {
   }
 
   async function createLink(saId, smId) {
-    const res = await fetch('/api/platform/product-links', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sa_product_id: saId, sm_product_id: parseInt(smId) }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok) { showToast('Products linked', 'success'); setSaPick(''); setSmPick(''); loadAll(); loadPickers(searchQ); }
-    else showToast(data.error || 'Link failed', 'error');
+    setLinking(true);
+    try {
+      const res = await fetch('/api/platform/product-links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sa_product_id: saId, sm_product_id: parseInt(smId) }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) { showToast('Products linked', 'success'); setSaPick(''); setSmPick(''); loadAll(); loadPickers(searchQ); }
+      else showToast(data.error || 'Link failed', 'error');
+    } catch {
+      showToast('Connection error — link not saved, please try again', 'error');
+    } finally {
+      setLinking(false);
+    }
   }
 
   async function deleteLink(id) {
-    const res = await fetch(`/api/platform/product-links/${id}`, { method: 'DELETE' });
-    if (res.ok) { showToast('Link removed', 'success'); loadAll(); }
+    try {
+      const res = await fetch(`/api/platform/product-links/${id}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) { showToast('Link removed', 'success'); loadAll(); }
+      else showToast(data.error || 'Remove failed', 'error');
+    } catch {
+      showToast('Connection error — please try again', 'error');
+    }
   }
 
   const STATUS_COLORS = { in_transit: '#fbbf24', received: '#4ade80', cancelled: '#f87171' };
@@ -233,7 +247,9 @@ export default function TransfersSA({ user }) {
                   ))}
                 </select>
               </div>
-              <button className="btn btn-primary" disabled={!saPick || !smPick} onClick={() => createLink(saPick, smPick)}>Link</button>
+              <button className="btn btn-primary" disabled={!saPick || !smPick || linking} onClick={() => createLink(saPick, smPick)}>
+                {linking ? 'Linking...' : 'Link'}
+              </button>
             </div>
             {pickers.sm_products.length === 0 && (
               <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-secondary)' }}>
@@ -248,7 +264,9 @@ export default function TransfersSA({ user }) {
                 {pickers.suggestions.map((s, i) => (
                   <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', fontSize: 13 }}>
                     <span>{s.sa.name} ↔ {s.sm.name}</span>
-                    <button className="btn" style={{ fontSize: 11 }} onClick={() => createLink(s.sa.id, s.sm.id)}>Link these</button>
+                    <button className="btn" style={{ fontSize: 11 }} disabled={linking} onClick={() => createLink(s.sa.id, s.sm.id)}>
+                      {linking ? 'Linking...' : 'Link these'}
+                    </button>
                   </div>
                 ))}
               </div>
