@@ -3,9 +3,11 @@ import { Moon, Sun } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export function ThemeToggle({ className }) {
+  // Single platform-wide theme key — shared with the SM module's toggle
+  // (two modules, one document, one preference).
   const [isDark, setIsDark] = useState(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('theme') !== 'light';
+      return localStorage.getItem('platform_theme') !== 'light';
     }
     return true;
   });
@@ -13,10 +15,10 @@ export function ThemeToggle({ className }) {
   useEffect(() => {
     if (isDark) {
       document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
+      localStorage.setItem('platform_theme', 'dark');
     } else {
       document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
+      localStorage.setItem('platform_theme', 'light');
     }
   }, [isDark]);
 

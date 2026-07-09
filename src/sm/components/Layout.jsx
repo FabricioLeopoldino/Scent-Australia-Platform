@@ -77,7 +77,7 @@ export default function Layout({ children }) {
     setTheme(next)
     if (next === 'dark') document.documentElement.classList.add('dark')
     else document.documentElement.classList.remove('dark')
-    try { localStorage.setItem('sm_theme', next) } catch {}
+    try { localStorage.setItem('platform_theme', next) } catch {} // shared platform-wide key
   }
 
   return (

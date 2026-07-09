@@ -13,11 +13,18 @@
       rel="stylesheet"
     />
     <script>
-      // Pick initial theme from localStorage; default dark (both legacy systems).
+      // ONE platform-wide theme key ('platform_theme'); default dark.
+      // Legacy keys ('theme' from SA, 'sm_theme' from SM) are migrated once —
+      // two modules on one document must share a single preference.
       try {
-        if (localStorage.getItem('theme') === 'light' || localStorage.getItem('sm_theme') === 'light') {
-          document.documentElement.classList.remove('dark');
+        var t = localStorage.getItem('platform_theme');
+        if (!t) {
+          t = localStorage.getItem('theme') || localStorage.getItem('sm_theme') || 'dark';
+          localStorage.setItem('platform_theme', t);
+          localStorage.removeItem('theme');
+          localStorage.removeItem('sm_theme');
         }
+        if (t === 'light') document.documentElement.classList.remove('dark');
       } catch {}
     </script>
   </head>

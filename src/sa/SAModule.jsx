@@ -51,7 +51,10 @@ function SAContent({ user, onSwitchModule, onLogout }) {
   const isActive = (path) => (path === '/' ? location === '/' : location.startsWith(path));
 
   return (
-    <div style={{ position: 'relative', zIndex: 1 }}>
+    // .sa-scope — SA's theme-repaint CSS in index.css is scoped here so it
+    // never bleeds into the SM module (which owns .sm-scope). Both modules'
+    // [style*=…] inline-style overrides are wrapper-scoped (2026-07-10 fix).
+    <div className="sa-scope" style={{ position: 'relative', zIndex: 1 }}>
       <nav className="nav">
         <div className="nav-container">
           {/* Brand */}

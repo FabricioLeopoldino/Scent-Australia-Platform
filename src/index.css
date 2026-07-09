@@ -86,12 +86,15 @@ html:not(.dark) .nav-links a.nav-active {
 }
 
 /* ── Fix headings & page titles ───────────────────────────── */
-html:not(.dark) h1, html:not(.dark) h2,
-html:not(.dark) h3, html:not(.dark) h4 { color: #1c1410; }
+/* NOTE (design collision fix 2026-07-10): SA light-mode overrides are scoped
+   to .sa-scope so they never repaint the SM module (.sm-scope owns its own
+   palette). Shell pages fall back to CSS vars, which are theme-correct. */
+html:not(.dark) .sa-scope h1, html:not(.dark) .sa-scope h2,
+html:not(.dark) .sa-scope h3, html:not(.dark) .sa-scope h4 { color: #1c1410; }
 
 /* ── Card & stat-card: white with soft shadow ─────────────── */
-html:not(.dark) .card,
-html:not(.dark) .stat-card {
+html:not(.dark) .sa-scope .card,
+html:not(.dark) .sa-scope .stat-card {
   background: rgba(255, 255, 255, 0.97) !important;
   border-color: rgba(28, 20, 16, 0.09) !important;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.07) !important;
@@ -149,63 +152,63 @@ html:not(.dark) .replenishment-modal [style*="rgba(255, 255, 255, 0.12)"] {
 
 /* ── Fix inline DARK backgrounds → warm light ─────────────── */
 /* These rgba values are how browsers store the inline styles set by React */
-html:not(.dark) [style*="rgba(14, 14, 26"],
-html:not(.dark) [style*="rgba(17, 24, 39"],
-html:not(.dark) [style*="rgba(7, 7, 13"] {
+html:not(.dark) .sa-scope [style*="rgba(14, 14, 26"],
+html:not(.dark) .sa-scope [style*="rgba(17, 24, 39"],
+html:not(.dark) .sa-scope [style*="rgba(7, 7, 13"] {
   background: rgba(244, 242, 239, 0.7) !important;
 }
-html:not(.dark) [style*="rgba(255, 255, 255, 0.03"],
-html:not(.dark) [style*="rgba(255, 255, 255, 0.04"],
-html:not(.dark) [style*="rgba(255, 255, 255, 0.05"],
-html:not(.dark) [style*="rgba(255, 255, 255, 0.06"] {
+html:not(.dark) .sa-scope [style*="rgba(255, 255, 255, 0.03"],
+html:not(.dark) .sa-scope [style*="rgba(255, 255, 255, 0.04"],
+html:not(.dark) .sa-scope [style*="rgba(255, 255, 255, 0.05"],
+html:not(.dark) .sa-scope [style*="rgba(255, 255, 255, 0.06"] {
   background: rgba(28, 20, 16, 0.03) !important;
 }
 
 /* ── Fix inline LIGHT text → dark warm text ───────────────── */
 /* Browser normalizes rgba(232,234,242,0.4) → rgba(232, 234, 242, 0.4) with spaces */
-html:not(.dark) [style*="rgba(232, 234, 242"],
-html:not(.dark) [style*="rgba(226, 232, 240"],
-html:not(.dark) [style*="rgba(203, 213, 225"],
-html:not(.dark) [style*="rgba(148, 163, 184"] {
+html:not(.dark) .sa-scope [style*="rgba(232, 234, 242"],
+html:not(.dark) .sa-scope [style*="rgba(226, 232, 240"],
+html:not(.dark) .sa-scope [style*="rgba(203, 213, 225"],
+html:not(.dark) .sa-scope [style*="rgba(148, 163, 184"] {
   color: rgba(28, 20, 16, 0.55) !important;
 }
 /* Browser normalizes hex #e8eaf2 → rgb(232, 234, 242) */
-html:not(.dark) [style*="rgb(232, 234, 242)"],
-html:not(.dark) [style*="rgb(226, 232, 240)"],
-html:not(.dark) [style*="rgb(203, 213, 225)"],
-html:not(.dark) [style*="rgb(148, 163, 184)"],
-html:not(.dark) [style*="rgb(156, 163, 175)"],
-html:not(.dark) [style*="rgb(100, 116, 139)"],
-html:not(.dark) [style*="rgb(107, 114, 128)"] {
+html:not(.dark) .sa-scope [style*="rgb(232, 234, 242)"],
+html:not(.dark) .sa-scope [style*="rgb(226, 232, 240)"],
+html:not(.dark) .sa-scope [style*="rgb(203, 213, 225)"],
+html:not(.dark) .sa-scope [style*="rgb(148, 163, 184)"],
+html:not(.dark) .sa-scope [style*="rgb(156, 163, 175)"],
+html:not(.dark) .sa-scope [style*="rgb(100, 116, 139)"],
+html:not(.dark) .sa-scope [style*="rgb(107, 114, 128)"] {
   color: rgba(28, 20, 16, 0.65) !important;
 }
 /* Light blue colors (#93c5fd, #60a5fa, #7dd3fc) used for dark mode links/numbers
    → replace with deep blue readable on cream background */
-html:not(.dark) [style*="rgb(147, 197, 253)"],
-html:not(.dark) [style*="rgb(96, 165, 250)"],
-html:not(.dark) [style*="rgb(125, 211, 252)"],
-html:not(.dark) [style*="rgb(59, 130, 246)"] {
+html:not(.dark) .sa-scope [style*="rgb(147, 197, 253)"],
+html:not(.dark) .sa-scope [style*="rgb(96, 165, 250)"],
+html:not(.dark) .sa-scope [style*="rgb(125, 211, 252)"],
+html:not(.dark) .sa-scope [style*="rgb(59, 130, 246)"] {
   color: #1d4ed8 !important;
 }
 /* fca5a5 (light red/pink used in dark mode) → deeper red in light mode */
-html:not(.dark) [style*="rgb(252, 165, 165)"] {
+html:not(.dark) .sa-scope [style*="rgb(252, 165, 165)"] {
   color: #b91c1c !important;
 }
 
-/* ── Table inside cards ───────────────────────────────────── */
-html:not(.dark) .table th { color: rgba(28, 20, 16, 0.5) !important; background: rgba(28,20,16,0.03) !important; }
-html:not(.dark) .table td { color: #1c1410 !important; border-color: rgba(28,20,16,0.07) !important; }
-html:not(.dark) .table tbody tr:hover { background: rgba(28,20,16,0.03) !important; }
+/* ── Table inside cards (scoped: .sm-scope styles its own tables) ── */
+html:not(.dark) .sa-scope .table th { color: rgba(28, 20, 16, 0.5) !important; background: rgba(28,20,16,0.03) !important; }
+html:not(.dark) .sa-scope .table td { color: #1c1410 !important; border-color: rgba(28,20,16,0.07) !important; }
+html:not(.dark) .sa-scope .table tbody tr:hover { background: rgba(28,20,16,0.03) !important; }
 
-/* ── Inputs & selects ─────────────────────────────────────── */
-html:not(.dark) .input,
-html:not(.dark) select,
-html:not(.dark) textarea {
+/* ── Inputs & selects (scoped: .sm-scope styles its own fields) ── */
+html:not(.dark) .sa-scope .input,
+html:not(.dark) .sa-scope select,
+html:not(.dark) .sa-scope textarea {
   background: #ffffff !important;
   color: #1c1410 !important;
   border-color: rgba(28, 20, 16, 0.15) !important;
 }
-html:not(.dark) select option { background: #ffffff; color: #1c1410; }
+html:not(.dark) .sa-scope select option { background: #ffffff; color: #1c1410; }
 
 /* ── Scrollbar ────────────────────────────────────────────── */
 html:not(.dark) ::-webkit-scrollbar-thumb { background: rgba(28, 20, 16, 0.15); }
@@ -1016,74 +1019,74 @@ select option {
 /* ─── GLOBAL DARK OVERRIDES (covers hardcoded light colors in page components) ── */
 
 /* Force dark backgrounds on any element using common light colors via inline style */
-[style*="background: white"],
-[style*="background:white"],
-[style*="background: #fff"],
-[style*="background: rgb(255, 255, 255)"],
-[style*="background-color: white"],
-[style*="background-color: #fff"] {
+.sa-scope [style*="background: white"],
+.sa-scope [style*="background:white"],
+.sa-scope [style*="background: #fff"],
+.sa-scope [style*="background: rgb(255, 255, 255)"],
+.sa-scope [style*="background-color: white"],
+.sa-scope [style*="background-color: #fff"] {
   background: rgba(255, 255, 255, 0.04) !important;
 }
 
-[style*="background: #f8fafc"],
-[style*="background: #f9fafb"],
-[style*="background: #f3f4f6"],
-[style*="background: #f1f5f9"] {
+.sa-scope [style*="background: #f8fafc"],
+.sa-scope [style*="background: #f9fafb"],
+.sa-scope [style*="background: #f3f4f6"],
+.sa-scope [style*="background: #f1f5f9"] {
   background: rgba(255, 255, 255, 0.03) !important;
 }
 
-[style*="background: #fef2f2"],
-[style*="background: #fee2e2"],
-[style*="background: #fecaca"] {
+.sa-scope [style*="background: #fef2f2"],
+.sa-scope [style*="background: #fee2e2"],
+.sa-scope [style*="background: #fecaca"] {
   background: rgba(239, 68, 68, 0.08) !important;
 }
 
-[style*="background: #fef3c7"],
-[style*="background: #fde68a"] {
+.sa-scope [style*="background: #fef3c7"],
+.sa-scope [style*="background: #fde68a"] {
   background: rgba(251, 191, 36, 0.08) !important;
 }
 
-[style*="background: #eff6ff"],
-[style*="background: #dbeafe"] {
+.sa-scope [style*="background: #eff6ff"],
+.sa-scope [style*="background: #dbeafe"] {
   background: rgba(59, 130, 246, 0.08) !important;
 }
 
-[style*="background: #dcfce7"],
-[style*="background: #d1fae5"] {
+.sa-scope [style*="background: #dcfce7"],
+.sa-scope [style*="background: #d1fae5"] {
   background: rgba(34, 197, 94, 0.08) !important;
 }
 
 /* Force dark text for common gray text colors */
-[style*="color: #374151"],
-[style*="color: #1f2937"],
-[style*="color: #111827"] {
+.sa-scope [style*="color: #374151"],
+.sa-scope [style*="color: #1f2937"],
+.sa-scope [style*="color: #111827"] {
   color: var(--text-primary) !important;
 }
 
-[style*="color: #6b7280"],
-[style*="color: #64748b"],
-[style*="color: #9ca3af"] {
+.sa-scope [style*="color: #6b7280"],
+.sa-scope [style*="color: #64748b"],
+.sa-scope [style*="color: #9ca3af"] {
   color: var(--text-secondary) !important;
 }
 
 /* Light border overrides */
-[style*="border: 1px solid #e2e8f0"],
-[style*="border: 1px solid #e5e7eb"],
-[style*="border: 2px solid #e2e8f0"] {
+.sa-scope [style*="border: 1px solid #e2e8f0"],
+.sa-scope [style*="border: 1px solid #e5e7eb"],
+.sa-scope [style*="border: 2px solid #e2e8f0"] {
   border-color: var(--border) !important;
 }
 
-[style*="border: 2px solid #fecaca"],
-[style*="border: 1px solid #fecaca"] {
+.sa-scope [style*="border: 2px solid #fecaca"],
+.sa-scope [style*="border: 1px solid #fecaca"] {
   border-color: rgba(239, 68, 68, 0.25) !important;
 }
 
-[style*="border: 1px solid #fde68a"] {
+.sa-scope [style*="border: 1px solid #fde68a"] {
   border-color: rgba(251, 191, 36, 0.25) !important;
 }
 
-[style*="borderBottom: 1px solid #e5e7eb"],
-[style*="border-bottom: 1px solid #e5e7eb"] {
+.sa-scope [style*="borderBottom: 1px solid #e5e7eb"],
+.sa-scope [style*="border-bottom: 1px solid #e5e7eb"] {
   border-bottom-color: var(--border) !important;
 }
 
@@ -1095,44 +1098,44 @@ select option {
   transform: translateY(-1px);
 }
 /* Purple/violet export buttons (Export All to Shopify style) */
-html.dark .btn[style*="rgba(99,60,196"]:hover,
-html.dark .btn[style*="rgba(99, 60, 196"]:hover {
+html.dark .sa-scope .btn[style*="rgba(99,60,196"]:hover,
+html.dark .sa-scope .btn[style*="rgba(99, 60, 196"]:hover {
   box-shadow: 0 4px 14px rgba(99, 60, 196, 0.3) !important;
   transform: translateY(-1px);
 }
-html:not(.dark) .btn-secondary:hover:not(:disabled) {
+html:not(.dark) .sa-scope .btn-secondary:hover:not(:disabled) {
   background: rgba(28, 20, 16, 0.08);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
 }
 
 /* ─── LIGHT MODE: MODAL ──────────────────────────────────── */
-html:not(.dark) .modal-overlay {
+html:not(.dark) .sa-scope .modal-overlay {
   background: rgba(0, 0, 0, 0.4);
 }
-html:not(.dark) .modal {
+html:not(.dark) .sa-scope .modal {
   background: rgba(255, 255, 255, 0.98) !important;
   border: 1px solid rgba(28, 20, 16, 0.1) !important;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.15) !important;
 }
-html:not(.dark) .modal-header {
+html:not(.dark) .sa-scope .modal-header {
   border-bottom-color: rgba(28, 20, 16, 0.09) !important;
 }
-html:not(.dark) .modal-header h2 { color: #1c1410 !important; }
-html:not(.dark) .modal-close {
+html:not(.dark) .sa-scope .modal-header h2 { color: #1c1410 !important; }
+html:not(.dark) .sa-scope .modal-close {
   background: rgba(28, 20, 16, 0.05) !important;
   border-color: rgba(28, 20, 16, 0.12) !important;
   color: rgba(28, 20, 16, 0.55) !important;
 }
-html:not(.dark) .modal-close:hover {
+html:not(.dark) .sa-scope .modal-close:hover {
   background: rgba(28, 20, 16, 0.1) !important;
   color: #1c1410 !important;
 }
-html:not(.dark) .modal form { background: transparent; }
-html:not(.dark) .modal-footer {
+html:not(.dark) .sa-scope .modal form { background: transparent; }
+html:not(.dark) .sa-scope .modal-footer {
   background: rgba(28, 20, 16, 0.03) !important;
   border-top-color: rgba(28, 20, 16, 0.09) !important;
 }
-html:not(.dark) .form-group label { color: rgba(28, 20, 16, 0.65) !important; }
+html:not(.dark) .sa-scope .form-group label { color: rgba(28, 20, 16, 0.65) !important; }
 
 /* ─── ERROR ALERT ─────────────────────────────────── */
 

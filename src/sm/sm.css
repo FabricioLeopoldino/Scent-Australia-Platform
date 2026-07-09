@@ -512,67 +512,67 @@ html:not(.dark) select optgroup {
 /* ── Dark page / card backgrounds → Parchment / Cloud Dancer ──────────────── */
 /* NOTE: browsers normalize inline hex to rgb() form, so we match BOTH formats.
    `#13132b` becomes `rgb(19, 19, 43)` in the live DOM attribute, etc. */
-html:not(.dark) [style*="rgb(19, 19, 43)"],
-html:not(.dark) [style*="rgb(26, 28, 46)"],
-html:not(.dark) [style*="rgb(30, 30, 58)"],
-html:not(.dark) [style*="rgb(30, 32, 53)"],
-html:not(.dark) [style*="rgb(15, 17, 23)"] {
+html:not(.dark) .sm-scope [style*="rgb(19, 19, 43)"],
+html:not(.dark) .sm-scope [style*="rgb(26, 28, 46)"],
+html:not(.dark) .sm-scope [style*="rgb(30, 30, 58)"],
+html:not(.dark) .sm-scope [style*="rgb(30, 32, 53)"],
+html:not(.dark) .sm-scope [style*="rgb(15, 17, 23)"] {
   background-color: #fbf9f1 !important;     /* Cloud Dancer for cards/modals */
 }
-html:not(.dark) [style*="rgb(14, 14, 26)"],
-html:not(.dark) [style*="rgb(7, 7, 13)"] {
+html:not(.dark) .sm-scope [style*="rgb(14, 14, 26)"],
+html:not(.dark) .sm-scope [style*="rgb(7, 7, 13)"] {
   background-color: #f2f0e6 !important;     /* Parchment for page-level bgs */
 }
 
 /* ── White-alpha surfaces (cards, hover states, dividers) ─────────────────── */
-html:not(.dark) [style*="rgba(255,255,255,0.04)"],
-html:not(.dark) [style*="rgba(255, 255, 255, 0.04)"],
-html:not(.dark) [style*="rgba(255,255,255,0.05)"],
-html:not(.dark) [style*="rgba(255, 255, 255, 0.05)"],
-html:not(.dark) [style*="rgba(255,255,255,0.06)"],
-html:not(.dark) [style*="rgba(255, 255, 255, 0.06)"] {
+html:not(.dark) .sm-scope [style*="rgba(255,255,255,0.04)"],
+html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.04)"],
+html:not(.dark) .sm-scope [style*="rgba(255,255,255,0.05)"],
+html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.05)"],
+html:not(.dark) .sm-scope [style*="rgba(255,255,255,0.06)"],
+html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.06)"] {
   background-color: rgba(97, 36, 40, 0.04) !important;       /* Wine wash */
   border-color: rgba(97, 36, 40, 0.18) !important;
 }
-html:not(.dark) [style*="rgba(255,255,255,0.08)"],
-html:not(.dark) [style*="rgba(255, 255, 255, 0.08)"],
-html:not(.dark) [style*="rgba(255,255,255,0.1)"],
-html:not(.dark) [style*="rgba(255, 255, 255, 0.1)"],
-html:not(.dark) [style*="rgba(255,255,255,0.12)"],
-html:not(.dark) [style*="rgba(255, 255, 255, 0.12)"] {
+html:not(.dark) .sm-scope [style*="rgba(255,255,255,0.08)"],
+html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.08)"],
+html:not(.dark) .sm-scope [style*="rgba(255,255,255,0.1)"],
+html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.1)"],
+html:not(.dark) .sm-scope [style*="rgba(255,255,255,0.12)"],
+html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.12)"] {
   border-color: rgba(97, 36, 40, 0.22) !important;
 }
 
 /* ── Light text colors → Deep Shadow / muted browns ───────────────────────── */
 /* Browser normalizes #e8eaf2 → rgb(232, 234, 242). Match both forms. */
-html:not(.dark) [style*="rgb(232, 234, 242)"]:not([style*="background"]) {
+html:not(.dark) .sm-scope [style*="rgb(232, 234, 242)"]:not([style*="background"]) {
   color: rgba(27, 9, 5, 0.85) !important;
 }
 /* For elements where rgb(232,234,242) IS the background (rare), repaint to cream */
-html:not(.dark) [style*="background: rgb(232, 234, 242)"],
-html:not(.dark) [style*="background:rgb(232, 234, 242)"] {
+html:not(.dark) .sm-scope [style*="background: rgb(232, 234, 242)"],
+html:not(.dark) .sm-scope [style*="background:rgb(232, 234, 242)"] {
   background-color: #fbf9f1 !important;
 }
 /* rgba(232, 234, 242, X) at various alphas — all dim/muted text. Map by alpha tier. */
-html:not(.dark) [style*="rgba(232, 234, 242, 0.4)"],
-html:not(.dark) [style*="rgba(232, 234, 242, 0.45)"],
-html:not(.dark) [style*="rgba(232, 234, 242, 0.5)"],
-html:not(.dark) [style*="rgba(232, 234, 242, 0.55)"] {
+html:not(.dark) .sm-scope [style*="rgba(232, 234, 242, 0.4)"],
+html:not(.dark) .sm-scope [style*="rgba(232, 234, 242, 0.45)"],
+html:not(.dark) .sm-scope [style*="rgba(232, 234, 242, 0.5)"],
+html:not(.dark) .sm-scope [style*="rgba(232, 234, 242, 0.55)"] {
   color: rgba(27, 9, 5, 0.6) !important;
 }
-html:not(.dark) [style*="rgba(232, 234, 242, 0.6)"],
-html:not(.dark) [style*="rgba(232, 234, 242, 0.65)"],
-html:not(.dark) [style*="rgba(232, 234, 242, 0.7)"],
-html:not(.dark) [style*="rgba(232, 234, 242, 0.75)"],
-html:not(.dark) [style*="rgba(232, 234, 242, 0.8)"],
-html:not(.dark) [style*="rgba(232, 234, 242, 0.85)"],
-html:not(.dark) [style*="rgba(232, 234, 242, 0.9)"] {
+html:not(.dark) .sm-scope [style*="rgba(232, 234, 242, 0.6)"],
+html:not(.dark) .sm-scope [style*="rgba(232, 234, 242, 0.65)"],
+html:not(.dark) .sm-scope [style*="rgba(232, 234, 242, 0.7)"],
+html:not(.dark) .sm-scope [style*="rgba(232, 234, 242, 0.75)"],
+html:not(.dark) .sm-scope [style*="rgba(232, 234, 242, 0.8)"],
+html:not(.dark) .sm-scope [style*="rgba(232, 234, 242, 0.85)"],
+html:not(.dark) .sm-scope [style*="rgba(232, 234, 242, 0.9)"] {
   color: rgba(27, 9, 5, 0.82) !important;
 }
-html:not(.dark) [style*="rgba(232, 234, 242, 0.2)"],
-html:not(.dark) [style*="rgba(232, 234, 242, 0.25)"],
-html:not(.dark) [style*="rgba(232, 234, 242, 0.3)"],
-html:not(.dark) [style*="rgba(232, 234, 242, 0.35)"] {
+html:not(.dark) .sm-scope [style*="rgba(232, 234, 242, 0.2)"],
+html:not(.dark) .sm-scope [style*="rgba(232, 234, 242, 0.25)"],
+html:not(.dark) .sm-scope [style*="rgba(232, 234, 242, 0.3)"],
+html:not(.dark) .sm-scope [style*="rgba(232, 234, 242, 0.35)"] {
   color: rgba(27, 9, 5, 0.42) !important;
 }
 
@@ -603,26 +603,26 @@ html:not(.dark) select:focus {
 }
 
 /* ── Borders using rgba(255,255,255,...) when used as solid border ────────── */
-html:not(.dark) [style*="border: 1px solid rgba(255,255,255,0.07)"],
-html:not(.dark) [style*="border: 1px solid rgba(255, 255, 255, 0.07)"],
-html:not(.dark) [style*="border: 1px solid rgba(255,255,255,0.08)"],
-html:not(.dark) [style*="border: 1px solid rgba(255, 255, 255, 0.08)"],
-html:not(.dark) [style*="border: 1px solid rgba(255,255,255,0.1)"],
-html:not(.dark) [style*="border: 1px solid rgba(255, 255, 255, 0.1)"],
-html:not(.dark) [style*="border: 1px solid rgba(255,255,255,0.12)"],
-html:not(.dark) [style*="border: 1px solid rgba(255, 255, 255, 0.12)"] {
+html:not(.dark) .sm-scope [style*="border: 1px solid rgba(255,255,255,0.07)"],
+html:not(.dark) .sm-scope [style*="border: 1px solid rgba(255, 255, 255, 0.07)"],
+html:not(.dark) .sm-scope [style*="border: 1px solid rgba(255,255,255,0.08)"],
+html:not(.dark) .sm-scope [style*="border: 1px solid rgba(255, 255, 255, 0.08)"],
+html:not(.dark) .sm-scope [style*="border: 1px solid rgba(255,255,255,0.1)"],
+html:not(.dark) .sm-scope [style*="border: 1px solid rgba(255, 255, 255, 0.1)"],
+html:not(.dark) .sm-scope [style*="border: 1px solid rgba(255,255,255,0.12)"],
+html:not(.dark) .sm-scope [style*="border: 1px solid rgba(255, 255, 255, 0.12)"] {
   border-color: rgba(97, 36, 40, 0.22) !important;
 }
 
 /* ── Overlays (modal backdrops) — soften pure black → Deep Shadow tint ────── */
-html:not(.dark) [style*="background: rgba(0,0,0,0.65)"],
-html:not(.dark) [style*="background: rgba(0, 0, 0, 0.65)"],
-html:not(.dark) [style*="background: rgba(0,0,0,0.7)"],
-html:not(.dark) [style*="background: rgba(0, 0, 0, 0.7)"],
-html:not(.dark) [style*="background: rgba(0,0,0,0.75)"],
-html:not(.dark) [style*="background: rgba(0, 0, 0, 0.75)"],
-html:not(.dark) [style*="background: rgba(0,0,0,0.85)"],
-html:not(.dark) [style*="background: rgba(0, 0, 0, 0.85)"] {
+html:not(.dark) .sm-scope [style*="background: rgba(0,0,0,0.65)"],
+html:not(.dark) .sm-scope [style*="background: rgba(0, 0, 0, 0.65)"],
+html:not(.dark) .sm-scope [style*="background: rgba(0,0,0,0.7)"],
+html:not(.dark) .sm-scope [style*="background: rgba(0, 0, 0, 0.7)"],
+html:not(.dark) .sm-scope [style*="background: rgba(0,0,0,0.75)"],
+html:not(.dark) .sm-scope [style*="background: rgba(0, 0, 0, 0.75)"],
+html:not(.dark) .sm-scope [style*="background: rgba(0,0,0,0.85)"],
+html:not(.dark) .sm-scope [style*="background: rgba(0, 0, 0, 0.85)"] {
   background-color: rgba(27, 9, 5, 0.35) !important;     /* Deep Shadow translucent */
 }
 
@@ -630,11 +630,11 @@ html:not(.dark) [style*="background: rgba(0, 0, 0, 0.85)"] {
    Used in lots of pages as the "info/primary" color. In light mode they look
    garish against parchment. Map the most common ones (matching rgb() form
    since browsers normalize hex into rgb in the live style attribute). */
-html:not(.dark) [style*="color: rgb(96, 165, 250)"]:not([style*="background"]) {
+html:not(.dark) .sm-scope [style*="color: rgb(96, 165, 250)"]:not([style*="background"]) {
   color: #612428 !important;                /* Wine Stain */
 }
-html:not(.dark) [style*="background: rgb(37, 99, 235)"],
-html:not(.dark) [style*="background-color: rgb(37, 99, 235)"] {
+html:not(.dark) .sm-scope [style*="background: rgb(37, 99, 235)"],
+html:not(.dark) .sm-scope [style*="background-color: rgb(37, 99, 235)"] {
   background-color: #612428 !important;
   color: #f2f0e6 !important;
 }
@@ -701,82 +701,82 @@ html.dark .sm-scope [style*="background-color: rgb(22, .sm-scope 24, .sm-scope 4
    light-mode fix. The eventual cleanup (tokens, delete this block) is MASTER §11. */
 
 /* Greens → Olive Leaf (success / SAFE / positive) */
-html:not(.dark) [style*="color: rgb(74, 222, 128)"],
-html:not(.dark) [style*="color: rgba(74, 222, 128"],
-html:not(.dark) [style*="color: rgb(52, 211, 153)"],
-html:not(.dark) [style*="color: rgba(52, 211, 153"],
-html:not(.dark) [style*="color: rgb(34, 197, 94)"],
-html:not(.dark) [style*="color: rgba(34, 197, 94"],
-html:not(.dark) [style*="color: rgb(16, 185, 129)"],
-html:not(.dark) [style*="color: rgba(16, 185, 129"] {
+html:not(.dark) .sm-scope [style*="color: rgb(74, 222, 128)"],
+html:not(.dark) .sm-scope [style*="color: rgba(74, 222, 128"],
+html:not(.dark) .sm-scope [style*="color: rgb(52, 211, 153)"],
+html:not(.dark) .sm-scope [style*="color: rgba(52, 211, 153"],
+html:not(.dark) .sm-scope [style*="color: rgb(34, 197, 94)"],
+html:not(.dark) .sm-scope [style*="color: rgba(34, 197, 94"],
+html:not(.dark) .sm-scope [style*="color: rgb(16, 185, 129)"],
+html:not(.dark) .sm-scope [style*="color: rgba(16, 185, 129"] {
   color: #4f5e34 !important;
 }
 
 /* Violets / purples → Mulberry (info / Major Client / secondary accent).
    Bridges wine & violet so it reads as "branded", not a stray pastel. */
-html:not(.dark) [style*="color: rgb(167, 139, 250)"],
-html:not(.dark) [style*="color: rgba(167, 139, 250"],
-html:not(.dark) [style*="color: rgb(192, 132, 252)"],
-html:not(.dark) [style*="color: rgba(192, 132, 252"],
-html:not(.dark) [style*="color: rgb(139, 92, 246)"],
-html:not(.dark) [style*="color: rgba(139, 92, 246"],
-html:not(.dark) [style*="color: rgb(168, 85, 247)"],
-html:not(.dark) [style*="color: rgba(168, 85, 247"] {
+html:not(.dark) .sm-scope [style*="color: rgb(167, 139, 250)"],
+html:not(.dark) .sm-scope [style*="color: rgba(167, 139, 250"],
+html:not(.dark) .sm-scope [style*="color: rgb(192, 132, 252)"],
+html:not(.dark) .sm-scope [style*="color: rgba(192, 132, 252"],
+html:not(.dark) .sm-scope [style*="color: rgb(139, 92, 246)"],
+html:not(.dark) .sm-scope [style*="color: rgba(139, 92, 246"],
+html:not(.dark) .sm-scope [style*="color: rgb(168, 85, 247)"],
+html:not(.dark) .sm-scope [style*="color: rgba(168, 85, 247"] {
   color: #6b3f6e !important;
 }
 
 /* Pinks / fuchsia → Rose-wine */
-html:not(.dark) [style*="color: rgb(244, 114, 182)"],
-html:not(.dark) [style*="color: rgba(244, 114, 182"],
-html:not(.dark) [style*="color: rgb(232, 121, 249)"],
-html:not(.dark) [style*="color: rgba(232, 121, 249"],
-html:not(.dark) [style*="color: rgb(236, 72, 153)"],
-html:not(.dark) [style*="color: rgba(236, 72, 153"],
-html:not(.dark) [style*="color: rgb(217, 70, 239)"],
-html:not(.dark) [style*="color: rgba(217, 70, 239"] {
+html:not(.dark) .sm-scope [style*="color: rgb(244, 114, 182)"],
+html:not(.dark) .sm-scope [style*="color: rgba(244, 114, 182"],
+html:not(.dark) .sm-scope [style*="color: rgb(232, 121, 249)"],
+html:not(.dark) .sm-scope [style*="color: rgba(232, 121, 249"],
+html:not(.dark) .sm-scope [style*="color: rgb(236, 72, 153)"],
+html:not(.dark) .sm-scope [style*="color: rgba(236, 72, 153"],
+html:not(.dark) .sm-scope [style*="color: rgb(217, 70, 239)"],
+html:not(.dark) .sm-scope [style*="color: rgba(217, 70, 239"] {
   color: #9d3b5e !important;
 }
 
 /* Amber → amber-brown (warning / ATTENTION). Bright amber as text is ~1.5:1. */
-html:not(.dark) [style*="color: rgb(251, 191, 36)"],
-html:not(.dark) [style*="color: rgba(251, 191, 36"],
-html:not(.dark) [style*="color: rgb(245, 158, 11)"],
-html:not(.dark) [style*="color: rgba(245, 158, 11"] {
+html:not(.dark) .sm-scope [style*="color: rgb(251, 191, 36)"],
+html:not(.dark) .sm-scope [style*="color: rgba(251, 191, 36"],
+html:not(.dark) .sm-scope [style*="color: rgb(245, 158, 11)"],
+html:not(.dark) .sm-scope [style*="color: rgba(245, 158, 11"] {
   color: #8a6d1f !important;
 }
 
 /* Orange → burnt orange (caution / LOW STOCK) */
-html:not(.dark) [style*="color: rgb(251, 146, 60)"],
-html:not(.dark) [style*="color: rgba(251, 146, 60"],
-html:not(.dark) [style*="color: rgb(249, 115, 22)"],
-html:not(.dark) [style*="color: rgba(249, 115, 22"] {
+html:not(.dark) .sm-scope [style*="color: rgb(251, 146, 60)"],
+html:not(.dark) .sm-scope [style*="color: rgba(251, 146, 60"],
+html:not(.dark) .sm-scope [style*="color: rgb(249, 115, 22)"],
+html:not(.dark) .sm-scope [style*="color: rgba(249, 115, 22"] {
   color: #b4530a !important;
 }
 
 /* Salmon red → medium danger red (error / CRITICAL stock). Kept distinct from
    the deep OUT-of-stock red below so the 5-tier never collapses to one color. */
-html:not(.dark) [style*="color: rgb(248, 113, 113)"],
-html:not(.dark) [style*="color: rgba(248, 113, 113"] {
+html:not(.dark) .sm-scope [style*="color: rgb(248, 113, 113)"],
+html:not(.dark) .sm-scope [style*="color: rgba(248, 113, 113"] {
   color: #c0392b !important;
 }
 
 /* Strong red → deep danger red (OUT OF STOCK / destructive). Distinct from wine. */
-html:not(.dark) [style*="color: rgb(239, 68, 68)"],
-html:not(.dark) [style*="color: rgba(239, 68, 68"],
-html:not(.dark) [style*="color: rgb(220, 38, 38)"],
-html:not(.dark) [style*="color: rgba(220, 38, 38"] {
+html:not(.dark) .sm-scope [style*="color: rgb(239, 68, 68)"],
+html:not(.dark) .sm-scope [style*="color: rgba(239, 68, 68"],
+html:not(.dark) .sm-scope [style*="color: rgb(220, 38, 38)"],
+html:not(.dark) .sm-scope [style*="color: rgba(220, 38, 38"] {
   color: #a01b1b !important;
 }
 
 /* Solid indicator dots (background is a solid pastel, not a tint) → match text */
-html:not(.dark) [style*="background: rgb(74, 222, 128)"],
+html:not(.dark) .sm-scope [style*="background: rgb(74, 222, 128)"],
 html:not(.dark) .sm-scope [style*="background-color: rgb(74, .sm-scope 222, .sm-scope 128)"] { background-color: #6b784d !important; }
-html:not(.dark) [style*="background: rgb(167, 139, 250)"],
+html:not(.dark) .sm-scope [style*="background: rgb(167, 139, 250)"],
 html:not(.dark) .sm-scope [style*="background-color: rgb(167, .sm-scope 139, .sm-scope 250)"] { background-color: #8a5a8d !important; }
 
 /* ── Sidebar specifically — keep it readable, slightly tinted parchment ──── */
-html:not(.dark) aside[style*="background: var(--card-bg)"],
-html:not(.dark) aside[style*="background:var(--card-bg)"] {
+html:not(.dark) .sm-scope aside[style*="background: var(--card-bg)"],
+html:not(.dark) .sm-scope aside[style*="background:var(--card-bg)"] {
   background: #ede8da !important;          /* slightly darker than page bg */
   border-right: 1px solid rgba(97, 36, 40, 0.15) !important;
 }
@@ -835,34 +835,34 @@ html:not(.dark) body {
   color: #1b0905;
 }
 /* Catch-all for headings — page titles, section titles all need to be readable */
-html:not(.dark) h1[style*="rgb(232, 234, 242)"],
-html:not(.dark) h2[style*="rgb(232, 234, 242)"],
-html:not(.dark) h3[style*="rgb(232, 234, 242)"],
-html:not(.dark) h4[style*="rgb(232, 234, 242)"] {
+html:not(.dark) .sm-scope h1[style*="rgb(232, 234, 242)"],
+html:not(.dark) .sm-scope h2[style*="rgb(232, 234, 242)"],
+html:not(.dark) .sm-scope h3[style*="rgb(232, 234, 242)"],
+html:not(.dark) .sm-scope h4[style*="rgb(232, 234, 242)"] {
   color: #1b0905 !important;
 }
 
 /* ── Bonus: tab/chip pills using rgba(255,255,255,X) backgrounds in MQ etc ── */
-html:not(.dark) [style*="rgba(255, 255, 255, 0.04)"],
-html:not(.dark) [style*="rgba(255, 255, 255, 0.05)"],
-html:not(.dark) [style*="rgba(255, 255, 255, 0.06)"] {
+html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.04)"],
+html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.05)"],
+html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.06)"] {
   background-color: rgba(97, 36, 40, 0.05) !important;
 }
-html:not(.dark) [style*="rgba(255, 255, 255, 0.08)"],
-html:not(.dark) [style*="rgba(255, 255, 255, 0.1)"],
-html:not(.dark) [style*="rgba(255, 255, 255, 0.12)"] {
+html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.08)"],
+html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.1)"],
+html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.12)"] {
   background-color: rgba(97, 36, 40, 0.08) !important;
   border-color: rgba(97, 36, 40, 0.22) !important;
 }
 
 /* ── Modal-overlay backdrops — match Deep Shadow tint regardless of opacity ── */
-html:not(.dark) [style*="rgba(0, 0, 0, 0.6"],
-html:not(.dark) [style*="rgba(0, 0, 0, 0.65)"],
-html:not(.dark) [style*="rgba(0, 0, 0, 0.7"],
-html:not(.dark) [style*="rgba(0, 0, 0, 0.75)"],
-html:not(.dark) [style*="rgba(0, 0, 0, 0.8"],
-html:not(.dark) [style*="rgba(0, 0, 0, 0.85)"],
-html:not(.dark) [style*="rgba(0, 0, 0, 0.9"] {
+html:not(.dark) .sm-scope [style*="rgba(0, 0, 0, 0.6"],
+html:not(.dark) .sm-scope [style*="rgba(0, 0, 0, 0.65)"],
+html:not(.dark) .sm-scope [style*="rgba(0, 0, 0, 0.7"],
+html:not(.dark) .sm-scope [style*="rgba(0, 0, 0, 0.75)"],
+html:not(.dark) .sm-scope [style*="rgba(0, 0, 0, 0.8"],
+html:not(.dark) .sm-scope [style*="rgba(0, 0, 0, 0.85)"],
+html:not(.dark) .sm-scope [style*="rgba(0, 0, 0, 0.9"] {
   background-color: rgba(27, 9, 5, 0.4) !important;
 }
 
