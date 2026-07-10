@@ -141,6 +141,7 @@ export default function TransfersSA({ user }) {
   const [smPick, setSmPick] = useState('');
   const [linking, setLinking] = useState(false);
   const [statusModal, setStatusModal] = useState(null); // TransferStatusModal state
+  const [removingId, setRemovingId] = useState(null); // link row being removed
 
   const isAdmin = ['root', 'admin'].includes(user?.role);
 
@@ -251,13 +252,19 @@ export default function TransfersSA({ user }) {
   }
 
   async function deleteLink(id) {
+    setRemovingId(id);
     try {
       const res = await fetch(`/api/platform/product-links/${id}`, { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
-      if (res.ok) { showToast('Link removed', 'success'); loadAll(); }
-      else showToast(data.error || 'Remove failed', 'error');
+      if (res.ok) {
+        showToast('Link removed — both products are available to link again', 'success');
+        loadAll();
+        loadPickers(searchQ); // put the freed fragrance back in the pickers immediately
+      } else showToast(data.error || 'Remove failed', 'error');
     } catch {
       showToast('Connection error — please try again', 'error');
+    } finally {
+      setRemovingId(null);
     }
   }
 
@@ -432,7 +439,9 @@ export default function TransfersSA({ user }) {
                     <td>{l.sa_name} <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>({l.sa_code})</span></td>
                     <td>{l.sm_name} <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>({l.sm_code})</span></td>
                     <td style={{ textAlign: 'right' }}>
-                      <button className="btn" style={{ fontSize: 11, color: '#f87171' }} onClick={() => deleteLink(l.id)}>Remove</button>
+                      <button className="btn" style={{ fontSize: 11, color: '#f87171' }} disabled={removingId === l.id} onClick={() => deleteLink(l.id)}>
+                        {removingId === l.id ? 'Removing...' : 'Remove'}
+                      </button>
                     </td>
                   </tr>
                 ))}

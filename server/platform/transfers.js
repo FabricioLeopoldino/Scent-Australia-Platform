@@ -66,12 +66,15 @@ router.get('/product-links/sm-map', requireModuleAccess('SM'), async (_req, res)
 router.get('/product-links/suggest', requireRole('root', 'admin'), async (req, res) => {
   try {
     const q = `%${(req.query.q || '').trim()}%`;
+    // No tight LIMIT: the pickers must show the FULL catalogs (owner-reported:
+    // LIMIT 40 hid most SA oils and made unlinked SM fragrances "disappear").
+    // ~270 oils / ~130 fragrances — trivial payloads; 1000 is a sanity cap.
     const saProducts = (
       await saPool.query(
         `SELECT id, "productCode" AS code, name, "currentStock" AS stock, unit
          FROM products WHERE category = 'OILS' AND status = 'active'
            AND (name ILIKE $1 OR "productCode" ILIKE $1 OR id ILIKE $1)
-         ORDER BY name LIMIT 40`,
+         ORDER BY name LIMIT 1000`,
         [q]
       )
     ).rows;
@@ -80,7 +83,7 @@ router.get('/product-links/suggest', requireRole('root', 'admin'), async (req, r
         `SELECT id, product_code AS code, name, current_stock AS stock, unit
          FROM products WHERE category = 'FRAGRANCE' AND COALESCE(archived, false) = false
            AND (name ILIKE $1 OR product_code ILIKE $1)
-         ORDER BY name LIMIT 40`,
+         ORDER BY name LIMIT 1000`,
         [q]
       )
     ).rows;
