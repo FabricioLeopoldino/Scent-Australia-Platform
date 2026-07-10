@@ -41,11 +41,12 @@ export default function App() {
 
   function handlePick(moduleKey) {
     setActiveModule(moduleKey); // B3 — persist active module
-    // MUSE is a view over the SM module (D7 amendment): same routes/backend,
-    // the Layout renders MUSE-only navigation when active module is MUSE.
+    // MUSE (D7) and OPS (D11) are views over the SM module: same routes/backend,
+    // the Layout renders view-specific navigation based on the active module.
     if (moduleKey === 'SA') navigate('/sa');
     else if (moduleKey === 'MUSE') navigate('/sm/muse');
-    else navigate('/sm');
+    else if (moduleKey === 'OPS') navigate('/sm'); // production dashboard
+    else navigate('/sm/customers'); // SM tile = B2B world
   }
 
   function backToPicker() {
@@ -103,9 +104,9 @@ function SAWrapper({ user, onSwitchModule, onLogout }) {
 }
 
 function SMWrapper({ user, onLogout }) {
-  // Keep interceptors module-aware after deep reloads; preserve MUSE view
-  // choice when already set (D7 amendment: MUSE = view over SM).
-  if (getActiveModule() !== 'MUSE') setActiveModule('SM');
+  // Keep interceptors module-aware after deep reloads; preserve the MUSE (D7)
+  // and OPS (D11) view choices when already set — both are views over SM.
+  if (!['MUSE', 'OPS'].includes(getActiveModule())) setActiveModule('SM');
   return <SMModule user={user} onLogout={onLogout} />;
 }
 

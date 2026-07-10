@@ -15,17 +15,21 @@ function getInitialTheme() {
 }
 
 // Sections with headers. Each section has items; headers render as small uppercase labels.
-// Organized by mental model: SHARED workflows + SHARED inventory pool + MUSE world + SCENTED MERCHANDISE (B2B) + history/system.
+// D11 (owner, 2026-07-11): THREE views over this module, picked by tile —
+//   'ops'  → Production & Operations (factory floor + warehouse + shared inventory)
+//   'sm'   → Scented Merchandise (B2B commercial)
+//   'muse' → MUSE own brand (D7)
+// Each section lists the views it appears in (default ['sm']).
 const NAV_SECTIONS = [
-  { items: [
+  { views: ['ops'], items: [
     { path: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['root','admin','user'] },
   ]},
-  { header: 'PRODUCTION', items: [
+  { header: 'PRODUCTION', views: ['ops'], items: [
     { path: '/production-orders', label: 'Production Orders', icon: ShoppingBag, roles: ['root','admin','user'] },
     { path: '/manufacturing-queue', label: 'Manufacturing Queue', icon: Factory, roles: ['root','admin','user'] },
     { path: '/packing-records', label: 'Packing Records', icon: ClipboardList, roles: ['root','admin','user'] },
   ]},
-  { header: 'OPERATIONS', items: [
+  { header: 'OPERATIONS', views: ['ops'], items: [
     { path: '/barcode', label: 'Barcode Scanner', icon: ScanBarcode, roles: ['root','admin','user'] },
     { path: '/transfers-in', label: 'Incoming Transfers', icon: Send, roles: ['root','admin','user'] },
     { path: '/incoming-orders', label: 'Incoming Orders', icon: Truck, roles: ['root','admin','user'] },
@@ -33,25 +37,23 @@ const NAV_SECTIONS = [
     { path: '/suppliers', label: 'Suppliers', icon: Building2, roles: ['root','admin','user'] },
     { path: '/returns', label: 'Returns', icon: RotateCcw, roles: ['root','admin','user'] },
   ]},
-  { header: 'SHARED INVENTORY', items: [
+  { header: 'SHARED INVENTORY', views: ['ops'], items: [
     { path: '/stock', label: 'Stock Management', icon: Archive, roles: ['root','admin','user'] },
   ]},
-  { header: 'SCENTED MERCHANDISE', items: [
+  { header: 'SCENTED MERCHANDISE', views: ['sm'], items: [
     { path: '/customers', label: 'Clients', icon: Users, roles: ['root','admin','user'] },
     { path: '/standard/catalog', label: 'Standard Catalog', icon: Tag, roles: ['root','admin','user'] },
     { path: '/major-clients', label: 'Major Clients', icon: Briefcase, roles: ['root','admin','user'] },
     { path: '/bom-sm', label: 'Bill of Materials', icon: BookOpen, roles: ['root','admin','user'] },
     { path: '/sm-stock', label: 'Stock', icon: Package, roles: ['root','admin','user'] },
   ]},
-  // view:'muse' — shown ONLY when the MUSE tile was picked (D7 amendment:
-  // MUSE is a navigation view over this module; SM view hides these).
-  { header: 'MUSE', view: 'muse', items: [
+  { header: 'MUSE', views: ['muse'], items: [
     { path: '/muse', label: 'Dashboard', icon: Star, roles: ['root','admin','user'] },
     { path: '/muse/products', label: 'Catalog', icon: Star, roles: ['root','admin','user'] },
     { path: '/bom-muse', label: 'Bill of Materials', icon: BookOpen, roles: ['root','admin','user'] },
     { path: '/muse-stock', label: 'Stock', icon: Package, roles: ['root','admin','user'] },
   ]},
-  { header: 'HISTORY', view: 'both', items: [
+  { header: 'HISTORY', views: ['ops','sm','muse'], items: [
     { path: '/transactions', label: 'Transaction History', icon: History, roles: ['root','admin','user'] },
     { path: '/activity-log', label: 'Activity Log', icon: ScrollText, roles: ['root','admin'] },
   ]},
@@ -65,10 +67,12 @@ export default function Layout({ children }) {
   const [location, navigate] = useLocation()
   const { user, logout } = useAuth()
 
-  // D7 amendment: the active tile decides the view (and the sidebar brand) —
-  //   MUSE tile → MU:SE mark + only view:'muse'/'both' sections
-  //   SM tile   → Scented Merchandise brand + everything except view:'muse'
-  const activeView = (typeof localStorage !== 'undefined' && localStorage.getItem('platform_active_module')) === 'MUSE' ? 'muse' : 'sm'
+  // D7/D11: the active tile decides the view (and the sidebar brand) —
+  //   OPS tile  → Production & Operations (factory/warehouse sections)
+  //   MUSE tile → MU:SE mark + MUSE sections
+  //   SM tile   → Scented Merchandise brand + B2B sections
+  const activeModule = typeof localStorage !== 'undefined' ? localStorage.getItem('platform_active_module') : null
+  const activeView = activeModule === 'MUSE' ? 'muse' : activeModule === 'OPS' ? 'ops' : 'sm'
 
   const sidebarWidth = collapsed ? 64 : 220
 
@@ -119,7 +123,20 @@ export default function Layout({ children }) {
                   Scented Merchandise
                 </div>
                 <div style={{ fontSize: 8.5, fontWeight: 600, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-muted)', marginTop: 3 }}>
-                  Production &amp; Inventory
+                  B2B Clients &amp; Catalog
+                </div>
+              </div>
+            </div>
+          )}
+          {!collapsed && activeView === 'ops' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {/* OPS view (D11) — factory floor + warehouse over the same module */}
+              <div>
+                <div className="serif" style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.02em', lineHeight: 1.1 }}>
+                  Production &amp; Operations
+                </div>
+                <div style={{ fontSize: 8.5, fontWeight: 600, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-muted)', marginTop: 3 }}>
+                  Orders · Queue · Warehouse
                 </div>
               </div>
             </div>
@@ -133,6 +150,11 @@ export default function Layout({ children }) {
           {collapsed && activeView === 'sm' && (
             <div className="serif" style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.06em' }}>
               SM
+            </div>
+          )}
+          {collapsed && activeView === 'ops' && (
+            <div className="serif" style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.06em' }}>
+              P&amp;O
             </div>
           )}
           <button
@@ -150,9 +172,8 @@ export default function Layout({ children }) {
         {/* Nav */}
         <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto' }}>
           {NAV_SECTIONS.map((section, sIdx) => {
-            const sectionView = section.view || 'sm'
-            if (activeView === 'muse' && sectionView === 'sm') return null
-            if (activeView === 'sm' && sectionView === 'muse') return null
+            const sectionViews = section.views || ['sm']
+            if (!sectionViews.includes(activeView)) return null
             // Filter items by role first to know if section has any visible items
             const visibleItems = section.items.filter(it => it.roles.includes(user?.role))
             if (visibleItems.length === 0) return null

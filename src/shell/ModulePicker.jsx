@@ -1,4 +1,4 @@
-import { Package, FlaskConical, Sparkles, Users, LogOut } from 'lucide-react';
+import { Package, FlaskConical, Sparkles, Factory, Users, LogOut } from 'lucide-react';
 
 // Module Picker — behavioral spec in PRD Appendix B.
 // Tiles: SA / SM enabled by user.modules; MUSE always "Coming soon" (B6).
@@ -12,9 +12,19 @@ const MODULES = [
     accent: '#2563eb',
   },
   {
+    // D11: Production & Operations — a VIEW over the SM module (like MUSE/D7):
+    // factory floor + warehouse + shared inventory, split out of the SM tile.
+    key: 'OPS',
+    title: 'Production & Operations',
+    subtitle: 'Production orders · queue · warehouse',
+    icon: Factory,
+    accent: '#f59e0b',
+    viewOf: 'SM',
+  },
+  {
     key: 'SM',
     title: 'Scented Merchandise',
-    subtitle: 'Production Orders · B2B Clients',
+    subtitle: 'B2B clients · catalogs',
     icon: FlaskConical,
     accent: '#b1545a',
   },
