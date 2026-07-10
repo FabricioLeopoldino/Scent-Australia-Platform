@@ -240,7 +240,13 @@ router.post('/transfers', requireRole('root', 'admin'), requireModuleAccess('SA'
     await auditLog(req.user.id, 'transfer_sent', 'stock_transfer', transfer.rows[0].id, {
       fragrance: link.sa_name, quantity_ml: qty, sa_balance_after: newStock,
     });
-    res.status(201).json(transfer.rows[0]);
+    // Enriched for the send-confirmation modal (names + resulting balance)
+    res.status(201).json({
+      ...transfer.rows[0],
+      sa_balance_after: newStock,
+      sa_name: link.sa_name, sa_code: link.sa_code,
+      sm_name: link.sm_name, sm_code: link.sm_code,
+    });
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('[transfers/send]', e.message);

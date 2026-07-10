@@ -1282,3 +1282,20 @@ html:not(.dark) .sa-scope .form-group label { color: rgba(28, 20, 16, 0.65) !imp
   width: 100%;
   max-width: 440px;
 }
+
+/* ─── TRANSFER STATUS MODAL (Transfers page) — sending dots + success pop ── */
+@keyframes sa-dot-pulse {
+  0%, 100% { opacity: 0.25; transform: scale(0.8); }
+  50%      { opacity: 1;    transform: scale(1.15); }
+}
+.sa-scope .xfer-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--primary);
+  animation: sa-dot-pulse 1s ease-in-out infinite;
+}
+@keyframes sa-pop {
+  0%   { transform: scale(0.4); opacity: 0; }
+  70%  { transform: scale(1.15); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.sa-scope .xfer-pop { animation: sa-pop 0.35s ease-out; }

@@ -1,5 +1,122 @@
 import { useEffect, useState } from 'react';
+import { Package, FlaskConical, CheckCircle2, XCircle, Link2 } from 'lucide-react';
 import { useToast } from '../components/Toast';
+
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Transfer/Link status modal — adapted from the "file transfer card" pattern
+// the owner picked (21st.dev), rebuilt on the SA design system. Our operations
+// are atomic, so instead of a fake progress bar it shows: SA → SM devices with
+// pulsing dots while the request runs, then a rich confirmation (or error).
+function TransferStatusModal({ state, mlLabel, onClose, onViewHistory }) {
+  if (!state) return null;
+  const { phase, mode, sa, sm, qty, balanceAfter, error } = state;
+  const sending = phase === 'sending';
+  const isLink = mode === 'link';
+
+  const Side = ({ icon: Icon, label, name, code, accent }) => (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
+      <div style={{ width: 52, height: 52, borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', background: `${accent}18`, color: accent }}>
+        <Icon size={26} />
+      </div>
+      <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</span>
+      <p style={{ fontSize: 13, fontWeight: 700, textAlign: 'center', margin: 0, maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }} title={name}>{name}</p>
+      {code && <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{code}</span>}
+    </div>
+  );
+
+  return (
+    <div className="modal-overlay" style={{ zIndex: 9999 }}>
+      <div className="modal" style={{ maxWidth: 440, padding: 0 }}>
+        <div style={{ padding: '26px 28px 22px' }}>
+          <h2 style={{ fontSize: 16, fontWeight: 700, textAlign: 'center', marginBottom: 22 }}>
+            {sending
+              ? (isLink ? 'Linking products...' : 'Sending transfer...')
+              : phase === 'done'
+                ? (isLink ? 'Products linked' : 'Transfer in transit')
+                : (isLink ? 'Link failed' : 'Transfer failed')}
+          </h2>
+
+          {/* Devices row (reference layout: source · animated dots · destination) */}
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 22 }}>
+            <Side icon={Package} label="Scent Stock Manager" name={sa.name} code={sa.code} accent="#2563eb" />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, paddingTop: 20 }}>
+              {sending ? (
+                <>
+                  <span className="xfer-dot" style={{ animationDelay: '-0.3s' }} />
+                  <span className="xfer-dot" style={{ animationDelay: '-0.15s' }} />
+                  <span className="xfer-dot" />
+                </>
+              ) : phase === 'done' ? (
+                <span className="xfer-pop" style={{ color: '#4ade80', display: 'flex' }}>
+                  {isLink ? <Link2 size={22} /> : <CheckCircle2 size={22} />}
+                </span>
+              ) : (
+                <span style={{ color: '#f87171', display: 'flex' }}><XCircle size={22} /></span>
+              )}
+            </div>
+            <Side icon={FlaskConical} label="Scented Merchandise" name={sm.name} code={sm.code} accent="#b1545a" />
+          </div>
+
+          {/* Details card (reference "Transfer Details") */}
+          {phase === 'done' && (
+            <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 16px', fontSize: 13 }}>
+              {!isLink && (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>Quantity sent</span>
+                    <span style={{ fontWeight: 700 }}>{mlLabel(qty)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>SA stock after</span>
+                    <span style={{ fontWeight: 700 }}>{balanceAfter != null ? mlLabel(balanceAfter) : '—'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>Status</span>
+                    <span style={{ color: '#fbbf24', fontWeight: 700 }}>🚚 In transit</span>
+                  </div>
+                </>
+              )}
+              {isLink && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>Link</span>
+                  <span style={{ fontWeight: 700, fontFamily: 'monospace', fontSize: 12 }}>{sa.code} ⇄ {sm.code}</span>
+                </div>
+              )}
+            </div>
+          )}
+          {phase === 'error' && (
+            <div style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.25)', borderRadius: 10, padding: '12px 16px', fontSize: 13, color: '#f87171', textAlign: 'center' }}>
+              {error}
+            </div>
+          )}
+          {phase === 'done' && !isLink && (
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', marginTop: 12, marginBottom: 0 }}>
+              Scented Merchandise must confirm receipt in <strong>Incoming Transfers</strong>.
+            </p>
+          )}
+
+          {/* Actions */}
+          {!sending && (
+            <div style={{ display: 'grid', gridTemplateColumns: phase === 'done' && !isLink ? '1fr 1fr' : '1fr', gap: 10, marginTop: 18 }}>
+              {phase === 'done' && !isLink && (
+                <button className="btn" onClick={onViewHistory}>View History</button>
+              )}
+              <button className="btn btn-primary" onClick={onClose}>
+                {phase === 'error' ? 'Close' : 'Done'}
+              </button>
+            </div>
+          )}
+          {sending && (
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', marginTop: 4, marginBottom: 0 }}>
+              {isLink ? 'Saving link…' : 'Debiting SA stock and creating the transfer…'}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // Cross-system transfers — SA side (PRD FR-XFER-6):
 // send fragrances to Scented Merchandise, manage product links, history.
@@ -23,6 +140,7 @@ export default function TransfersSA({ user }) {
   const [saPick, setSaPick] = useState('');
   const [smPick, setSmPick] = useState('');
   const [linking, setLinking] = useState(false);
+  const [statusModal, setStatusModal] = useState(null); // TransferStatusModal state
 
   const isAdmin = ['root', 'admin'].includes(user?.role);
 
@@ -53,22 +171,35 @@ export default function TransfersSA({ user }) {
 
   async function sendTransfer(e) {
     e.preventDefault();
+    const link = links.find((l) => l.id === parseInt(linkId));
+    if (!link) return;
     setSending(true);
+    setStatusModal({
+      phase: 'sending', mode: 'transfer',
+      sa: { name: link.sa_name, code: link.sa_code },
+      sm: { name: link.sm_name, code: link.sm_code },
+      qty: parseFloat(qty),
+    });
     try {
-      const res = await fetch('/api/platform/transfers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ product_link_id: parseInt(linkId), quantity_ml: parseFloat(qty), notes }),
-      });
+      // min 900ms so the sending animation reads as a deliberate step
+      const [res] = await Promise.all([
+        fetch('/api/platform/transfers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ product_link_id: parseInt(linkId), quantity_ml: parseFloat(qty), notes }),
+        }),
+        delay(900),
+      ]);
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        showToast(`Transfer sent — ${qty} mL now in transit to Scented Merchandise`, 'success');
+        setStatusModal((prev) => ({ ...prev, phase: 'done', balanceAfter: data.sa_balance_after }));
         setQty(''); setNotes(''); setLinkId('');
         loadAll();
-        setTab('history');
       } else {
-        showToast(data.error || 'Transfer failed', 'error');
+        setStatusModal((prev) => ({ ...prev, phase: 'error', error: data.error || 'Transfer failed' }));
       }
+    } catch {
+      setStatusModal((prev) => ({ ...prev, phase: 'error', error: 'Connection error — the transfer was not sent. Please try again.' }));
     } finally {
       setSending(false);
     }
@@ -86,18 +217,34 @@ export default function TransfersSA({ user }) {
   }
 
   async function createLink(saId, smId) {
+    const saP = pickers.sa_products.find((p) => p.id === saId) ||
+      pickers.suggestions.map((s) => s.sa).find((p) => p.id === saId) || { name: 'SA oil', code: '' };
+    const smP = pickers.sm_products.find((p) => p.id === parseInt(smId)) ||
+      pickers.suggestions.map((s) => s.sm).find((p) => p.id === parseInt(smId)) || { name: 'SM fragrance', code: '' };
     setLinking(true);
+    setStatusModal({
+      phase: 'sending', mode: 'link',
+      sa: { name: saP.name, code: saP.code },
+      sm: { name: smP.name, code: smP.code },
+    });
     try {
-      const res = await fetch('/api/platform/product-links', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sa_product_id: saId, sm_product_id: parseInt(smId) }),
-      });
+      const [res] = await Promise.all([
+        fetch('/api/platform/product-links', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sa_product_id: saId, sm_product_id: parseInt(smId) }),
+        }),
+        delay(700),
+      ]);
       const data = await res.json().catch(() => ({}));
-      if (res.ok) { showToast('Products linked', 'success'); setSaPick(''); setSmPick(''); loadAll(); loadPickers(searchQ); }
-      else showToast(data.error || 'Link failed', 'error');
+      if (res.ok) {
+        setStatusModal((prev) => ({ ...prev, phase: 'done' }));
+        setSaPick(''); setSmPick(''); loadAll(); loadPickers(searchQ);
+      } else {
+        setStatusModal((prev) => ({ ...prev, phase: 'error', error: data.error || 'Link failed' }));
+      }
     } catch {
-      showToast('Connection error — link not saved, please try again', 'error');
+      setStatusModal((prev) => ({ ...prev, phase: 'error', error: 'Connection error — link not saved, please try again' }));
     } finally {
       setLinking(false);
     }
@@ -294,6 +441,13 @@ export default function TransfersSA({ user }) {
           </div>
         </div>
       )}
+
+      <TransferStatusModal
+        state={statusModal}
+        mlLabel={mlLabel}
+        onClose={() => setStatusModal(null)}
+        onViewHistory={() => { setStatusModal(null); setTab('history'); }}
+      />
     </div>
   );
 }
