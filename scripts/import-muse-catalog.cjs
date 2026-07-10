@@ -70,21 +70,25 @@ function parseCsv() {
   const headerIdx = lines.findIndex((l) => /main fragrance/i.test(l));
   if (headerIdx === -1) { console.error('CSV header row not found'); process.exit(1); }
   const header = lines[headerIdx].split(',');
-  // Auto-detect an SA product-code column (owner adds it for auto-linking)
-  let saCol = header.findIndex((h) => /\bsa\b.*(code|frag|product)|(code|frag|product).*\bsa\b/i.test(h));
+  // ALL columns resolved from the header by name — the owner reorders/adds
+  // columns between versions (v2 put "Product_Code (SA)" first, shifting
+  // every fixed index by one).
+  const col = (re) => header.findIndex((h) => re.test(h));
+  const nameCol = col(/main fragrance/i);
+  const rdCol = col(/sku.*reed/i);
+  const rsCol = col(/sku.*room/i);
+  const tsCol = col(/sku.*travel/i);
+  const saCol = col(/product[_ ]?code.*\bsa\b|\bsa\b.*(code|frag)/i);
+  if (nameCol === -1 || rdCol === -1 || rsCol === -1 || tsCol === -1) {
+    console.error('CSV columns not resolved:', { nameCol, rdCol, rsCol, tsCol });
+    process.exit(1);
+  }
   const clean = (s) => (s || '').replace(/ /g, ' ').replace(/\s+/g, ' ').trim();
   const rows = lines.slice(headerIdx + 1).map((l) => l.split(','));
-  if (saCol === -1) {
-    // fall back: a column (beyond the known 7) whose values look like FRAG_123
-    for (let c = 7; c < 12; c++) {
-      const hits = rows.filter((r) => /^FRAG[_-]?\w+/i.test(clean(r[c]))).length;
-      if (hits > rows.length / 2) { saCol = c; break; }
-    }
-  }
   const frags = rows
     .map((r) => ({
-      name: clean(r[0]),
-      rd: clean(r[4]), rs: clean(r[5]), ts: clean(r[6]),
+      name: clean(r[nameCol]),
+      rd: clean(r[rdCol]), rs: clean(r[rsCol]), ts: clean(r[tsCol]),
       saCode: saCol >= 0 ? clean(r[saCol]) : null,
     }))
     .filter((f) => f.name && /^Muse_RD\d+$/.test(f.rd));
