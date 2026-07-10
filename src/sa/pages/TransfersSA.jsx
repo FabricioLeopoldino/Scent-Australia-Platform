@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Package, FlaskConical, CheckCircle2, XCircle, Link2 } from 'lucide-react';
+import { Package, FlaskConical, CheckCircle2, XCircle, Link2, Unlink } from 'lucide-react';
 import { useToast } from '../components/Toast';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -13,6 +13,7 @@ function TransferStatusModal({ state, mlLabel, onClose, onViewHistory }) {
   const { phase, mode, sa, sm, qty, balanceAfter, error } = state;
   const sending = phase === 'sending';
   const isLink = mode === 'link';
+  const isUnlink = mode === 'unlink';
 
   const Side = ({ icon: Icon, label, name, code, accent }) => (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
@@ -31,10 +32,10 @@ function TransferStatusModal({ state, mlLabel, onClose, onViewHistory }) {
         <div style={{ padding: '26px 28px 22px' }}>
           <h2 style={{ fontSize: 16, fontWeight: 700, textAlign: 'center', marginBottom: 22 }}>
             {sending
-              ? (isLink ? 'Linking products...' : 'Sending transfer...')
+              ? (isUnlink ? 'Removing link...' : isLink ? 'Linking products...' : 'Sending transfer...')
               : phase === 'done'
-                ? (isLink ? 'Products linked' : 'Transfer in transit')
-                : (isLink ? 'Link failed' : 'Transfer failed')}
+                ? (isUnlink ? 'Link removed' : isLink ? 'Products linked' : 'Transfer in transit')
+                : (isUnlink ? 'Remove failed' : isLink ? 'Link failed' : 'Transfer failed')}
           </h2>
 
           {/* Devices row (reference layout: source · animated dots · destination) */}
@@ -48,8 +49,8 @@ function TransferStatusModal({ state, mlLabel, onClose, onViewHistory }) {
                   <span className="xfer-dot" />
                 </>
               ) : phase === 'done' ? (
-                <span className="xfer-pop" style={{ color: '#4ade80', display: 'flex' }}>
-                  {isLink ? <Link2 size={22} /> : <CheckCircle2 size={22} />}
+                <span className="xfer-pop" style={{ color: isUnlink ? '#fbbf24' : '#4ade80', display: 'flex' }}>
+                  {isUnlink ? <Unlink size={22} /> : isLink ? <Link2 size={22} /> : <CheckCircle2 size={22} />}
                 </span>
               ) : (
                 <span style={{ color: '#f87171', display: 'flex' }}><XCircle size={22} /></span>
@@ -83,6 +84,12 @@ function TransferStatusModal({ state, mlLabel, onClose, onViewHistory }) {
                   <span style={{ fontWeight: 700, fontFamily: 'monospace', fontSize: 12 }}>{sa.code} ⇄ {sm.code}</span>
                 </div>
               )}
+              {isUnlink && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>Removed</span>
+                  <span style={{ fontWeight: 700, fontFamily: 'monospace', fontSize: 12, textDecoration: 'line-through', opacity: 0.7 }}>{sa.code} ⇄ {sm.code}</span>
+                </div>
+              )}
             </div>
           )}
           {phase === 'error' && (
@@ -90,9 +97,14 @@ function TransferStatusModal({ state, mlLabel, onClose, onViewHistory }) {
               {error}
             </div>
           )}
-          {phase === 'done' && !isLink && (
+          {phase === 'done' && !isLink && !isUnlink && (
             <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', marginTop: 12, marginBottom: 0 }}>
               Scented Merchandise must confirm receipt in <strong>Incoming Transfers</strong>.
+            </p>
+          )}
+          {phase === 'done' && isUnlink && (
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', marginTop: 12, marginBottom: 0 }}>
+              Both products are available to link again.
             </p>
           )}
 
@@ -109,7 +121,7 @@ function TransferStatusModal({ state, mlLabel, onClose, onViewHistory }) {
           )}
           {sending && (
             <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', marginTop: 4, marginBottom: 0 }}>
-              {isLink ? 'Saving link…' : 'Debiting SA stock and creating the transfer…'}
+              {isUnlink ? 'Removing the link…' : isLink ? 'Saving link…' : 'Debiting SA stock and creating the transfer…'}
             </p>
           )}
         </div>
@@ -251,18 +263,26 @@ export default function TransfersSA({ user }) {
     }
   }
 
-  async function deleteLink(id) {
-    setRemovingId(id);
+  async function deleteLink(l) {
+    setRemovingId(l.id);
+    setStatusModal({
+      phase: 'sending', mode: 'unlink',
+      sa: { name: l.sa_name, code: l.sa_code },
+      sm: { name: l.sm_name, code: l.sm_code },
+    });
     try {
-      const res = await fetch(`/api/platform/product-links/${id}`, { method: 'DELETE' });
+      const [res] = await Promise.all([
+        fetch(`/api/platform/product-links/${l.id}`, { method: 'DELETE' }),
+        delay(700),
+      ]);
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        showToast('Link removed — both products are available to link again', 'success');
+        setStatusModal((prev) => ({ ...prev, phase: 'done' }));
         loadAll();
         loadPickers(searchQ); // put the freed fragrance back in the pickers immediately
-      } else showToast(data.error || 'Remove failed', 'error');
+      } else setStatusModal((prev) => ({ ...prev, phase: 'error', error: data.error || 'Remove failed' }));
     } catch {
-      showToast('Connection error — please try again', 'error');
+      setStatusModal((prev) => ({ ...prev, phase: 'error', error: 'Connection error — please try again' }));
     } finally {
       setRemovingId(null);
     }
@@ -439,7 +459,7 @@ export default function TransfersSA({ user }) {
                     <td>{l.sa_name} <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>({l.sa_code})</span></td>
                     <td>{l.sm_name} <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>({l.sm_code})</span></td>
                     <td style={{ textAlign: 'right' }}>
-                      <button className="btn" style={{ fontSize: 11, color: '#f87171' }} disabled={removingId === l.id} onClick={() => deleteLink(l.id)}>
+                      <button className="btn" style={{ fontSize: 11, color: '#f87171' }} disabled={removingId === l.id} onClick={() => deleteLink(l)}>
                         {removingId === l.id ? 'Removing...' : 'Remove'}
                       </button>
                     </td>
