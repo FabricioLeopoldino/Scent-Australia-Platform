@@ -41,6 +41,10 @@ export async function runPlatformMigrations() {
   `);
 
   // ── Fragrance links SA <-> SM (phase 1: fragrance category only) ──────
+  // D10 (2026-07-11, owner): one SA oil may feed MANY SM fragrances —
+  // commercial aliases (e.g. SA "CR Fig" sells as both "Fig Tree" and
+  // "Black Fig" on MUSE). Each SM fragrance still links to exactly ONE
+  // SA oil (UNIQUE sm_product_id); the sa_product_id UNIQUE was dropped.
   await q(`
     CREATE TABLE IF NOT EXISTS platform.product_links (
       id             SERIAL PRIMARY KEY,
@@ -53,10 +57,13 @@ export async function runPlatformMigrations() {
       category       VARCHAR(30) NOT NULL DEFAULT 'FRAGRANCE',
       created_by     INTEGER REFERENCES platform.users(id) ON DELETE SET NULL,
       created_at     TIMESTAMP DEFAULT NOW(),
-      UNIQUE (sa_product_id),
       UNIQUE (sm_product_id)
     )
   `);
+  // D10 upgrade for pre-existing databases (idempotent): drop the 1:1
+  // constraint on the SA side, keep a plain index for lookups.
+  await q(`ALTER TABLE platform.product_links DROP CONSTRAINT IF EXISTS product_links_sa_product_id_key`);
+  await q(`CREATE INDEX IF NOT EXISTS idx_product_links_sa ON platform.product_links (sa_product_id)`);
 
   // ── Two-step stock transfers ──────────────────────────────────────────
   await q(`

@@ -86,12 +86,12 @@ router.get('/product-links/suggest', requireRole('root', 'admin'), async (req, r
     ).rows;
 
     const linked = await platformPool.query(`SELECT sa_product_id, sm_product_id FROM platform.product_links`);
-    const linkedSa = new Set(linked.rows.map((r) => r.sa_product_id));
     const linkedSm = new Set(linked.rows.map((r) => r.sm_product_id));
 
+    // D10: an SA oil may already be linked and still be suggested for another
+    // unlinked SM fragrance (aliases) — only the SM side filters out.
     const suggestions = [];
     for (const sa of saProducts) {
-      if (linkedSa.has(sa.id)) continue;
       const match = smProducts.find((sm) => !linkedSm.has(sm.id) && norm(sm.name) === norm(sa.name));
       if (match) suggestions.push({ sa, sm: match, score: 1 });
     }
@@ -134,7 +134,8 @@ router.post('/product-links', requireRole('root', 'admin'), async (req, res) => 
     });
     res.status(201).json(link.rows[0]);
   } catch (e) {
-    if (e.code === '23505') return res.status(409).json({ error: 'One of these products is already linked' });
+    // D10: only the SM side is unique now (an SA oil may feed many SM aliases)
+    if (e.code === '23505') return res.status(409).json({ error: 'That SM fragrance is already linked to an SA oil' });
     console.error('[links/create]', e.message);
     res.status(500).json({ error: 'Internal server error' });
   }
