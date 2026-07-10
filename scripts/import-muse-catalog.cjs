@@ -108,6 +108,16 @@ async function resetTestData() {
   );
   const ids = prods.rows.map((r) => r.id);
   if (!ids.length) { ok('reset: nothing to remove'); return; }
+  // Test production orders referencing fixture masters must go too — their
+  // lines dangle once the master is deleted (found by integrity-sm.cjs).
+  const ords = await smPool.query(
+    `SELECT DISTINCT production_order_id AS id FROM production_order_lines WHERE product_type = ANY($1)`,
+    [TEST_CODES]
+  );
+  for (const o of ords.rows) {
+    await smPool.query(`DELETE FROM production_order_lines WHERE production_order_id = $1`, [o.id]);
+    await smPool.query(`DELETE FROM production_orders WHERE id = $1`, [o.id]);
+  }
   const xf = await platPool.query(`DELETE FROM platform.stock_transfers WHERE sm_product_id = ANY($1) RETURNING id`, [ids]);
   const lk = await platPool.query(`DELETE FROM platform.product_links WHERE sm_product_id = ANY($1) RETURNING id`, [ids]);
   await smPool.query(`DELETE FROM transactions WHERE product_id = ANY($1)`, [ids]);
