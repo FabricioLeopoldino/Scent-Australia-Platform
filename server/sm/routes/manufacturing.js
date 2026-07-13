@@ -355,8 +355,9 @@ router.post('/manufacturing/:id/complete', auth, async (req, res) => {
             const created = await tq(
               `INSERT INTO products
                 (name, product_code, category, segment, is_master, master_product_id, fragrance_id,
-                 unit, current_stock, volume_ml, volume_unit, client_id)
-               VALUES ($1, $2, 'FINISHED_GOOD', 'MUSE', false, $3, $4, 'units', 0, $5, $6, NULL)
+                 unit, current_stock, volume_ml, volume_unit, client_id, price)
+               VALUES ($1, $2, 'FINISHED_GOOD', 'MUSE', false, $3, $4, 'units', 0, $5, $6, NULL,
+                       (SELECT price FROM products WHERE id = $3))
                ON CONFLICT (product_code) DO UPDATE SET name = EXCLUDED.name
                RETURNING id`,
               [variantName, variantCode, fl.master_id, fl.fragrance_id, fl.master_volume, fl.master_volume_unit || 'ml']

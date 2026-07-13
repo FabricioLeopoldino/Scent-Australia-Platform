@@ -116,6 +116,7 @@ export default function MuseProducts() {
       container_name: m.container_name || '',
       is_pure_oil: !!m.is_pure_oil, is_candle: !!m.is_candle,
       image_data: m.image_data || '',
+      price: m.price != null ? String(m.price) : '',
     })
     setShowCreate(true)
   }
@@ -136,6 +137,7 @@ export default function MuseProducts() {
           is_pure_oil: !!createForm.is_pure_oil,
           is_candle: !!createForm.is_candle,
           image_data: createForm.image_data || null,
+          price: createForm.price !== '' ? parseFloat(createForm.price) : null,
         }, api())
         addToast(`"${createForm.name}" updated`)
       } else {
@@ -151,6 +153,7 @@ export default function MuseProducts() {
           is_pure_oil: !!createForm.is_pure_oil,
           is_candle: !!createForm.is_candle,
           image_data: createForm.image_data || null,
+          price: createForm.price !== '' ? parseFloat(createForm.price) : null,
           bom_components: [],
           fragrance_ids: [],
           generate_variants: false,
@@ -368,6 +371,11 @@ function MasterCard({ master, onClick, onEdit, onDelete, onZoom, highlight }) {
       </div>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+        {master.price != null && (
+          <span style={{ background: 'rgba(34,197,94,0.12)', color: '#4ade80', padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 800 }}>
+            ${Number(master.price).toFixed(2)}
+          </span>
+        )}
         {master.container_name && (
           <span style={{ background: 'rgba(167,139,250,0.1)', color: '#a78bfa', padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 700 }}>
             {master.container_name}
@@ -580,7 +588,7 @@ function CreateMasterModal({ mode, form, setForm, containerOptions = [], onSave,
             </label>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
             <Field label="Volume">
               <div style={{ display: 'flex', gap: 6 }}>
                 <input type="number" min={0} step="any" value={form.volume_ml} onChange={e => setForm(f => ({ ...f, volume_ml: e.target.value }))} placeholder="200" style={{ ...inp, flex: 1 }} />
@@ -593,6 +601,15 @@ function CreateMasterModal({ mode, form, setForm, containerOptions = [], onSave,
             </Field>
             <Field label="Default Oil %">
               <input type="number" min={0} max={100} value={form.default_oil_pct} onChange={e => setForm(f => ({ ...f, default_oil_pct: e.target.value }))} placeholder="25" style={inp} />
+            </Field>
+            <Field label="Price (AUD)">
+              <div style={{ position: 'relative' }}>
+                <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 12, color: 'rgba(232,234,242,0.4)' }}>$</span>
+                <input type="number" min={0} step="0.01" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} placeholder="0.00" style={{ ...inp, paddingLeft: 22 }} />
+              </div>
+              <div style={{ fontSize: 10, color: 'rgba(232,234,242,0.35)', marginTop: 4 }}>
+                Applies to all variants — used as the Shopify price on publish
+              </div>
             </Field>
           </div>
           <Field label="Product Image">
@@ -626,6 +643,7 @@ function CreateMasterModal({ mode, form, setForm, containerOptions = [], onSave,
 const EMPTY_FORM = {
   name: '', product_code: '', volume_ml: '', volume_unit: 'ml',
   default_oil_pct: '25', container_name: '', is_pure_oil: false, is_candle: false, image_data: '',
+  price: '',
 }
 
 function chip(active) {

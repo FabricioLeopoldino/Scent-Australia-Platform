@@ -9,21 +9,33 @@ function slugify(s) {
   return String(s || '').toUpperCase().trim().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '')
 }
 
-// Next sequential MUSE finished-good SKU: MUS0001, MUS0002, ...
-async function nextMuseSku(tq) {
-  const r = await tq(`SELECT sku FROM products WHERE sku LIKE 'MUS%'`)
+// Next MUSE finished-good SKU — STORE PATTERN (owner, 2026-07-12): per master
+// format, matching the SKUs live on the MUSE Shopify store:
+//   master RD200 → Muse_RD#####  ·  RS100 → Muse_RS#####  ·  TS10 → Muse_TS#####
+// (alpha prefix of the master code + 5-digit sequence). The old global
+// MUS#### generator is retired — pattern consistency matters because these
+// SKUs publish to Shopify.
+async function nextMuseSku(tq, masterCode) {
+  const alpha = String(masterCode || '').replace(/[^A-Za-z]/g, '').toUpperCase() || 'X'
+  const prefix = `Muse_${alpha}`
+  const r = await tq(`SELECT sku FROM products WHERE sku LIKE $1`, [prefix + '%'])
   const nums = r.rows
-    .map(row => parseInt(String(row.sku).slice(3), 10))
+    .map(row => parseInt(String(row.sku).slice(prefix.length), 10))
     .filter(n => !isNaN(n))
   const next = (nums.length ? Math.max(...nums) : 0) + 1
-  return 'MUS' + String(next).padStart(4, '0')
+  return prefix + String(next).padStart(5, '0')
 }
 
 // Assign SKU + barcode to a MUSE variant if it doesn't have one yet
 async function ensureMuseSku(tq, variantId) {
-  const cur = await tq(`SELECT sku FROM products WHERE id = $1`, [variantId])
+  const cur = await tq(
+    `SELECT v.sku, m.product_code AS master_code
+     FROM products v LEFT JOIN products m ON m.id = v.master_product_id
+     WHERE v.id = $1`,
+    [variantId]
+  )
   if (cur.rows[0] && !cur.rows[0].sku) {
-    const sku = await nextMuseSku(tq)
+    const sku = await nextMuseSku(tq, cur.rows[0].master_code)
     await tq(`UPDATE products SET sku = $1, barcode = COALESCE(barcode, $1) WHERE id = $2`, [sku, variantId])
   }
 }
@@ -162,14 +174,15 @@ router.post('/masters', auth, async (req, res) => {
       const masterRes = await tq(
         `INSERT INTO products
           (name, product_code, category, segment, is_master, client_id,
-           volume_ml, volume_unit, default_oil_pct, container_name, is_pure_oil, is_candle, unit, current_stock, notes, image_data)
-         VALUES ($1, $2, 'FINISHED_GOOD', $3, true, $4, $5, $6, $7, $8, $9, $10, 'units', 0, $11, $12)
+           volume_ml, volume_unit, default_oil_pct, container_name, is_pure_oil, is_candle, unit, current_stock, notes, image_data, price)
+         VALUES ($1, $2, 'FINISHED_GOOD', $3, true, $4, $5, $6, $7, $8, $9, $10, 'units', 0, $11, $12, $13)
          RETURNING *`,
         [
           name.trim(), product_code.trim().toUpperCase(), segment, client_id || null,
           volume_ml ? parseFloat(volume_ml) : null, volume_unit || 'ml',
           default_oil_pct ? parseFloat(default_oil_pct) : 25,
           container_name?.trim() || null, !!is_pure_oil, !!is_candle, notes || null, image_data || null,
+          req.body.price != null ? parseFloat(req.body.price) : null,
         ]
       )
       const master = masterRes.rows[0]
@@ -244,11 +257,11 @@ router.post('/masters', auth, async (req, res) => {
               const variantRes = await tq(
                 `INSERT INTO products
                   (name, product_code, category, segment, is_master, master_product_id, fragrance_id,
-                   unit, current_stock, volume_ml, volume_unit, container_name, is_pure_oil, is_candle, client_id)
-                 VALUES ($1, $2, 'FINISHED_GOOD', 'MUSE', false, $3, $4, 'units', 0, $5, $6, $7, $8, $9, NULL)
+                   unit, current_stock, volume_ml, volume_unit, container_name, is_pure_oil, is_candle, client_id, price)
+                 VALUES ($1, $2, 'FINISHED_GOOD', 'MUSE', false, $3, $4, 'units', 0, $5, $6, $7, $8, $9, NULL, $10)
                  ON CONFLICT (product_code) DO UPDATE SET name = EXCLUDED.name
                  RETURNING id`,
-                [variantName, variantCode, master.id, fragId, master.volume_ml, master.volume_unit, master.container_name, master.is_pure_oil, master.is_candle]
+                [variantName, variantCode, master.id, fragId, master.volume_ml, master.volume_unit, master.container_name, master.is_pure_oil, master.is_candle, master.price]
               )
               variantsCreated.push(variantRes.rows[0].id)
               await ensureMuseSku(tq, variantRes.rows[0].id)
@@ -272,7 +285,7 @@ router.post('/masters', auth, async (req, res) => {
 // product_code and segment are immutable after creation
 router.put('/masters/:id', auth, async (req, res) => {
   try {
-    const { name, volume_ml, volume_unit, default_oil_pct, container_name, is_pure_oil, is_candle, notes, image_data } = req.body
+    const { name, volume_ml, volume_unit, default_oil_pct, container_name, is_pure_oil, is_candle, notes, image_data, price } = req.body
     const result = await query(
       `UPDATE products
        SET name = COALESCE($1, name),
@@ -283,12 +296,18 @@ router.put('/masters/:id', auth, async (req, res) => {
            is_pure_oil = COALESCE($6, is_pure_oil),
            is_candle = COALESCE($7, is_candle),
            notes = $8,
-           image_data = COALESCE($9, image_data)
-       WHERE id = $10 AND is_master = true
+           image_data = COALESCE($9, image_data),
+           price = COALESCE($10, price)
+       WHERE id = $11 AND is_master = true
        RETURNING *`,
-      [name, volume_ml, volume_unit, default_oil_pct, container_name, is_pure_oil, is_candle, notes ?? null, image_data ?? null, req.params.id]
+      [name, volume_ml, volume_unit, default_oil_pct, container_name, is_pure_oil, is_candle, notes ?? null, image_data ?? null, price != null ? parseFloat(price) : null, req.params.id]
     )
     if (!result.rows[0]) return res.status(404).json({ error: 'Master not found' })
+    // Price lives on the master (like SA's container price) and cascades to
+    // its variants — that is the per-unit price Shopify publish uses.
+    if (price != null) {
+      await query(`UPDATE products SET price = $1 WHERE master_product_id = $2`, [parseFloat(price), req.params.id])
+    }
     await auditLog(req.user.id, 'master_updated', 'product', parseInt(req.params.id), result.rows[0].name, req.body)
     res.json(result.rows[0])
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
@@ -338,11 +357,11 @@ router.post('/masters/:id/fragrances', auth, async (req, res) => {
           const v = await tq(
             `INSERT INTO products
               (name, product_code, category, segment, is_master, master_product_id, fragrance_id,
-               unit, current_stock, volume_ml, volume_unit, container_name, is_pure_oil, is_candle, client_id)
-             VALUES ($1, $2, 'FINISHED_GOOD', 'MUSE', false, $3, $4, 'units', 0, $5, $6, $7, $8, $9, NULL)
+               unit, current_stock, volume_ml, volume_unit, container_name, is_pure_oil, is_candle, client_id, price)
+             VALUES ($1, $2, 'FINISHED_GOOD', 'MUSE', false, $3, $4, 'units', 0, $5, $6, $7, $8, $9, NULL, $10)
              ON CONFLICT (product_code) DO UPDATE SET name = EXCLUDED.name, archived = false
              RETURNING id`,
-            [variantName, variantCode, master.id, fragrance_id, master.volume_ml, master.volume_unit, master.container_name, master.is_pure_oil, master.is_candle]
+            [variantName, variantCode, master.id, fragrance_id, master.volume_ml, master.volume_unit, master.container_name, master.is_pure_oil, master.is_candle, master.price]
           )
           variantId = v.rows[0].id
           // Auto-assign MUSE SKU + barcode (keeps existing if variant was re-added)

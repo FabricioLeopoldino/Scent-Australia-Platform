@@ -273,7 +273,9 @@ router.post('/products/:id/shopify/publish', auth, async (req, res) => {
         status: 'draft',
         images,
         variants: [{
-          sku: p.product_code,
+          // MUSE variants carry the STORE sku (Muse_RD#####) in p.sku;
+          // B2B products keep product_code as the single-source SKU.
+          sku: p.sku || p.product_code,
           barcode: p.barcode || undefined,
           price: p.price != null ? String(p.price) : '0.00',
           inventory_management: 'shopify',
