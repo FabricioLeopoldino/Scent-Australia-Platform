@@ -1,7 +1,7 @@
 const express = require('express')
 const { sanitizeError } = require('../errors')
 const router = express.Router()
-const { query } = require('../db')
+const { query, withTransaction } = require('../db')
 const { auth, requireRole, auditLog, requireUploads } = require('../auth')
 
 router.get('/products', auth, async (req, res) => {
@@ -123,13 +123,43 @@ router.delete('/products/:id', auth, async (req, res) => {
       if (tx.rows[0] || rs.rows[0] || hasStock) {
         return res.status(400).json({ error: 'Cannot permanently delete — product has stock, transactions or reservations. Archive instead.' })
       }
+      // A FRAGRANCE feeds MUSE variants; products.fragrance_id is ON DELETE SET
+      // NULL, so deleting it alone leaves variants with no fragrance — a broken
+      // product that no production order can build (owner-hit twice). Take the
+      // dependent variants (and their master links) with it.
+      if (prod.rows[0].category === 'FRAGRANCE') {
+        await withTransaction(async (client) => {
+          const tq = (t, p) => client.query(t, p)
+          const vars = await tq(`SELECT id FROM products WHERE fragrance_id = $1`, [req.params.id])
+          const ids = vars.rows.map((v) => v.id)
+          if (ids.length) {
+            // Variants with their own history can't vanish — archive those instead.
+            const withHist = await tq(
+              `SELECT DISTINCT product_id FROM transactions WHERE product_id = ANY($1)`, [ids]
+            )
+            const keep = new Set(withHist.rows.map((r) => r.product_id))
+            const drop = ids.filter((i) => !keep.has(i))
+            if (keep.size) await tq(`UPDATE products SET archived = true WHERE id = ANY($1)`, [[...keep]])
+            if (drop.length) await tq(`DELETE FROM products WHERE id = ANY($1)`, [drop])
+          }
+          await tq(`DELETE FROM muse_master_fragrances WHERE fragrance_id = $1`, [req.params.id])
+          await tq(`DELETE FROM major_client_master_fragrances WHERE fragrance_id = $1`, [req.params.id])
+          await tq(`DELETE FROM products WHERE id = $1`, [req.params.id])
+        })
+        await auditLog(req.query.userId || req.user.id, 'product_deleted', 'product', parseInt(req.params.id), prod.rows[0].name, { mode: 'permanent', cascaded_variants: true })
+        return res.json({ success: true, mode: 'permanent' })
+      }
       await query(`DELETE FROM products WHERE id = $1`, [req.params.id])
       await auditLog(req.query.userId || req.user.id, 'product_deleted', 'product', parseInt(req.params.id), prod.rows[0].name, { mode: 'permanent' })
       return res.json({ success: true, mode: 'permanent' })
     }
 
     // Default: soft archive (mirrors the master archive flow). UI shows archived behind a toggle.
+    // Archiving a fragrance archives its variants too — same reason as above.
     await query(`UPDATE products SET archived = true, updated_at = NOW() WHERE id = $1`, [req.params.id])
+    if (prod.rows[0].category === 'FRAGRANCE') {
+      await query(`UPDATE products SET archived = true, updated_at = NOW() WHERE fragrance_id = $1`, [req.params.id])
+    }
     await auditLog(req.query.userId || req.user.id, 'product_archived', 'product', parseInt(req.params.id), prod.rows[0].name, {})
     res.json({ success: true, mode: 'archive' })
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
