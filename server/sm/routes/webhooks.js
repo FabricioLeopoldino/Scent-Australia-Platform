@@ -13,7 +13,7 @@ async function smWebhookHandler(req, res) {
   console.log(`[webhook] received topic=${topic}`)
 
   // HMAC verification — for API-registered webhooks, secret = SHOPIFY_API_SECRET (client secret)
-  const secret = req.hmacVerified ? null : (process.env.SHOPIFY_WEBHOOK_SECRET || process.env.SHOPIFY_API_SECRET)
+  const secret = req.hmacVerified ? null : (process.env.SM_SHOPIFY_WEBHOOK_SECRET || process.env.SM_SHOPIFY_API_SECRET)
   if (secret) {
     const hmac = req.headers['x-shopify-hmac-sha256']
     const body = req.rawBody || (Buffer.isBuffer(req.body) ? req.body : Buffer.from(typeof req.body === 'string' ? req.body : JSON.stringify(req.body)))
@@ -92,7 +92,7 @@ router.post('/webhook/shopify', smWebhookHandler)
 router.post('/shopify/draft-order', auth, async (req, res) => {
   try {
     const { production_order_id } = req.body
-    if (!process.env.SHOPIFY_SHOP_DOMAIN || !process.env.SHOPIFY_ACCESS_TOKEN) {
+    if (!process.env.SM_SHOPIFY_SHOP_DOMAIN || !process.env.SM_SHOPIFY_ACCESS_TOKEN) {
       return res.status(503).json({ error: 'Shopify not configured' })
     }
 
@@ -135,10 +135,10 @@ router.post('/shopify/draft-order', auth, async (req, res) => {
     }
 
     const response = await fetch(
-      `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2025-01/draft_orders.json`,
+      `https://${process.env.SM_SHOPIFY_SHOP_DOMAIN}/admin/api/2025-01/draft_orders.json`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN },
+        headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': process.env.SM_SHOPIFY_ACCESS_TOKEN },
         body: JSON.stringify(draftOrder)
       }
     )

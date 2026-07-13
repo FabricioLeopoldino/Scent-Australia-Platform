@@ -35,10 +35,15 @@ process.env.SHOPIFY_WEBHOOK_SECRET =
   process.env.SCENT_SHOPIFY_WEBHOOK_SECRET ||
   '';
 
-// Outbound Shopify (Phase 5, OD1: one physical store). SA legacy names +
-// SM legacy names both resolve to the SA store credentials.
-// SHOPIFY_SYNC_ENABLED is intentionally NOT aliased until cutover — it
-// would make SA auto-create Shopify products from staging activity.
+// ── TWO PHYSICAL STORES (D12, owner 2026-07-14: "Scent = SA · Muse = MUSE+SM")
+// This REVERSES OD1 (which put SM on the SA store). Each module now talks to
+// its own store, so their env namespaces MUST NOT collide — the legacy code of
+// both modules read the same generic SHOPIFY_* names:
+//   SA module  → generic SHOPIFY_*     ← Scent store  (SCENT_SHOPIFY_*)
+//   SM module  → SM_SHOPIFY_*          ← Muse store   (MUSE_SHOPIFY_*)
+// SHOPIFY_SYNC_ENABLED (SA) and SM_SHOPIFY_SYNC_ENABLED (SM) are intentionally
+// NOT aliased until cutover — otherwise staging activity would write to the
+// live stores (the Muse store already has real Active products).
 process.env.SHOPIFY_STORE_NAME =
   process.env.SHOPIFY_STORE_NAME ||
   process.env.SA_SHOPIFY_STORE_NAME ||
@@ -51,8 +56,21 @@ process.env.SHOPIFY_ACCESS_TOKEN =
   '';
 process.env.SHOPIFY_SHOP_DOMAIN =
   process.env.SHOPIFY_SHOP_DOMAIN ||
-  process.env.SM_SHOPIFY_STORE_DOMAIN ||
   (process.env.SHOPIFY_STORE_NAME ? `${process.env.SHOPIFY_STORE_NAME}.myshopify.com` : '');
+
+// SM / MUSE module → the Muse store
+process.env.SM_SHOPIFY_SHOP_DOMAIN =
+  process.env.SM_SHOPIFY_SHOP_DOMAIN || process.env.MUSE_SHOPIFY_SHOP_DOMAIN || '';
+process.env.SM_SHOPIFY_ACCESS_TOKEN =
+  process.env.SM_SHOPIFY_ACCESS_TOKEN || process.env.MUSE_SHOPIFY_ACCESS_TOKEN || '';
+process.env.SM_SHOPIFY_API_KEY =
+  process.env.SM_SHOPIFY_API_KEY || process.env.MUSE_SHOPIFY_API_KEY || '';
+// The app's API secret key (shpss_…) — signs webhooks we register via the API.
+process.env.SM_SHOPIFY_API_SECRET =
+  process.env.SM_SHOPIFY_API_SECRET || process.env.MUSE_SHOPIFY_API_SECRET || '';
+// The Notifications secret — signs webhooks created by hand in the admin.
+process.env.SM_SHOPIFY_WEBHOOK_SECRET =
+  process.env.SM_SHOPIFY_WEBHOOK_SECRET || process.env.MUSE_SHOPIFY_WEBHOOK_SECRET || '';
 
 // Trust Render's load balancer so express-rate-limit reads the real client IP
 app.set('trust proxy', 1);

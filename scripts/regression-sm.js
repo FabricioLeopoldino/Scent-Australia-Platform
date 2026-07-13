@@ -119,10 +119,16 @@ async function main() {
         generate_variants: true,
       });
       masterId = master.json?.master?.id;
-      record('master: MUSE create + 2 variants + MUS skus', master.status === 201 && master.json?.variants_created === 2, JSON.stringify({ variants: master.json?.variants_created }));
+      record('master: MUSE create + 2 variants + store skus', master.status === 201 && master.json?.variants_created === 2, JSON.stringify({ variants: master.json?.variants_created }));
     }
     const skus = await db.query(`SELECT sku FROM products WHERE master_product_id = $1 ORDER BY sku`, [masterId]);
-    record('master: variants carry MUS#### skus', skus.rows.length >= 2 && skus.rows.every((r) => /^MUS\d{4}$/.test(r.sku)));
+    // Store SKU pattern (owner 2026-07-12): Muse_<master alpha prefix><5 digits>
+    // — matches the SKUs live on the Muse Shopify store (Muse_RD00001…).
+    record(
+      'master: variants carry store-pattern skus (Muse_XX#####)',
+      skus.rows.length >= 2 && skus.rows.every((r) => /^Muse_[A-Z]+\d{5}$/.test(r.sku)),
+      JSON.stringify(skus.rows.map((r) => r.sku))
+    );
 
     // ── MUSE production order: reserve → start (debit) → complete ──
     const eth0 = await stockOf(ethanolId), fr0 = await stockOf(frag1), bot0 = await stockOf(bottleId);

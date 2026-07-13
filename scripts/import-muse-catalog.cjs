@@ -31,10 +31,14 @@ const CSV = path.join(__dirname, '../../SKU_mapping_MUSE.csv');
 const RESET = process.argv.includes('--reset-test');
 const LINKS_ONLY = process.argv.includes('--links-only');
 
-// Regression-suite fixtures only. NEVER put FRAG_##### codes here — the real
-// catalog uses that sequence now (a past run briefly deleted 2 real
-// fragrances; the same run recreated + relinked them, but don't repeat it).
-const TEST_CODES = ['RD200_TEST', 'FRAG-SANTAL', 'FRAG-OUD'];
+// Regression-suite fixtures only (every master/fragrance regression-sm.js
+// creates — an incomplete list leaves orphaned variants behind when the test
+// fragrances are deleted). NEVER put FRAG_##### codes here: the real catalog
+// uses that sequence.
+const TEST_CODES = [
+  'RD200_TEST', 'MAJ_RD200_TEST', 'CANDLE_240G', // masters
+  'FRAG-SANTAL', 'FRAG-OUD',                     // fragrances
+];
 const MASTERS = [
   { code: 'RD200', name: 'Reed Diffuser 200ml', volume_ml: 200, csvCol: 'rd' },
   { code: 'RS100', name: 'Room Spray 100ml', volume_ml: 100, csvCol: 'rs' },

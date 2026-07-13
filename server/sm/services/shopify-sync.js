@@ -12,7 +12,7 @@ async function enqueueDraftOrder(productionOrderId) {
 }
 
 async function processDraftOrder(payload) {
-  if (!process.env.SHOPIFY_SHOP_DOMAIN || !process.env.SHOPIFY_ACCESS_TOKEN) {
+  if (!process.env.SM_SHOPIFY_SHOP_DOMAIN || !process.env.SM_SHOPIFY_ACCESS_TOKEN) {
     throw new Error('Shopify not configured')
   }
 
@@ -53,10 +53,10 @@ async function processDraftOrder(payload) {
   }
 
   const response = await fetch(
-    `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2025-01/draft_orders.json`,
+    `https://${process.env.SM_SHOPIFY_SHOP_DOMAIN}/admin/api/2025-01/draft_orders.json`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN },
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': process.env.SM_SHOPIFY_ACCESS_TOKEN },
       body: JSON.stringify(draftOrder)
     }
   )
@@ -73,8 +73,8 @@ let cachedLocationId = null
 async function getPrimaryLocationId() {
   if (cachedLocationId) return cachedLocationId
   const res = await fetch(
-    `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2026-04/locations.json`,
-    { headers: { 'X-Shopify-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN } }
+    `https://${process.env.SM_SHOPIFY_SHOP_DOMAIN}/admin/api/2026-04/locations.json`,
+    { headers: { 'X-Shopify-Access-Token': process.env.SM_SHOPIFY_ACCESS_TOKEN } }
   )
   const data = await res.json()
   cachedLocationId = data.locations?.[0]?.id || null
@@ -89,7 +89,7 @@ async function enqueueInventoryAdjust(productId, delta) {
 }
 
 async function processInventoryAdjust(payload) {
-  if (!process.env.SHOPIFY_SHOP_DOMAIN || !process.env.SHOPIFY_ACCESS_TOKEN) {
+  if (!process.env.SM_SHOPIFY_SHOP_DOMAIN || !process.env.SM_SHOPIFY_ACCESS_TOKEN) {
     throw new Error('Shopify not configured')
   }
   const prod = await query(`SELECT shopify_inventory_item_id FROM products WHERE id = $1`, [payload.product_id])
@@ -100,10 +100,10 @@ async function processInventoryAdjust(payload) {
   if (!locationId) throw new Error('Could not resolve Shopify location')
 
   const response = await fetch(
-    `https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2026-04/inventory_levels/adjust.json`,
+    `https://${process.env.SM_SHOPIFY_SHOP_DOMAIN}/admin/api/2026-04/inventory_levels/adjust.json`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN },
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': process.env.SM_SHOPIFY_ACCESS_TOKEN },
       body: JSON.stringify({ location_id: locationId, inventory_item_id: inventoryItemId, available_adjustment: payload.delta })
     }
   )
@@ -111,7 +111,16 @@ async function processInventoryAdjust(payload) {
   if (!response.ok) throw new Error(data.errors ? JSON.stringify(data.errors) : 'Shopify inventory adjust failed')
 }
 
+// CUTOVER GATE (D12): the Muse store is LIVE with real Active products. Until
+// SM_SHOPIFY_SYNC_ENABLED=true (set only at cutover), the queue accumulates
+// but never writes to Shopify — staging/local activity can't touch real
+// inventory or create real draft orders. Mirrors SA's SHOPIFY_SYNC_ENABLED.
+function outboundEnabled() {
+  return String(process.env.SM_SHOPIFY_SYNC_ENABLED || '').toLowerCase() === 'true'
+}
+
 async function runRetryQueue() {
+  if (!outboundEnabled()) return // queue drains only after cutover
   try {
     const pending = await query(
       `SELECT * FROM pending_shopify_sync WHERE status = 'pending' AND next_retry_at <= NOW() ORDER BY next_retry_at ASC LIMIT 10`
@@ -144,12 +153,16 @@ async function runRetryQueue() {
 
 function startSyncCron() {
   setInterval(runRetryQueue, 60_000)
-  console.log('[shopify-sync] Retry cron started (60s interval)')
+  console.log(
+    outboundEnabled()
+      ? '[shopify-sync] Retry cron started (60s interval) — OUTBOUND LIVE'
+      : '[shopify-sync] Retry cron started (60s) — outbound DISABLED (set SM_SHOPIFY_SYNC_ENABLED=true at cutover)'
+  )
 }
 
 async function registerWebhooks() {
-  const domain = process.env.SHOPIFY_SHOP_DOMAIN
-  const token  = process.env.SHOPIFY_ACCESS_TOKEN
+  const domain = process.env.SM_SHOPIFY_SHOP_DOMAIN
+  const token  = process.env.SM_SHOPIFY_ACCESS_TOKEN
   // PLATFORM PORT (Phase 5): callback targets the platform receiver at the
   // public platform URL. https-only guard prevents local dev boots from
   // registering localhost callbacks against the real store.
@@ -161,7 +174,8 @@ async function registerWebhooks() {
     return
   }
 
-  const callbackUrl = `${host}/api/webhook/shopify/sa` // platform receiver, shared SA store (OD1)
+  // D12: SM/MUSE live on the MUSE store — the receiver route is /muse.
+  const callbackUrl = `${host}/api/webhook/shopify/muse`
   const topics = ['orders/paid', 'orders/cancelled']
 
   for (const topic of topics) {

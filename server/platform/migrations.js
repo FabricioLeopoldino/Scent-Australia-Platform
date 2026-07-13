@@ -9,7 +9,7 @@ import { platformPool } from '../db.js';
 // (scripts/migrate-sa.js — pg_dump restore + schema rename, PRD §11).
 // Schema `sm` is populated by the SM module's own startup migrations (Phase 3a).
 export async function runPlatformMigrations() {
-  const q = (text) => platformPool.query(text);
+  const q = (text, params) => platformPool.query(text, params);
 
   console.log('[platform-db] Running startup migrations...');
 
@@ -113,13 +113,23 @@ export async function runPlatformMigrations() {
     )
   `);
 
-  // ── Shopify store config (Phase 5, OD1: single physical store) ─────────
+  // ── Shopify store config (D12: TWO stores — "Scent = SA · Muse = MUSE+SM")
+  // Scent store: SA fulfillment events only.
   await q(`
     INSERT INTO platform.shopify_stores (key, domain, api_version, topics, enabled)
     VALUES ('sa', 'sainternalstore7811121.myshopify.com', '2025-01',
-            '["fulfillments/create","fulfillments/update","orders/paid","orders/cancelled"]'::jsonb, true)
-    ON CONFLICT (key) DO NOTHING
+            '["fulfillments/create","fulfillments/update"]'::jsonb, true)
+    ON CONFLICT (key) DO UPDATE SET topics = EXCLUDED.topics
   `);
+  // Muse store: MUSE + Scented Merchandise order events. Domain comes from the
+  // env (the store name is not hardcoded for this one).
+  await q(
+    `INSERT INTO platform.shopify_stores (key, domain, api_version, topics, enabled)
+     VALUES ('muse', $1, '2026-04',
+             '["orders/paid","orders/cancelled"]'::jsonb, true)
+     ON CONFLICT (key) DO UPDATE SET domain = EXCLUDED.domain, topics = EXCLUDED.topics`,
+    [process.env.SM_SHOPIFY_SHOP_DOMAIN || process.env.MUSE_SHOPIFY_SHOP_DOMAIN || 'muse-9973.myshopify.com']
+  );
 
   // ── Seed root user if none exist (SA pattern: default password + forced change) ──
   // Replaced by the real SA user import at Phase 2a (scripts/migrate-sa.js).

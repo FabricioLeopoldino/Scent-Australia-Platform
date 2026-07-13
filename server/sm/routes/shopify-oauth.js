@@ -10,7 +10,7 @@ router.get('/shopify/install', (req, res) => {
   const shop = req.query.shop
   if (!shop) return res.status(400).send('Missing ?shop= parameter')
 
-  const apiKey    = process.env.SHOPIFY_API_KEY
+  const apiKey    = process.env.SM_SHOPIFY_API_KEY
   const redirectUri = `https://${req.headers.host}/shopify/callback`
   const state     = crypto.randomBytes(16).toString('hex')
 
@@ -28,8 +28,8 @@ router.get('/shopify/callback', async (req, res) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        client_id:     process.env.SHOPIFY_API_KEY,
-        client_secret: process.env.SHOPIFY_API_SECRET,
+        client_id:     process.env.SM_SHOPIFY_API_KEY,
+        client_secret: process.env.SM_SHOPIFY_API_SECRET,
         code
       })
     })

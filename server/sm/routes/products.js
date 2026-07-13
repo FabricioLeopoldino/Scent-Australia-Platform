@@ -282,8 +282,14 @@ router.delete('/products/:id/attachments/:attachId', auth, requireRole('root', '
 // Publish a product to Shopify as a draft (system stays source of truth for stock/price).
 router.post('/products/:id/shopify/publish', auth, async (req, res) => {
   try {
-    if (!process.env.SHOPIFY_SHOP_DOMAIN || !process.env.SHOPIFY_ACCESS_TOKEN) {
+    if (!process.env.SM_SHOPIFY_SHOP_DOMAIN || !process.env.SM_SHOPIFY_ACCESS_TOKEN) {
       return res.status(503).json({ error: 'Shopify not configured' })
+    }
+    // CUTOVER GATE (D12): the Muse store is live with real products — publishing
+    // from staging/local would create real products there. Same flag that gates
+    // the outbound sync queue; enabled only at cutover.
+    if (String(process.env.SM_SHOPIFY_SYNC_ENABLED || '').toLowerCase() !== 'true') {
+      return res.status(503).json({ error: 'Shopify publishing is disabled until cutover (SM_SHOPIFY_SYNC_ENABLED)' })
     }
     const prod = await query(`SELECT * FROM products WHERE id = $1`, [req.params.id])
     if (!prod.rows[0]) return res.status(404).json({ error: 'Not found' })
@@ -315,9 +321,9 @@ router.post('/products/:id/shopify/publish', auth, async (req, res) => {
       }
     }
 
-    const response = await fetch(`https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/2026-04/products.json`, {
+    const response = await fetch(`https://${process.env.SM_SHOPIFY_SHOP_DOMAIN}/admin/api/2026-04/products.json`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': process.env.SHOPIFY_ACCESS_TOKEN },
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': process.env.SM_SHOPIFY_ACCESS_TOKEN },
       body: JSON.stringify(shopifyProduct)
     })
     const data = await response.json()

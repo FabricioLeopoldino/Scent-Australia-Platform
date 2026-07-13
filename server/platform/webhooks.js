@@ -23,17 +23,27 @@ const { smWebhookHandler } = smModule;
 //   - API-registered webhooks (SM's orders/*) sign with the custom app's
 //     API SECRET KEY (shpss_...) — the trap the old Muse repo hit too
 // The receiver therefore accepts a LIST of candidate secrets per store.
+// D12 (owner 2026-07-14): TWO physical stores — "Scent = SA · Muse = MUSE+SM".
+// Each store has TWO possible signing secrets, because Shopify signs with a
+// different one depending on how the webhook was created:
+//   • admin-created (Notifications page) → the store's Notifications secret
+//   • API-registered (our code)          → the app's API secret key (shpss_…)
+// We verify against both, constant-time (FR-HOOK-6).
 const STORE_SECRETS = {
+  // Scent store — SA fulfillments (webhooks created by hand in the admin).
   sa: () => [
-    process.env.SA_SHOPIFY_WEBHOOK_SECRET || process.env.SCENT_SHOPIFY_WEBHOOK_SECRET, // manual/admin webhooks
-    process.env.SA_SHOPIFY_API_SECRET || process.env.SHOPIFY_API_SECRET,               // API-registered webhooks
-  ].filter(Boolean),
-  sm: () => [
-    process.env.SM_SHOPIFY_WEBHOOK_SECRET,
-    process.env.SA_SHOPIFY_WEBHOOK_SECRET || process.env.SCENT_SHOPIFY_WEBHOOK_SECRET, // phase 1: same physical store
+    process.env.SA_SHOPIFY_WEBHOOK_SECRET || process.env.SCENT_SHOPIFY_WEBHOOK_SECRET,
     process.env.SA_SHOPIFY_API_SECRET || process.env.SHOPIFY_API_SECRET,
   ].filter(Boolean),
+  // Muse store — MUSE + Scented Merchandise orders (registered via the API).
+  muse: () => [
+    process.env.SM_SHOPIFY_WEBHOOK_SECRET || process.env.MUSE_SHOPIFY_WEBHOOK_SECRET,
+    process.env.SM_SHOPIFY_API_SECRET || process.env.MUSE_SHOPIFY_API_SECRET,
+  ].filter(Boolean),
 };
+// 'sm' kept as an alias of 'muse' so any URL registered under the old path
+// still verifies instead of 404-ing.
+STORE_SECRETS.sm = STORE_SECRETS.muse;
 
 // Topics → module. SA and SM topic sets are disjoint by design (guardrails:
 // orders/fulfilled is NEVER processed; SM draft orders carry no SKUs).
@@ -87,19 +97,24 @@ export async function shopifyWebhookReceiver(req, res) {
   req.body = parsed;
   req.rawBody = rawBody;
 
-  if (SA_TOPICS.has(topic)) {
+  // D12: dispatch is STORE-AWARE. Each module only ever sees events from its
+  // own store, so a topic delivered on the wrong store can never drive the
+  // other module's stock (the two stores hold different catalogs).
+  const isMuseStore = store === 'muse' || store === 'sm';
+
+  if (store === 'sa' && SA_TOPICS.has(topic)) {
     // saWebhookHandler re-verifies HMAC under its legacy env name
     // (SHOPIFY_WEBHOOK_SECRET, aliased at boot) — harmless double check on
     // the same bytes with the same secret.
     return saWebhookHandler(req, res);
   }
 
-  if (SM_TOPICS.has(topic)) {
-    // SM handler re-verifies HMAC on req.rawBody with the same aliased
-    // secret (harmless double check), then matches by 'SM Order: SM-###'.
+  if (isMuseStore && SM_TOPICS.has(topic)) {
+    // SM handler re-verifies HMAC on req.rawBody with the Muse-store secret
+    // (harmless double check), then matches by 'SM Order: SM-###'.
     return smWebhookHandler(req, res);
   }
 
-  console.log(`[webhook] Unhandled topic ${topic} — acknowledged`);
+  console.log(`[webhook] Unhandled topic ${topic} on store ${store} — acknowledged`);
   return res.status(200).json({ received: true, skipped: 'unhandled_topic' });
 }
