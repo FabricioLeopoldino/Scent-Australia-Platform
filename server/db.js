@@ -31,7 +31,15 @@ const POOL_TUNING = {
 };
 
 function makePool(label, { searchPath } = {}) {
-  const url = searchPath ? directUrl(DATABASE_URL) : DATABASE_URL;
+  // ALL pools use the DIRECT endpoint (2026-07-14). The SA/SM pools always did
+  // (they need search_path, which Neon's pooler rejects). The platform pool used
+  // the pooled endpoint until Neon started serving it with
+  // default_transaction_read_only=on — every write failed with 25006
+  // ("cannot execute CREATE SCHEMA in a read-only transaction") while the same
+  // compute answered read-write on the direct host. Verified: direct = writable,
+  // pooled = read-only, DB only 23 MB (no quota issue), no role/db-level config.
+  // Our own pg pool (max 10/pool) is well inside Neon's direct-connection limit.
+  const url = directUrl(DATABASE_URL);
   const pool = new Pool({
     connectionString: url,
     ssl: url?.includes('localhost') ? false : { rejectUnauthorized: false },
