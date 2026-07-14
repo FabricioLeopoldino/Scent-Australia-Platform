@@ -253,6 +253,62 @@ async function importUsers(tgt) {
   console.log('[users] ✅ ID-alignment invariant verified (platform.users ⊆ sa.users by id).');
 }
 
+// ── IDENTITY GUARD ────────────────────────────────────────────────────────
+// The host check below proves source ≠ target, but NOT that the target is the
+// right database. If PLATFORM_DATABASE_URL ever pointed at production (an easy
+// mistake — the .env has carried duplicate PLATFORM_DATABASE_URL entries), the
+// `DROP SCHEMA public CASCADE` further down would destroy the live SA system —
+// including a physical stock count that cost real people real days to produce.
+// So: before ANY destructive statement, PROVE the target is the platform DB and
+// PROVE the source is production. Refuse loudly otherwise.
+async function assertDatabaseIdentities(tgt, src) {
+  // 1. TARGET must own the platform schema (production has no such schema).
+  const hasPlatform = await tgt.query(
+    `SELECT COUNT(*)::int AS n FROM information_schema.tables
+     WHERE table_schema = 'platform' AND table_name = 'users'`
+  );
+  if (hasPlatform.rows[0].n === 0) {
+    fail(
+      'TARGET does not contain platform.users — it is NOT the platform database. ' +
+      'Refusing to run (this is the guard that stops a DROP on production).'
+    );
+  }
+
+  // 2. TARGET must NOT look like the production SA system: production keeps its
+  //    tables in `public`. A populated public.products on the target means the
+  //    URL points at production.
+  const tgtPublic = await tgt.query(
+    `SELECT COUNT(*)::int AS n FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name IN ('products','transactions')`
+  );
+  if (tgtPublic.rows[0].n > 0) {
+    const rows = await tgt.query(`SELECT COUNT(*)::int AS n FROM public.products`).catch(() => ({ rows: [{ n: 0 }] }));
+    if (rows.rows[0].n > 0) {
+      fail(
+        `TARGET has ${rows.rows[0].n} rows in public.products — this looks like the PRODUCTION SA database. ` +
+        'Refusing to run. Check PLATFORM_DATABASE_URL.'
+      );
+    }
+  }
+
+  // 3. SOURCE must actually be production (tables in public with data), else the
+  //    dump would silently produce an empty/incomplete restore.
+  const srcProducts = await src.query(
+    `SELECT COUNT(*)::int AS n FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name = 'products'`
+  );
+  if (srcProducts.rows[0].n === 0) {
+    fail('SOURCE has no public.products — it does not look like the production SA database. Refusing to run.');
+  }
+  const srcCount = (await src.query(`SELECT COUNT(*)::int AS n FROM public.products`)).rows[0].n;
+  if (srcCount === 0) {
+    fail('SOURCE public.products is EMPTY — refusing to migrate an empty production snapshot.');
+  }
+
+  console.log(`[guard] TARGET confirmed = platform DB (platform.users present, public empty).`);
+  console.log(`[guard] SOURCE confirmed = production SA (${srcCount} products, read-only session).\n`);
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────
 async function main() {
   const t0 = Date.now();
@@ -299,6 +355,10 @@ async function main() {
   });
   await tgt.connect();
   const tgtQ = (text) => tgt.query(text);
+
+  // HARD GUARD — runs BEFORE anything destructive. Proves the target is the
+  // platform DB and the source is production. Aborts otherwise.
+  await assertDatabaseIdentities(tgt, src);
 
   try {
     if (!RECONCILE_ONLY) {
