@@ -176,7 +176,9 @@ async function registerWebhooks() {
 
   // D12: SM/MUSE live on the MUSE store — the receiver route is /muse.
   const callbackUrl = `${host}/api/webhook/shopify/muse`
-  const topics = ['orders/paid', 'orders/cancelled']
+  // D13: fulfillments included — MUSE is retail, so shipping must deduct the
+  // finished-good stock (orders/paid alone never moved it).
+  const topics = ['orders/paid', 'orders/cancelled', 'fulfillments/create', 'fulfillments/update']
 
   for (const topic of topics) {
     try {

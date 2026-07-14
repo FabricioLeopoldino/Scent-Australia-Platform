@@ -5,8 +5,123 @@ const crypto = require('crypto')
 const { query, withTransaction } = require('../db')
 const { auth, auditLog } = require('../auth')
 const { enqueueDraftOrder } = require('../services/shopify-sync')
+const { adjustProductStock } = require('../services/stock-service')
 
 const processingOrders = new Set()
+const processingFulfillments = new Set()
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MUSE RETAIL FULFILLMENT (D13, owner 2026-07-14)
+// ═══════════════════════════════════════════════════════════════════════════
+// The SM module was built for B2B: a production order becomes a Shopify draft
+// order, the client pays, and orders/paid only updates references — the goods
+// were made to order, so no finished-good stock moves.
+//
+// MUSE is RETAIL: produce → finished-good stock → customer buys → we ship.
+// Nothing was deducting that stock (owner found it by fulfilling a real MUSE
+// order and watching stock stay put). Fixed here, mirroring the SA model that
+// 25 regression checks already prove:
+//
+//   fulfillments/create           → stock leaves the shelf   → deduct
+//   fulfillments/update cancelled → it came back             → restore
+//
+// Deducting at SHIPMENT (not at payment) matches physical reality: an order
+// paid then cancelled before shipping never moves stock at all.
+//
+// NO Shopify push: our MUSE products publish with inventory_management:'shopify',
+// so Shopify ALREADY decremented its own count on the sale. Pushing our delta
+// back would deduct it twice (skipShopifyPush).
+// ═══════════════════════════════════════════════════════════════════════════
+const FULFILLMENT_TOPICS = ['fulfillments/create', 'fulfillments/update'];
+
+async function smFulfillmentHandler(req, res, topic, body) {
+  const fulfillmentId = body.id;
+  const orderId = body.order_id;
+  const status = String(body.status || '').toLowerCase();
+  // Shopify sends fulfillments/update for many reasons; only a cancellation
+  // moves stock back. Anything else (tracking added, etc.) is a no-op.
+  const isCancel = topic === 'fulfillments/update' && status === 'cancelled';
+  const isShip = topic === 'fulfillments/create' && status !== 'cancelled';
+  if (!isShip && !isCancel) {
+    console.log(`[muse-fulfil] ${topic} status=${status} — no stock impact, skipped`);
+    return;
+  }
+
+  const key = `fulfillment_${fulfillmentId}`;
+  if (processingFulfillments.has(key)) return;
+  processingFulfillments.add(key);
+
+  try {
+    const webhookType = isCancel ? 'muse_reversal' : 'muse_sale';
+    // Idempotency: Shopify redelivers. Same fulfillment + same effect = once.
+    const already = await query(
+      `SELECT id FROM webhook_processed WHERE shopify_order_id = $1 AND webhook_type = $2`,
+      [fulfillmentId, webhookType]
+    );
+    if (already.rows[0]) {
+      console.log(`[muse-fulfil] already processed ${key} (${webhookType})`);
+      return;
+    }
+
+    const lines = Array.isArray(body.line_items) ? body.line_items : [];
+    if (!lines.length) {
+      console.log(`[muse-fulfil] ${key} has no line items — nothing to do`);
+      return;
+    }
+
+    const results = [];
+    await withTransaction(async (client) => {
+      const tq = (t, p) => client.query(t, p);
+      for (const li of lines) {
+        const sku = (li.sku || '').trim();
+        const qty = parseInt(li.quantity, 10) || 0;
+        if (!sku || qty <= 0) continue;
+
+        // MUSE variants carry the STORE sku (Muse_RD00001) — that is the join.
+        const prod = await tq(
+          `SELECT id, name, current_stock FROM products WHERE sku = $1 FOR UPDATE`,
+          [sku]
+        );
+        if (!prod.rows[0]) {
+          // Not one of ours (e.g. an SA product sold on another store) — skip,
+          // never guess. Logged so a mismatch is visible, not silent.
+          console.warn(`[muse-fulfil] SKU ${sku} not found in SM — skipped`);
+          continue;
+        }
+        const p = prod.rows[0];
+        const delta = isCancel ? qty : -qty;
+        const note = isCancel
+          ? `Reversal: Shopify Order ${body.name || orderId} — fulfillment ${fulfillmentId} cancelled (${qty}x)`
+          : `Shopify Order ${body.name || orderId} — fulfilled (${qty}x)`;
+
+        await adjustProductStock(
+          p.id, delta,
+          isCancel ? 'shopify_reversal' : 'shopify_sale',
+          note, null, null, null, tq,
+          { skipShopifyPush: true } // Shopify already moved its own count
+        );
+        results.push({ sku, name: p.name, qty, delta });
+      }
+
+      await tq(
+        `INSERT INTO webhook_processed (shopify_order_id, webhook_type) VALUES ($1, $2)`,
+        [fulfillmentId, webhookType]
+      );
+    });
+
+    if (results.length) {
+      const summary = results.map((r) => `${r.sku} ${r.delta > 0 ? '+' : ''}${r.delta}`).join(', ');
+      console.log(`[muse-fulfil] ${webhookType} ${key} → ${summary}`);
+      await auditLog(0, isCancel ? 'muse_fulfillment_reversed' : 'muse_fulfillment_sale',
+        'product', null, body.name || String(orderId),
+        { fulfillment_id: fulfillmentId, order_id: orderId, lines: results });
+    } else {
+      console.log(`[muse-fulfil] ${key} matched no SM products — nothing deducted`);
+    }
+  } finally {
+    processingFulfillments.delete(key);
+  }
+}
 
 async function smWebhookHandler(req, res) {
   const topic = req.headers['x-shopify-topic'] || 'unknown'
@@ -27,9 +142,16 @@ async function smWebhookHandler(req, res) {
   res.status(200).json({ received: true })
 
   try {
+    const rawBodyStr = Buffer.isBuffer(req.body) ? req.body.toString() : (typeof req.body === 'string' ? req.body : JSON.stringify(req.body))
+
+    // D13 — MUSE retail: stock leaves on shipment, returns on cancellation.
+    if (FULFILLMENT_TOPICS.includes(topic)) {
+      return await smFulfillmentHandler(req, res, topic, JSON.parse(rawBodyStr))
+    }
+
     if (!['orders/paid', 'orders/cancelled'].includes(topic)) return
 
-    const rawBody = Buffer.isBuffer(req.body) ? req.body.toString() : (typeof req.body === 'string' ? req.body : JSON.stringify(req.body))
+    const rawBody = rawBodyStr
     const body = JSON.parse(rawBody)
     const shopifyOrderId = body.id
 

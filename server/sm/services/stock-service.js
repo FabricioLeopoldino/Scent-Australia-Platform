@@ -1,7 +1,12 @@
 const { query } = require('../db')
 const { enqueueInventoryAdjust } = require('./shopify-sync')
 
-async function adjustProductStock(productId, delta, type, notes, userId, orderId, lineId, qFn) {
+// opts.skipShopifyPush — set for movements that ORIGINATED in Shopify (a retail
+// sale or its reversal). Shopify already applied them to its own inventory
+// (our MUSE products publish with inventory_management:'shopify'), so pushing
+// the delta back would deduct it a SECOND time. Movements that originate here
+// (production, manual adjust, receiving) still push — we stay the source of truth.
+async function adjustProductStock(productId, delta, type, notes, userId, orderId, lineId, qFn, opts = {}) {
   const qry = qFn || query
   // Guard: prevent stock going negative (deductions only)
   if (delta < 0) {
@@ -19,7 +24,7 @@ async function adjustProductStock(productId, delta, type, notes, userId, orderId
     [p.id, p.product_code, p.name, p.category, type, Math.abs(delta), p.unit, p.current_stock, notes || null, orderId || null, lineId || null, userId || null]
   )
   // System is the source of truth — push the delta to Shopify if this product is published there
-  if (p.shopify_inventory_item_id) {
+  if (p.shopify_inventory_item_id && !opts.skipShopifyPush) {
     await enqueueInventoryAdjust(p.id, delta).catch(() => {})
   }
   return p

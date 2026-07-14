@@ -48,7 +48,11 @@ STORE_SECRETS.sm = STORE_SECRETS.muse;
 // Topics → module. SA and SM topic sets are disjoint by design (guardrails:
 // orders/fulfilled is NEVER processed; SM draft orders carry no SKUs).
 const SA_TOPICS = new Set(['fulfillments/create', 'fulfillments/update', 'orders/fulfilled', 'orders/create']);
-const SM_TOPICS = new Set(['orders/paid', 'orders/cancelled']);
+// D13: the Muse store also sends fulfillments — MUSE is retail, so shipping a
+// product must take it out of finished-good stock. Dispatch stays store-aware:
+// the same topic name means SA oils on the Scent store and MUSE variants on the
+// Muse store, and each only ever reaches its own module.
+const SM_TOPICS = new Set(['orders/paid', 'orders/cancelled', 'fulfillments/create', 'fulfillments/update']);
 
 export async function shopifyWebhookReceiver(req, res) {
   const store = String(req.params.store || '').toLowerCase();
