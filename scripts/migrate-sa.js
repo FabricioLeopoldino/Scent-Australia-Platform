@@ -38,8 +38,12 @@ const { Client } = pkg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ── Config ────────────────────────────────────────────────────────────────
+// Production SA database (READ-ONLY source of the dump). The owner renamed the
+// SCENT_* env family to SA_* (2026-07-14), so accept every historical name.
 const SOURCE_URL =
-  process.env.SA_SOURCE_DATABASE_URL || process.env.SCENT_DATABASE_URL;
+  process.env.SA_SOURCE_DATABASE_URL ||
+  process.env.SA_DATABASE_URL ||
+  process.env.SCENT_DATABASE_URL;
 const TARGET_URL = process.env.PLATFORM_DATABASE_URL;
 const RECONCILE_ONLY = process.argv.includes('--reconcile-only');
 
@@ -254,7 +258,7 @@ async function main() {
   const t0 = Date.now();
 
   // Preconditions
-  if (!SOURCE_URL) fail('SA_SOURCE_DATABASE_URL (or SCENT_DATABASE_URL) not set.');
+  if (!SOURCE_URL) fail('SA_DATABASE_URL (production SA source) not set — add it to .env.');
   if (!TARGET_URL) fail('PLATFORM_DATABASE_URL not set.');
   const srcHost = hostOf(SOURCE_URL);
   const tgtHost = hostOf(TARGET_URL);
