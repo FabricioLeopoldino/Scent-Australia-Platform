@@ -158,6 +158,17 @@ export async function runPlatformMigrations() {
 // boot — so this must run after it, every boot, and also at the end of each
 // SA re-migration). Adds the two transfer types. This is the one sanctioned
 // exception to guardrail #7, scoped to exactly this constraint.
+//
+// D14 (Fragrance Library, 2026-07-15): SA remains structurally untouched
+// (§6 of the design doc) except for two additive, backward-compatible
+// changes — both live here, in the cross-schema migration, because they
+// exist ONLY to let the SM module consume from sa.products (OILS) safely:
+//   1. 6 new transaction types — one debit + one reversal per consuming
+//      business (SM-Standard, SM-Major, MUSE). SA's own code never writes
+//      these; only the new Fragrance Library consumption service does.
+//   2. products.exclusivity — nullable, generic (NOT MUSE-specific): NULL =
+//      shared by every business; a value = exclusive to that business. SA's
+//      existing queries never read this column, so it changes no behaviour.
 export async function runCrossSchemaMigrations() {
   await platformPool.query(`
     DO $$
@@ -172,9 +183,13 @@ export async function runCrossSchemaMigrations() {
           'tech_remove',
           'tech_return_from_tech', 'tech_return_to_main',
           'tech_return_input',
-          'transfer_out', 'transfer_cancel_return'
+          'transfer_out', 'transfer_cancel_return',
+          'sm_std_production', 'sm_std_reversal',
+          'sm_major_production', 'sm_major_reversal',
+          'muse_production', 'muse_reversal'
         ));
     END$$;
   `);
-  console.log('[platform-db] Cross-schema migrations complete (transfer types in sa CHECK).');
+  await platformPool.query(`ALTER TABLE sa.products ADD COLUMN IF NOT EXISTS exclusivity VARCHAR(10)`);
+  console.log('[platform-db] Cross-schema migrations complete (transfer + Fragrance Library types in sa CHECK; sa.products.exclusivity present).');
 }
