@@ -341,23 +341,28 @@ router.post('/manufacturing/:id/complete', auth, async (req, res) => {
       }
 
       // Increment FG stock only for MUSE orders (Standard ships direct, Major waits for client OK)
-      // Match master by product_code + segment='MUSE'; find/create variant by (master_id, fragrance_id)
+      // Match master by product_code + segment='MUSE'; find/create variant by
+      // (master_id, oil_id) — D14 — falling back to the legacy
+      // (master_id, fragrance_id) pairing for any pre-D14 line.
       if (isMuse) {
         const fgLines = await tq(
-          `SELECT pol.id as line_id, pol.product_type, pol.quantity, pol.fragrance_id,
+          `SELECT pol.id as line_id, pol.product_type, pol.quantity, pol.fragrance_id, pol.oil_id, pol.variant_name,
                   master.id as master_id, master.name as master_name, master.volume_ml as master_volume,
                   master.volume_unit as master_volume_unit,
-                  frag.name as fragrance_name, frag.product_code as fragrance_code
+                  frag.name as fragrance_name, frag.product_code as fragrance_code,
+                  oil.name as oil_name, oil."productCode" as oil_code
            FROM production_order_lines pol
            LEFT JOIN products master ON master.product_code = pol.product_type
              AND master.is_master = true AND master.segment = 'MUSE' AND master.client_id IS NULL
            LEFT JOIN products frag ON frag.id = pol.fragrance_id
+           LEFT JOIN sa.products oil ON oil.id = pol.oil_id
            WHERE pol.production_order_id = $1`,
           [req.params.id]
         )
         for (const fl of fgLines.rows) {
-          if (!fl.master_id || !fl.fragrance_id) {
-            console.warn(`[manufacturing/complete] MUSE order ${order.rows[0].order_number} line ${fl.line_id} missing master or fragrance — skipping variant increment`)
+          const usesOil = !!fl.oil_id
+          if (!fl.master_id || (!fl.fragrance_id && !fl.oil_id)) {
+            console.warn(`[manufacturing/complete] MUSE order ${order.rows[0].order_number} line ${fl.line_id} missing master or fragrance/oil — skipping variant increment`)
             continue
           }
 
@@ -366,26 +371,38 @@ router.post('/manufacturing/:id/complete', auth, async (req, res) => {
 
           // Find existing variant
           let variant = await tq(
-            `SELECT id FROM products
-             WHERE master_product_id = $1 AND fragrance_id = $2
-               AND segment = 'MUSE' AND is_master = false
-             LIMIT 1`,
-            [fl.master_id, fl.fragrance_id]
+            usesOil
+              ? `SELECT id FROM products WHERE master_product_id = $1 AND oil_id = $2 AND segment = 'MUSE' AND is_master = false LIMIT 1`
+              : `SELECT id FROM products WHERE master_product_id = $1 AND fragrance_id = $2 AND segment = 'MUSE' AND is_master = false LIMIT 1`,
+            [fl.master_id, usesOil ? fl.oil_id : fl.fragrance_id]
           )
 
           // Auto-create variant if missing (with ON CONFLICT for race safety)
           if (!variant.rows[0]) {
-            const variantCode = `${fl.product_type}-${fl.fragrance_code || fl.fragrance_id}`
-            const variantName = `${fl.master_name || fl.product_type} — ${fl.fragrance_name || 'Unknown'}`
+            // Commercial name: the line's explicit override (e.g. "Afterglow")
+            // if the person building the recipe typed one, else auto-
+            // concatenate master + oil/fragrance name (same graceful default
+            // as before D14 — just no longer the only option, since the
+            // commercial name and the oil's internal name are allowed to
+            // differ, D14.2).
+            // variant_name overrides only the SCENT part ("Afterglow" instead
+            // of the oil's own name "Santal") — the master/format prefix is
+            // always kept, so every MUSE product name still reads
+            // "<Format> — <Scent>" consistently, regardless of which name
+            // supplied the scent half.
+            const scentName = fl.variant_name || (usesOil ? fl.oil_name : fl.fragrance_name)
+            const scentCode = usesOil ? (fl.oil_code || fl.oil_id) : (fl.fragrance_code || fl.fragrance_id)
+            const variantCode = `${fl.product_type}-${scentCode}`
+            const variantName = `${fl.master_name || fl.product_type} — ${scentName || 'Unknown'}`
             const created = await tq(
               `INSERT INTO products
-                (name, product_code, category, segment, is_master, master_product_id, fragrance_id,
+                (name, product_code, category, segment, is_master, master_product_id, fragrance_id, oil_id,
                  unit, current_stock, volume_ml, volume_unit, client_id, price)
-               VALUES ($1, $2, 'FINISHED_GOOD', 'MUSE', false, $3, $4, 'units', 0, $5, $6, NULL,
+               VALUES ($1, $2, 'FINISHED_GOOD', 'MUSE', false, $3, $4, $5, 'units', 0, $6, $7, NULL,
                        (SELECT price FROM products WHERE id = $3))
                ON CONFLICT (product_code) DO UPDATE SET name = EXCLUDED.name
                RETURNING id`,
-              [variantName, variantCode, fl.master_id, fl.fragrance_id, fl.master_volume, fl.master_volume_unit || 'ml']
+              [variantName, variantCode, fl.master_id, usesOil ? null : fl.fragrance_id, usesOil ? fl.oil_id : null, fl.master_volume, fl.master_volume_unit || 'ml']
             )
             variant = created
             // Auto-assign MUSE SKU + barcode to the freshly created variant

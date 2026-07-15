@@ -143,6 +143,19 @@ async function runStartupMigrations() {
   // simplest and avoids recomputing ready-formula scaling inconsistently
   // between order-creation time and start time.
   await query(`ALTER TABLE production_order_lines ADD COLUMN IF NOT EXISTS oil_qty_ml NUMERIC`)
+  // D14 (owner, 2026-07-15): "vai vender Santal mas o nome vai ser Afterglow" —
+  // the commercial name on a MUSE finished product is NOT the oil's name (that
+  // was the old auto-concatenation: master name + fragrance name). An explicit,
+  // optional override lets whoever builds the recipe type the real product
+  // name once; omitted, the code falls back to auto-concatenation with the
+  // OIL's name (same graceful default as before, just no longer the only option).
+  await query(`ALTER TABLE production_order_lines ADD COLUMN IF NOT EXISTS variant_name TEXT`)
+  // The MUSE variant (the actual sellable sm.products row) is identified by
+  // (master_product_id, oil_id) going forward, parallel to the legacy
+  // (master_product_id, fragrance_id) pairing — same cross-schema FK pattern
+  // as production_order_lines.oil_id above.
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS oil_id TEXT REFERENCES sa.products(id) ON DELETE SET NULL`)
+  await query(`CREATE INDEX IF NOT EXISTS idx_products_oil_id ON products(oil_id)`)
   await query(`ALTER TABLE production_orders ADD COLUMN IF NOT EXISTS shopify_draft_order_number VARCHAR(20)`)
   // Shopify product sync (Diffusers and future finished-good publishing)
   await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS price DECIMAL`)

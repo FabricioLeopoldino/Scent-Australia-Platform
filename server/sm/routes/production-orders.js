@@ -319,9 +319,9 @@ router.post('/production-orders', auth, async (req, res) => {
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i]
         const lineResult = await tq(
-          `INSERT INTO production_order_lines (production_order_id, line_number, product_type, fragrance_id, oil_id, oil_pct, packaging_component_id, label_client_label_id, quantity, unit_price, is_candle, labels_required, labels_supplier, labels_eta, needs_labeling, needs_packing, labels_order_qty, use_ready_formula, ready_formula_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
-          [ord.id, i + 1, line.product_type, line.fragrance_id || null, line.oil_id || null, line.oil_pct || 25,
+          `INSERT INTO production_order_lines (production_order_id, line_number, product_type, fragrance_id, oil_id, variant_name, oil_pct, packaging_component_id, label_client_label_id, quantity, unit_price, is_candle, labels_required, labels_supplier, labels_eta, needs_labeling, needs_packing, labels_order_qty, use_ready_formula, ready_formula_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
+          [ord.id, i + 1, line.product_type, line.fragrance_id || null, line.oil_id || null, line.variant_name || null, line.oil_pct || 25,
            line.packaging_component_id || null, line.label_client_label_id || null, line.quantity,
            ['CANDLE_240G', 'CANDLE_400G'].includes(line.product_type),
            !!(line.labels_supplier || line.labels_eta), line.labels_supplier || null, line.labels_eta || null,
@@ -404,9 +404,9 @@ router.put('/production-orders/:id', auth, async (req, res) => {
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i]
         const lineResult = await tq(
-          `INSERT INTO production_order_lines (production_order_id, line_number, product_type, fragrance_id, oil_id, oil_pct, packaging_component_id, label_client_label_id, quantity, unit_price, is_candle, labels_required, labels_supplier, labels_eta, needs_labeling, needs_packing, labels_order_qty, use_ready_formula, ready_formula_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
-          [orderId, i + 1, line.product_type, line.fragrance_id || null, line.oil_id || null, line.oil_pct || 25,
+          `INSERT INTO production_order_lines (production_order_id, line_number, product_type, fragrance_id, oil_id, variant_name, oil_pct, packaging_component_id, label_client_label_id, quantity, unit_price, is_candle, labels_required, labels_supplier, labels_eta, needs_labeling, needs_packing, labels_order_qty, use_ready_formula, ready_formula_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
+          [orderId, i + 1, line.product_type, line.fragrance_id || null, line.oil_id || null, line.variant_name || null, line.oil_pct || 25,
            line.packaging_component_id || null, line.label_client_label_id || null, line.quantity,
            ['CANDLE_240G', 'CANDLE_400G'].includes(line.product_type),
            !!(line.labels_supplier || line.labels_eta), line.labels_supplier || null, line.labels_eta || null,
