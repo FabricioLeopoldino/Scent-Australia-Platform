@@ -9,9 +9,26 @@
 // SAFETY PRINCIPLE (see D14_FRAGRANCE_LIBRARY.md §6): SA does not change how
 // it behaves and never needs to know this module exists. This code obeys the
 // EXACT pattern SA's own stock-mutating routes already use in production —
-// SELECT ... FOR UPDATE row lock, a non-negative guard, and an auditable
-// sa.transactions row with balance_after (the same shape as the cross-system
-// transfer's SEND side in platform/transfers.js and SA's own Tech Stock).
+// SELECT ... FOR UPDATE row lock and an auditable sa.transactions row with
+// balance_after (the same shape as the cross-system transfer's SEND side in
+// platform/transfers.js and SA's own Tech Stock).
+//
+// NEGATIVE STOCK IS ALLOWED HERE ON PURPOSE (owner, 2026-07-15). SA's own
+// stock-mutating code carries the same choice in 4 places (each commented
+// "Allow negative stock") — physical drum counts are inherently uncertain
+// (a supplier's paperwork says 20 L, the drum holds 22 L; nobody weighs it
+// until it runs low) and the warehouse process isn't fully precise yet. A
+// hard block here could refuse a production run that is physically fine to
+// do — worse than the discrepancy itself. The real safety net is
+// operational: SA's existing "Negative Stock Alerts" dashboard already
+// queries `currentStock <= 0` with no notion of which business caused it, so
+// a Fragrance Library-driven negative surfaces there for free, and the owner
+// resolves it the same way as any other negative: contact the warehouse,
+// verify physically, correct manually.
+//
+// Exclusivity is a DIFFERENT kind of rule — not a quantity/measurement
+// question but an access-control one ("this oil is not for your business at
+// all") — so it still hard-blocks, unconditionally.
 //
 // No new database connection is needed: this file runs its queries through
 // whatever `tq` (query function) the CALLER's transaction already uses — sm's
@@ -73,7 +90,9 @@ async function withSaSearchPath(tq, fn) {
 
 /**
  * Consume (debit) fragrance oil from the shared Fragrance Library for an
- * SM/MUSE production. Atomic: row-locked, non-negative guard, auditable.
+ * SM/MUSE production. Atomic: row-locked, auditable. Deliberately allowed to
+ * go negative (see the note at the top of this file) — only the exclusivity
+ * rule can refuse a consumption, never the quantity.
  *
  * @param tq       query function bound to the CALLER's transaction client
  * @param oilId    sa.products.id (e.g. "OIL_175")
@@ -89,10 +108,6 @@ async function consumeFragranceOil(tq, oilId, qtyMl, segment, notes) {
 
   const oil = await lockOil(tq, oilId, exclusivityBucket)
   const current = parseFloat(oil.currentStock) || 0
-  if (qty > current) {
-    throw new Error(`Insufficient Fragrance Library stock for "${oil.name}": available ${current} ${oil.unit || 'mL'}, requested ${qty}`)
-  }
-
   const newStock = current - qty
   await withSaSearchPath(tq, () => tq(
     `UPDATE sa.products SET "currentStock" = $1, "stockBoxes" = $2 WHERE id = $3`,

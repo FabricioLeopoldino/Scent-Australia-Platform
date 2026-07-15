@@ -88,18 +88,19 @@ async function cleanup() {
   console.log(`      stock after 3 debits (100 restored, then -50 -50): ${await getStock()}`);
   (await getStock()) === 900 ? ok('running balance correct after mixed segment debits', '1000 -50 -50 = 900') : bad('balance wrong', await getStock());
 
-  // ── 2. Non-negative guard ─────────────────────────────────────────────────
+  // ── 2. Negative stock is ALLOWED on purpose (owner, 2026-07-15) ───────────
+  // Physical drum counts are uncertain (supplier says 20L, drum holds 22L) —
+  // a hard block could refuse a production that is physically fine to run.
+  // Matches SA's own "Allow negative stock" behaviour exactly; the existing
+  // Negative Stock Alerts dashboard (currentStock <= 0) catches it for free.
   await setStock(10);
-  let guardTripped = false;
-  try {
-    await withTransaction(async (client) => {
-      const tq = (t, p) => client.query(t, p);
-      await consumeFragranceOil(tq, OIL_ID, 999, 'MUSE', 'test-oversell');
-    });
-  } catch (e) { guardTripped = /Insufficient/.test(e.message); }
-  guardTripped && (await getStock()) === 10
-    ? ok('non-negative guard rejects an oversell and leaves stock untouched')
-    : bad('non-negative guard failed', `tripped=${guardTripped} stock=${await getStock()}`);
+  await withTransaction(async (client) => {
+    const tq = (t, p) => client.query(t, p);
+    await consumeFragranceOil(tq, OIL_ID, 15, 'MUSE', 'test-oversell');
+  });
+  (await getStock()) === -5
+    ? ok('oversell is allowed and lands exactly negative (matches SA)', '10 → -5')
+    : bad('oversell handling wrong', await getStock());
 
   // ── 3. Exclusivity guard ──────────────────────────────────────────────────
   await setStock(100);
@@ -124,13 +125,13 @@ async function cleanup() {
   await query(`UPDATE sa.products SET exclusivity = NULL WHERE id = $1`, [OIL_ID]);
 
   // ── 4. THE CONCURRENCY TEST ────────────────────────────────────────────────
-  // Task A = my new Fragrance Library debit (guards non-negative).
-  // Task B = a FAITHFUL replica of SA's REAL Shopify-sale webhook debit code
-  // (server/sa/index.js ~line 2340): SELECT...FOR UPDATE, then
-  // `newStock = currentStock - totalDeduction` with NO guard — SA's own
-  // comment says "Allow negative stock" (a completed sale is never refused).
-  // This is a genuinely discovered asymmetry, not an assumption: SA's real
-  // code never blocks; only the new Fragrance Library side can refuse.
+  // Task A = the Fragrance Library debit. Task B = a FAITHFUL replica of SA's
+  // REAL Shopify-sale webhook debit code (server/sa/index.js ~line 2340):
+  // SELECT...FOR UPDATE, then `newStock = currentStock - totalDeduction`, no
+  // guard. As of 2026-07-15 BOTH sides allow negative stock (owner decision —
+  // see the note atop fragrance-library.js), so the correct, symmetric outcome
+  // is: both debits land, no lock is violated, no update is lost, and the
+  // final balance is exactly initial − both deltas (negative is fine).
   await setStock(100);
   // search_path=sa mirrors the real saPool config (server/db.js) — needed for
   // sa.products' own trigger (its unqualified direct_stock_changes reference)
@@ -174,32 +175,26 @@ async function cleanup() {
     }
   }
 
-  // 60 + 60 = 120 > 100 available — the two CANNOT both fully succeed if either
-  // side enforced a guard. Fire truly concurrently.
+  // 60 + 60 = 120 > 100 available — under the OLD asymmetric rule this would
+  // have forced a refusal; now both sides allow negative, so both must land.
   const [resA, resB] = await Promise.all([fragLibDebit(60), saStyleDebit(60)]);
   const finalStock = await getStock();
   console.log(`      Fragrance Library debit(60): ${JSON.stringify(resA)}`);
   console.log(`      SA-style webhook debit(60) : ${JSON.stringify(resB)}`);
   console.log(`      final stock: ${finalStock}`);
 
-  const noCorruption = finalStock === 100 - (resA.ok ? 60 : 0) - 60; // SA's debit ALWAYS lands (never guarded)
-  noCorruption
-    ? ok('concurrency: final balance is exactly consistent (no lost update, no double-count)', `stock=${finalStock}`)
-    : bad('concurrency: balance is NOT consistent — possible lost update', `stock=${finalStock}, expected ${100 - (resA.ok?60:0) - 60}`);
+  (resA.ok && resB.ok)
+    ? ok('concurrency: BOTH debits succeed (symmetric — neither side blocks the other)')
+    : bad('concurrency: one side was unexpectedly refused', JSON.stringify({ resA, resB }));
 
-  resB.ok
-    ? ok('concurrency: the SA-style debit ALWAYS succeeds (matches production — a completed sale is never refused)')
-    : bad('concurrency: the SA-style debit was unexpectedly refused — this would be a behaviour change to SA', resB.error);
+  finalStock === 100 - 60 - 60
+    ? ok('concurrency: final balance is exactly consistent under the row lock', `stock=${finalStock} (100-60-60=-20, no lost update)`)
+    : bad('concurrency: balance NOT consistent — possible lost update', `stock=${finalStock}, expected -20`);
 
-  if (!resA.ok) {
-    ok('concurrency: the Fragrance Library debit was refused when the shared oil ran short', resA.error);
-  } else {
-    console.log('      (Fragrance Library debit won the race this run — both fit; rerun to observe the reverse ordering)');
-  }
-
-  finalStock >= 0
-    ? console.log(`      NOTE: final stock ${finalStock} — `, finalStock < 0 ? '⚠️ WENT NEGATIVE (expected: SA-style debit never guards)' : 'stayed non-negative this run')
-    : null;
+  const txRows = await query(`SELECT type FROM transactions WHERE product_id = $1 AND notes LIKE '%concurrency-probe%' ORDER BY id`, [OIL_ID]);
+  txRows.rows.length === 2
+    ? ok('concurrency: both movements recorded as separate auditable transactions', txRows.rows.map(r => r.type).join(', '))
+    : bad('concurrency: expected exactly 2 transaction rows', txRows.rows.length);
 
   await rawPool.end();
   await cleanup();
