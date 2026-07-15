@@ -128,6 +128,21 @@ async function runStartupMigrations() {
   await query(`ALTER TABLE external_processing ALTER COLUMN sent_date DROP NOT NULL`)
   await query(`ALTER TABLE production_order_lines ADD COLUMN IF NOT EXISTS ready_formula_id INTEGER REFERENCES products(id) ON DELETE SET NULL`)
   await query(`ALTER TABLE production_order_lines ADD COLUMN IF NOT EXISTS use_ready_formula BOOLEAN DEFAULT false`)
+  // D14 Fragrance Library: the line's oil component now points at a Cold Room
+  // oil (sa.products, a TEXT id like "OIL_175") instead of a separate sm
+  // fragrance record. Additive + nullable — old fragrance_id stays for any
+  // existing test row; new lines set oil_id and the debit at production
+  // start (manufacturing.js) prefers it when present. Cross-schema FK is
+  // fine — sa/sm are schemas in the SAME database, not separate databases.
+  await query(`ALTER TABLE production_order_lines ADD COLUMN IF NOT EXISTS oil_id TEXT REFERENCES sa.products(id) ON DELETE SET NULL`)
+  await query(`CREATE INDEX IF NOT EXISTS idx_pol_oil_id ON production_order_lines(oil_id)`)
+  // Computed once at order creation (bom-builder.js), read once at production
+  // start (manufacturing.js) — Fragrance Library oil is NOT reserved via
+  // stock_reservations (D14.6: no cross-business reservation, direct debit
+  // only), so the mL to debit has to be stored somewhere; the line itself is
+  // simplest and avoids recomputing ready-formula scaling inconsistently
+  // between order-creation time and start time.
+  await query(`ALTER TABLE production_order_lines ADD COLUMN IF NOT EXISTS oil_qty_ml NUMERIC`)
   await query(`ALTER TABLE production_orders ADD COLUMN IF NOT EXISTS shopify_draft_order_number VARCHAR(20)`)
   // Shopify product sync (Diffusers and future finished-good publishing)
   await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS price DECIMAL`)

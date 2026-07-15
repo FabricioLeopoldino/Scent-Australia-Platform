@@ -55,10 +55,13 @@ async function buildLineComponents(orderId, line, lineInput, clientId, qFn) {
     [productType]
   )
 
-  // Compute ethanol and fragrance quantities upfront so ready formula can substitute them
+  // Compute ethanol and fragrance quantities upfront so ready formula can substitute them.
+  // A line's fragrance component is EITHER the legacy sm fragrance_id OR (D14)
+  // a Fragrance Library oil_id — never both — so either one counts toward the formula.
   const ethanolQty = qty * volume * ((100 - oilPct) / 100)
   const fragQty = isPureOil ? qty * volume : qty * volume * (oilPct / 100)
-  const totalFormula = ethanolQty + (line.fragrance_id ? fragQty : 0)
+  const hasFragranceComponent = !!(line.fragrance_id || line.oil_id)
+  const totalFormula = ethanolQty + (hasFragranceComponent ? fragQty : 0)
 
   // Ready formula substitution — RF covers as much of totalFormula as it can; remainder
   // falls back to ethanol + fragrance. Mirror of /api/bom-preview so creation matches the
@@ -137,6 +140,19 @@ async function buildLineComponents(orderId, line, lineInput, clientId, qFn) {
         )
       }
     }
+  }
+
+  // D14 Fragrance Library: the oil component comes straight from the Cold
+  // Room (sa.products) instead of a separate sm fragrance record. No
+  // production_order_components/stock_reservations row — Fragrance Library
+  // consumption is a direct debit at production start (D14.6), never
+  // reserved. The computed mL is stored on the line itself so start-time
+  // debits exactly what the user saw in the order-creation preview, instead
+  // of re-deriving ready-formula scaling against a possibly-different stock
+  // level later.
+  if (line.oil_id) {
+    const adjOilQty = rfUsed >= totalFormula ? 0 : fragQty * rfScale
+    await qry(`UPDATE production_order_lines SET oil_qty_ml = $1 WHERE id = $2`, [adjOilQty, line.id])
   }
 
   if (line.needs_packing && lineInput.packaging_component_id) {

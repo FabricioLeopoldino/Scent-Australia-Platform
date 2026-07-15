@@ -5,6 +5,20 @@ const { query, withTransaction } = require('../db')
 const { auth, auditLog } = require('../auth')
 const { adjustProductStock } = require('../services/stock-service')
 const { ensureMuseSku } = require('./masters')
+const { consumeFragranceOil, restoreFragranceOil } = require('../services/fragrance-library')
+
+// D14: which of the 4 usage buckets (SA is the 4th, native to the SA module)
+// an order belongs to — MUSE (no client) vs a B2B client, split by
+// is_large_client into Major vs Standard. Shared by startProductionInternal
+// (the debit) and /complete (finished-goods + reporting) so the two can never
+// disagree about which bucket an order's oil consumption lands in.
+async function resolveOrderSegment(order, tq) {
+  const qry = tq || query
+  const isMuse = !order.client_id
+  if (isMuse) return 'MUSE'
+  const cli = await qry(`SELECT is_large_client FROM clients WHERE id = $1`, [order.client_id])
+  return cli.rows[0]?.is_large_client ? 'MAJOR' : 'STANDARD'
+}
 
 router.get('/manufacturing/queue', auth, async (req, res) => {
   try {
@@ -119,6 +133,23 @@ async function startProductionInternal(orderId, userId, targetStatus = 'in_produ
       }
     }
 
+    // D14 Fragrance Library — direct debit, no reservation (D14.6). Each line
+    // with an oil_id got its mL precomputed at order creation (bom-builder.js);
+    // debit it now, tagged with the order's segment (SA/SM-Std/SM-Major/MUSE
+    // usage traceability, D14.5). Negative stock is allowed here on purpose —
+    // see fragrance-library.js.
+    const oilLines = await tq(
+      `SELECT id, oil_id, oil_qty_ml FROM production_order_lines
+       WHERE production_order_id = $1 AND oil_id IS NOT NULL AND oil_qty_ml > 0`,
+      [orderId]
+    )
+    if (oilLines.rows.length > 0) {
+      const segment = await resolveOrderSegment(order.rows[0], tq)
+      for (const line of oilLines.rows) {
+        await consumeFragranceOil(tq, line.oil_id, line.oil_qty_ml, segment, `Production: ${order.rows[0].order_number}`)
+      }
+    }
+
     // Ready formula direct debit
     const rfLines = await tq(
       `SELECT pol.*, p.id as rf_id, p.current_stock as rf_stock
@@ -225,14 +256,8 @@ router.post('/manufacturing/:id/complete', auth, async (req, res) => {
     await withTransaction(async (client) => {
       const tq = (text, params) => client.query(text, params)
 
-      // Determine segment: MUSE (no client) | MAJOR (large client) | STANDARD (small client)
-      const isMuse = !order.rows[0].client_id
-      let isMajor = false
-      if (!isMuse) {
-        const cli = await tq(`SELECT is_large_client FROM clients WHERE id = $1`, [order.rows[0].client_id])
-        isMajor = cli.rows[0]?.is_large_client || false
-      }
-      const segment = isMuse ? 'MUSE' : (isMajor ? 'MAJOR' : 'STANDARD')
+      const segment = await resolveOrderSegment(order.rows[0], tq)
+      const isMuse = segment === 'MUSE'
 
       await tq(`UPDATE production_jobs SET completed_at = NOW(), status = 'completed', notes_on_completion = $1 WHERE production_order_id = $2`, [notes_on_completion || null, req.params.id])
       // MUSE: auto-fulfill (products land in internal stock as variants)

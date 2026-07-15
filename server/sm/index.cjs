@@ -34,6 +34,7 @@ smRouter.use(require('./routes/webhooks')) // draft-order + sync-status routes; 
 smRouter.use(require('./routes/container-types'))
 smRouter.use(require('./routes/masters'))
 smRouter.use(require('./routes/major-clients'))
+smRouter.use(require('./routes/fragrance-library')) // D14: the Cold Room oil picker for the BOM editor
 
 // Router-scoped error handler (mirrors SA guardrail; sanitized in Phase 3b)
 // eslint-disable-next-line no-unused-vars
