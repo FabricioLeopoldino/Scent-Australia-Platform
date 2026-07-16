@@ -713,7 +713,17 @@ router.post('/products', async (req, res) => {
     //SHOPIFY_STORE_NAME
     //SHOPIFY_SYNC_ENABLED = precisa estar TRUE
     // ========================================================================
-    if (['OILS', 'SCENT_MACHINES', 'MACHINES_SPARES', 'RAW_MATERIALS'].includes(category) && process.env.SHOPIFY_SYNC_ENABLED === 'true') {
+    // PLATFORM DIVERGENCE (D15 §10, owner 2026-07-16): an oil reserved for MUSE
+    // or SM is not something the Scent store sells, so it is NEVER published
+    // there with the 5 sale SKUs. Checked FIRST so the intent is unconditional —
+    // exclusivity withholds regardless of the sync flag. Shared oils
+    // (exclusivity NULL) fall through to the original behaviour, unchanged. The
+    // SKUs are still generated and stored, so if the oil ever becomes shared,
+    // publishing it needs no backfill.
+    const withholdFromShopify = category === 'OILS' && !!finalExclusivity;
+    if (withholdFromShopify) {
+      console.log(`🔒 Oil "${row.name}" is exclusive to ${finalExclusivity} — withheld from the Scent Shopify store (D15 §10)`);
+    } else if (['OILS', 'SCENT_MACHINES', 'MACHINES_SPARES', 'RAW_MATERIALS'].includes(category) && process.env.SHOPIFY_SYNC_ENABLED === 'true') {
       try {
         await createProductInShopify(row);
         console.log(`✅ Product synced to Shopify: ${row.name}`);
@@ -5870,11 +5880,16 @@ router.put('/tech-stock/:productId/config', async (req, res) => {
   }
 });
 
-// ── Keep Neon alive during business hours (7am–4pm Melbourne time) ──────────
+// ── Keep Neon alive during business hours (6am–5pm Melbourne time) ──────────
+// Window widened 7–16 → 6–17 to match the live SA system (owner, 2026-07-16):
+// the platform's copy still carried the older window, so the first request of
+// the early shift paid a Neon cold start. One ping is enough for the whole
+// platform — the platform/sa/sm pools all point at the SAME Neon compute, so
+// keeping it warm here keeps it warm for every module.
 setInterval(async () => {
   try {
     const hour = parseInt(new Date().toLocaleString('en-AU', { timeZone: 'Australia/Melbourne', hour: 'numeric', hour12: false }));
-    if (hour >= 7 && hour < 16) {
+    if (hour >= 6 && hour < 17) {
       await pool.query('SELECT 1');
     }
   } catch (e) { /* silencioso */ }
