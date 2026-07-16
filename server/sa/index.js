@@ -1191,7 +1191,14 @@ router.get('/audit', async (req, res) => {
     const results = [];
 
     // Types that live in audit_log (not transactions table)
-    const AUDIT_LOG_TYPES = ['product_created', 'product_deleted', 'sku_published', 'sku_added', 'po_created', 'po_cancelled', 'po_received', 'formula_created', 'formula_updated', 'formula_deleted', 'formula_ready_received', 'formula_ready_adjusted', 'product_deactivated', 'product_activated', 'scented_group_created', 'scented_group_deleted', 'tech_transfer', 'tech_remove', 'tech_return'];
+    // 'tech_batch' restored 2026-07-16: it was missing here while the rest of the
+    // platform already wrote it (POST /tech-stock/batch) and rendered it
+    // (ActivityLog.jsx). Because this list decides WHICH TABLE a type filter
+    // queries, its absence sent tech_batch to `transactions` — where it does not
+    // exist as a type — so filtering the Activity Log by "Tech Batch (Scanner)"
+    // silently returned 0 rows while real entries sat in audit_log. Restores
+    // parity with the live SA system; keep this list in sync with it.
+    const AUDIT_LOG_TYPES = ['product_created', 'product_deleted', 'sku_published', 'sku_added', 'po_created', 'po_cancelled', 'po_received', 'formula_created', 'formula_updated', 'formula_deleted', 'formula_ready_received', 'formula_ready_adjusted', 'product_deactivated', 'product_activated', 'scented_group_created', 'scented_group_deleted', 'tech_transfer', 'tech_remove', 'tech_return', 'tech_batch'];
     const isAuditLogType = AUDIT_LOG_TYPES.includes(type);
 
     // ── Stock transactions ─────────────────────────────────────────────────
