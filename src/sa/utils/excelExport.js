@@ -287,6 +287,10 @@ function classifyOilTx(type) {
   return OIL_TX_TYPE_INFO[type] || { company: 'SA', sign: -1, bucket: 'used' };
 }
 
+// Float arithmetic on mL leaves 0.000000001 tails that look like broken numbers
+// in a finance report.
+const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+
 function extractOrderRef(notes) {
   if (!notes) return '-';
   const hash = notes.match(/#(\S+)/);
@@ -353,16 +357,33 @@ export function buildOilUsageSheets(transactions) {
     const opening = rows.length ? parseFloat(rows[0].balance_after) - classifyOilTx(rows[0].type).sign * (parseFloat(rows[0].quantity) || 0) : 0;
     const closing = rows.length ? parseFloat(rows[rows.length - 1].balance_after) : 0;
 
+    // Stock also moves OUTSIDE the transaction ledger: someone edits the level
+    // directly in the database after a physical count (the owner's documented
+    // way of resolving a discrepancy — see the negative-stock policy in D14).
+    // SA's `log_direct_stock_change` trigger records those in
+    // `sa.direct_stock_changes`, but they write NO transaction row, so the
+    // movements here cannot explain the whole Opening→Closing distance. Verified
+    // on the real ledger 2026-07-16: 98 of 194 oils carry such a gap.
+    //
+    // Rather than publish a report whose columns silently don't add up, the
+    // residual is surfaced as its own column: whatever the recorded movements
+    // can't account for IS the direct/manual adjustment. The row then always
+    // balances, and the size of this column tells the reader how much of the
+    // period happened off-ledger.
+    const totalUsed = used.MUSE + used['SM-Standard'] + used['SM-Major'] + used.SA;
+    const directAdj = closing - (opening + replenished - totalUsed);
+
     summaryRows.push({
       'Oil': oil.name,
       'Oil Code': oil.code,
-      'Opening Stock': opening,
-      'Replenished (+)': replenished,
-      'MUSE Used': used.MUSE,
-      'SM-Standard Used': used['SM-Standard'],
-      'SM-Major Used': used['SM-Major'],
-      'SA Used': used.SA,
-      'Closing Stock': closing,
+      'Opening Stock': round2(opening),
+      'Replenished (+)': round2(replenished),
+      'MUSE Used': round2(used.MUSE),
+      'SM-Standard Used': round2(used['SM-Standard']),
+      'SM-Major Used': round2(used['SM-Major']),
+      'SA Used': round2(used.SA),
+      'Direct Adj. (count/manual)': round2(directAdj),
+      'Closing Stock': round2(closing),
     });
   });
 
@@ -379,8 +400,16 @@ export function exportOilUsageToExcel(transactions, periodLabel = '') {
 
   const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
   wsSummary['!cols'] = [
-    { wch: 30 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 12 },
-    { wch: 16 }, { wch: 14 }, { wch: 10 }, { wch: 14 }
+    { wch: 30 }, // Oil
+    { wch: 14 }, // Oil Code
+    { wch: 14 }, // Opening Stock
+    { wch: 16 }, // Replenished (+)
+    { wch: 12 }, // MUSE Used
+    { wch: 16 }, // SM-Standard Used
+    { wch: 14 }, // SM-Major Used
+    { wch: 10 }, // SA Used
+    { wch: 24 }, // Direct Adj. (count/manual)
+    { wch: 14 }, // Closing Stock
   ];
   XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
 

@@ -360,10 +360,22 @@ async function testOilUsageReportMath() {
     s['MUSE Used'] === 2000 && s['SM-Standard Used'] === 1000 && s['SM-Major Used'] === 0 && s['SA Used'] === 7000,
     `MUSE=${s['MUSE Used']} SM-Std=${s['SM-Standard Used']} SA=${s['SA Used']}`);
   const balances = s['Opening Stock'] + s['Replenished (+)']
-    - s['MUSE Used'] - s['SM-Standard Used'] - s['SM-Major Used'] - s['SA Used'] === s['Closing Stock'];
-  record('D15 report: Opening + Replenished − Used(all) = Closing',
+    - s['MUSE Used'] - s['SM-Standard Used'] - s['SM-Major Used'] - s['SA Used']
+    + s['Direct Adj. (count/manual)'] === s['Closing Stock'];
+  record('D15 report: Opening + Replenished − Used(all) + DirectAdj = Closing',
     balances && s['Opening Stock'] === 10000 && s['Closing Stock'] === 8000,
     `${s['Opening Stock']} + ${s['Replenished (+)']} − 10000 = ${s['Closing Stock']}`);
+  // A clean ledger (no off-ledger edits) must report ZERO direct adjustment —
+  // otherwise the column would hide arithmetic errors instead of surfacing real
+  // manual corrections.
+  record('D15 report: a fully-explained ledger shows zero Direct Adj.',
+    s['Direct Adj. (count/manual)'] === 0, `adj=${s['Direct Adj. (count/manual)']}`);
+  // And when stock DID move off-ledger, the column must catch exactly the gap:
+  // same ledger, but the closing balance jumped 500 higher than the movements explain.
+  const gapped = buildOilUsageSheets(ledger.map((r, i) =>
+    i === ledger.length - 1 ? { ...r, balance_after: 8500 } : r)).summaryRows[0];
+  record('D15 report: an off-ledger stock change is surfaced as Direct Adj.',
+    gapped['Direct Adj. (count/manual)'] === 500, `adj=${gapped['Direct Adj. (count/manual)']}`);
   // A reversal must net against its OWN business, never count as replenishment.
   const withReversal = buildOilUsageSheets([...ledger,
     { id: 5, product_id: 'X', product_code: 'FRAG_9999', product_name: 'Fragrance X', type: 'muse_reversal', quantity: 500, unit: 'mL', balance_after: 8500, notes: 'cancelled', created_at: '2026-07-05T09:00:00Z' },
