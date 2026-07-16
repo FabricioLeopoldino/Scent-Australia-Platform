@@ -51,6 +51,10 @@ async function setup() {
 }
 async function cleanup() {
   await query(`DELETE FROM transactions WHERE product_id = $1`, [OIL_ID]);
+  // sa.products' AFTER UPDATE trigger logs every stock change into
+  // direct_stock_changes — remove OUR fixture's rows too (§18: restore the
+  // balance AND delete what the test caused to be written).
+  await query(`DELETE FROM direct_stock_changes WHERE product_id = $1`, [OIL_ID]);
   await query(`DELETE FROM products WHERE id = $1`, [OIL_ID]);
   await saFixturePool.end();
 }

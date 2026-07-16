@@ -45,6 +45,9 @@ async function cleanup() {
     await sm.query(`DELETE FROM production_orders WHERE id = $1`, [id]).catch(() => {});
   }
   await sa.query(`DELETE FROM transactions WHERE product_id = $1`, [OIL_ID]).catch(() => {});
+  // The sa.products trigger logs every stock change into direct_stock_changes —
+  // delete OUR fixture's rows too (§18 test-data discipline).
+  await sa.query(`DELETE FROM direct_stock_changes WHERE product_id = $1`, [OIL_ID]).catch(() => {});
   await sa.query(`DELETE FROM products WHERE id = $1`, [OIL_ID]).catch(() => {});
   await sm.query(`DELETE FROM products WHERE product_code = $1`, [MASTER_CODE]).catch(() => {});
   // Own throwaway client — NEVER touch a pre-existing row (a past run of this
