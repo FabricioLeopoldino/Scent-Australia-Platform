@@ -88,6 +88,22 @@ async function cleanup() {
     ? ok('the same oil IS visible in the STANDARD (its own business) picker')
     : bad('SM-exclusive oil wrongly hidden from STANDARD');
 
+  // Vice-versa (Block 2 checklist): a MUSE-exclusive oil must be hidden from
+  // the SM buckets and still visible to MUSE itself.
+  await sa.query(`UPDATE products SET exclusivity = 'MUSE' WHERE id = $1`, [OIL_ID]);
+  const stdExcluded = await api('GET', '/api/sm/fragrance-library?segment=STANDARD');
+  stdExcluded.json.some((o) => o.id === OIL_ID)
+    ? bad('MUSE-exclusive oil wrongly visible in the STANDARD picker')
+    : ok('MUSE-exclusive oil correctly hidden from the STANDARD picker');
+  const majExcluded = await api('GET', '/api/sm/fragrance-library?segment=MAJOR');
+  majExcluded.json.some((o) => o.id === OIL_ID)
+    ? bad('MUSE-exclusive oil wrongly visible in the MAJOR picker')
+    : ok('MUSE-exclusive oil correctly hidden from the MAJOR picker');
+  const museOwn = await api('GET', '/api/sm/fragrance-library?segment=MUSE');
+  museOwn.json.some((o) => o.id === OIL_ID)
+    ? ok('the same oil IS visible in the MUSE (its own business) picker')
+    : bad('MUSE-exclusive oil wrongly hidden from MUSE itself');
+
   await sa.query(`UPDATE products SET exclusivity = NULL WHERE id = $1`, [OIL_ID]);
 
   // ── 2. Real MUSE production order, oil_id line, start -> debit ───────────
