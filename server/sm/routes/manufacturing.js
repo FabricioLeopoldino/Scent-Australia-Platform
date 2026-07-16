@@ -267,18 +267,28 @@ router.post('/manufacturing/:id/complete', auth, async (req, res) => {
       for (const ll of (line_leftovers || [])) {
         if (ll.leftover_formula_ml && parseFloat(ll.leftover_formula_ml) > 0) {
           const lineRow = await tq(
-            `SELECT pol.fragrance_id, p.name as fragrance_name, p.product_code as fragrance_code
-             FROM production_order_lines pol LEFT JOIN products p ON p.id = pol.fragrance_id
+            `SELECT pol.fragrance_id, pol.oil_id, p.name as fragrance_name, p.product_code as fragrance_code,
+                    oil.name as oil_name, oil."productCode" as oil_code
+             FROM production_order_lines pol
+             LEFT JOIN products p ON p.id = pol.fragrance_id
+             LEFT JOIN sa.products oil ON oil.id = pol.oil_id
              WHERE pol.id = $1`,
             [ll.line_id]
           )
-          if (lineRow.rows[0]?.fragrance_id) {
-            const fn = lineRow.rows[0].fragrance_name
+          const lr = lineRow.rows[0]
+          // D14: once oil is mixed into ethanol it's no longer pure oil, so it
+          // can never go back to sa.products (that's what restoreFragranceOil
+          // is for — unmixed oil only). The leftover MIXTURE becomes a Ready
+          // Formula for future reuse, exactly like the legacy fragrance_id
+          // path (owner, 2026-07-16).
+          if (lr?.fragrance_id || lr?.oil_id) {
+            const fn = lr.fragrance_name || lr.oil_name
+            const rfCode = lr.fragrance_code || lr.oil_code || lr.oil_id
             let rfProd = await tq(`SELECT * FROM products WHERE category = 'READY_FORMULA' AND name ILIKE $1 LIMIT 1`, [`%${fn}%`])
             if (!rfProd.rows[0]) {
               rfProd = await tq(
                 `INSERT INTO products (name, product_code, category, unit, current_stock) VALUES ($1,$2,'READY_FORMULA','ml',0) RETURNING *`,
-                [`Ready Formula — ${fn}`, `RF-${lineRow.rows[0].fragrance_code || fn.substring(0,8).toUpperCase().replace(/\s+/g,'-')}`]
+                [`Ready Formula — ${fn}`, `RF-${(rfCode || fn).toString().substring(0,8).toUpperCase().replace(/\s+/g,'-')}`]
               )
             }
             await adjustProductStock(rfProd.rows[0].id, parseFloat(ll.leftover_formula_ml), 'ready_formula_in',
@@ -564,13 +574,24 @@ router.post('/manufacturing/:id/lines/:lineId/receive-from-filling', auth, async
 
 router.get('/ready-formula/available', auth, async (req, res) => {
   try {
-    const { fragrance_id } = req.query
-    if (!fragrance_id) return res.status(400).json({ error: 'fragrance_id required' })
-    const fragrance = await query(`SELECT * FROM products WHERE id = $1`, [fragrance_id])
-    if (!fragrance.rows[0]) return res.json([])
+    const { fragrance_id, oil_id } = req.query
+    if (!fragrance_id && !oil_id) return res.status(400).json({ error: 'fragrance_id or oil_id required' })
+    // D14: a Ready Formula is matched by name regardless of which identity
+    // (legacy sm fragrance, or a Fragrance Library oil) produced the leftover —
+    // see the /complete leftover-crediting loop, which creates these by name.
+    let name
+    if (oil_id) {
+      const oil = await query(`SELECT name FROM sa.products WHERE id = $1`, [oil_id])
+      if (!oil.rows[0]) return res.json([])
+      name = oil.rows[0].name
+    } else {
+      const fragrance = await query(`SELECT name FROM products WHERE id = $1`, [fragrance_id])
+      if (!fragrance.rows[0]) return res.json([])
+      name = fragrance.rows[0].name
+    }
     const result = await query(
       `SELECT * FROM products WHERE category = 'READY_FORMULA' AND name ILIKE $1 AND current_stock > 0`,
-      [`%${fragrance.rows[0].name}%`]
+      [`%${name}%`]
     )
     res.json(result.rows)
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }

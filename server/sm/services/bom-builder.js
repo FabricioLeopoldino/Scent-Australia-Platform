@@ -76,7 +76,7 @@ async function buildLineComponents(orderId, line, lineInput, clientId, qFn) {
       const rfRow = rfResult.rows[0]
       const rfRaw = parseFloat(rfRow.current_stock) || 0
       const rfReservedRes = await qry(
-        `SELECT COALESCE(SUM(quantity_required), 0) as reserved
+        `SELECT COALESCE(SUM(quantity_reserved), 0) as reserved
          FROM stock_reservations
          WHERE product_id = $1 AND status = 'reserved'`,
         [rfRow.id]

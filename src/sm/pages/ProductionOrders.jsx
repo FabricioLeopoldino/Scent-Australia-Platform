@@ -21,7 +21,7 @@ const STATUS_META = {
   cancelled:        { label: 'Cancelled',         color: '#f87171',  bg: 'rgba(220,38,38,0.1)' },
 }
 
-const EMPTY_LINE = { product_type: '', fragrance_id: '', oil_pct: 25, quantity: '', packaging_component_id: '', label_client_label_id: '', use_ready_formula: false, ready_formula_id: '', labels_supplier: '', labels_eta: '', labels_order_qty: '', needs_labeling: false, needs_packing: false }
+const EMPTY_LINE = { product_type: '', fragrance_id: '', oil_id: '', variant_name: '', oil_pct: 25, quantity: '', packaging_component_id: '', label_client_label_id: '', use_ready_formula: false, ready_formula_id: '', labels_supplier: '', labels_eta: '', labels_order_qty: '', needs_labeling: false, needs_packing: false }
 
 function StatusBadge({ status }) {
   const m = STATUS_META[status] || STATUS_META.draft
@@ -710,9 +710,10 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
   const isEditing = !!editingOrder?.id
   const [clients, setClients]       = useState([])
   const [fragrances, setFragrances] = useState([])
+  const [oilOptions, setOilOptions] = useState([]) // D14: Fragrance Library oils for the current segment
   const [components, setComponents] = useState([])
   const [labels, setLabels]         = useState({}) // clientId → labels[]
-  const [readyFormulas, setReadyFormulas] = useState({}) // fragranceId → rf[]
+  const [readyFormulas, setReadyFormulas] = useState({}) // fragranceId|oilId → rf[]
   const [clientProducts, setClientProducts] = useState([]) // products linked to selected major client
   const [fgProducts, setFgProducts] = useState([]) // dynamic FINISHED_GOOD products (no client)
 
@@ -725,12 +726,18 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
   const [orderType, setOrderType]   = useState(editingOrder?.order_type || 'STANDARD')
   const [dueDate, setDueDate]       = useState(editingOrder?.due_date ? String(editingOrder.due_date).slice(0, 10) : '')
   const [notes, setNotes]           = useState(editingOrder?.notes || '')
+  // D14: which of the 4 usage buckets this order belongs to — same formula
+  // used per-line below for masterOptions; hoisted so the Fragrance Library
+  // picker only needs to (re)fetch when it actually changes, not per line.
+  const orderSegment = orderType === 'LARGE_CLIENT' ? 'MAJOR' : (clientId ? 'STANDARD' : 'MUSE')
   const [lines, setLines]           = useState(() => {
     if (editingOrder?.lines?.length) {
       return editingOrder.lines.map((l, i) => ({
         _id: Date.now() + i,
         product_type: l.product_type || '',
         fragrance_id: l.fragrance_id ? String(l.fragrance_id) : '',
+        oil_id: l.oil_id || '',
+        variant_name: l.variant_name || '',
         oil_pct: l.oil_pct ?? 25,
         quantity: l.quantity != null ? String(l.quantity) : '',
         packaging_component_id: l.packaging_component_id ? String(l.packaging_component_id) : '',
@@ -768,6 +775,13 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // D14: (re)fetch the Fragrance Library picker whenever the order's usage
+  // bucket changes — MUSE/STANDARD/MAJOR each see a different exclusivity-filtered list.
+  useEffect(() => {
+    loadOilOptions(orderSegment)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderSegment])
+
   // Debounced BOM preview fetch
   useEffect(() => {
     if (bomDebounce.current) clearTimeout(bomDebounce.current)
@@ -780,7 +794,8 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
           const volume_ml = pt?.volume ?? null
           return {
             product_type: l.product_type,
-            fragrance_id: l.fragrance_id ? parseInt(l.fragrance_id) : null,
+            fragrance_id: l.oil_id ? null : (l.fragrance_id ? parseInt(l.fragrance_id) : null),
+            oil_id: l.oil_id || null,
             oil_pct: parseFloat(l.oil_pct) || 25,
             quantity: parseInt(l.quantity),
             volume_ml,
@@ -818,6 +833,13 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
     const res = await axios.get('/api/products', { ...api(), params: { category: 'FRAGRANCE' } })
     setFragrances(res.data)
   }
+  // D14: Fragrance Library oil picker — segment-scoped (exclusivity-filtered) list.
+  async function loadOilOptions(segment) {
+    try {
+      const res = await axios.get('/api/fragrance-library', { ...api(), params: { segment } })
+      setOilOptions(res.data)
+    } catch { setOilOptions([]) }
+  }
   async function loadComponents() {
     const res = await axios.get('/api/products', { ...api(), params: { category: 'COMPONENT' } })
     setComponents(res.data)
@@ -837,10 +859,13 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
     const res = await axios.get(`/api/clients/${cId}/labels`, api())
     setLabels(prev => ({ ...prev, [cId]: res.data.filter(l => !l.is_obsolete) }))
   }
-  async function loadReadyFormula(fragId) {
-    if (!fragId || readyFormulas[fragId] !== undefined) return
-    const res = await axios.get('/api/ready-formula/available', { ...api(), params: { fragrance_id: fragId } })
-    setReadyFormulas(prev => ({ ...prev, [fragId]: res.data }))
+  // D14: Ready Formula is keyed by whichever identity produced it — legacy sm
+  // fragrance_id or a Fragrance Library oil_id — so the map is shared and just
+  // needs the right query param for the lookup.
+  async function loadReadyFormula(id, isOil = false) {
+    if (!id || readyFormulas[id] !== undefined) return
+    const res = await axios.get('/api/ready-formula/available', { ...api(), params: isOil ? { oil_id: id } : { fragrance_id: id } })
+    setReadyFormulas(prev => ({ ...prev, [id]: res.data }))
   }
 
   async function handleInlineCreateClient() {
@@ -911,7 +936,7 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
     // Subtract ready formula if used
     let rf = null
     if (line.use_ready_formula && line.ready_formula_id) {
-      const rfList = readyFormulas[line.fragrance_id] || []
+      const rfList = readyFormulas[line.oil_id || line.fragrance_id] || []
       rf = rfList.find(r => r.id === parseInt(line.ready_formula_id))
     }
     const rfMl = rf ? Math.min(rf.current_stock, oilMl + ethanolMl) : 0
@@ -922,20 +947,26 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
     return { oilMl, ethanolMl, totalMl: oilMl + ethanolMl, rfMl, remainingOil, remainingEthanol, remainingTotal }
   }
 
-  // Group lines by fragrance to show combined formula
+  // Group lines by fragrance/oil to show combined formula
   function getCombinedFormula() {
     const byFrag = {}
     for (const line of lines) {
-      if (!line.fragrance_id || !line.quantity) continue
+      const key = line.oil_id || line.fragrance_id
+      if (!key || !line.quantity) continue
       const pt = productTypes.find(p => p.key === line.product_type)
       if (!pt || pt.is_candle) continue
       const qty = parseInt(line.quantity) || 0
       const oilPct = pt.is_pure_oil ? 100 : (parseFloat(line.oil_pct) || 25)
       const oilMl = pt.volume * (oilPct / 100) * qty
       const ethanolMl = pt.is_pure_oil ? 0 : pt.volume * ((100 - oilPct) / 100) * qty
-      if (!byFrag[line.fragrance_id]) byFrag[line.fragrance_id] = { oilMl: 0, ethanolMl: 0, fragName: fragrances.find(f => f.id === parseInt(line.fragrance_id))?.name }
-      byFrag[line.fragrance_id].oilMl += oilMl
-      byFrag[line.fragrance_id].ethanolMl += ethanolMl
+      if (!byFrag[key]) {
+        const fragName = line.oil_id
+          ? oilOptions.find(o => o.id === line.oil_id)?.name
+          : fragrances.find(f => f.id === parseInt(line.fragrance_id))?.name
+        byFrag[key] = { oilMl: 0, ethanolMl: 0, fragName }
+      }
+      byFrag[key].oilMl += oilMl
+      byFrag[key].ethanolMl += ethanolMl
     }
     return byFrag
   }
@@ -976,7 +1007,9 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
           const volume_ml = pt2?.volume ?? null
           return {
             product_type: l.product_type,
-            fragrance_id: l.fragrance_id ? parseInt(l.fragrance_id) : null,
+            fragrance_id: l.oil_id ? null : (l.fragrance_id ? parseInt(l.fragrance_id) : null),
+            oil_id: l.oil_id || null,
+            variant_name: l.variant_name || null,
             oil_pct: parseFloat(l.oil_pct) || 25,
             quantity: parseInt(l.quantity),
             volume_ml,
@@ -1157,15 +1190,9 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
 
           {lines.map((line, idx) => {
             const pt = productTypes.find(p => p.key === line.product_type)
-            // MUSE/MAJOR masters pre-define their fragrances — restrict the picker to those.
-            // Standard masters are made-to-order: any fragrance allowed.
-            const allowedFragIds = Array.isArray(pt?.fragrance_ids) ? pt.fragrance_ids : []
-            const fragRestricted = allowedFragIds.length > 0
-            const fragOptions = fragRestricted
-              ? fragrances.filter(f => allowedFragIds.includes(f.id))
-              : fragrances
             const formula = calcFormula(line)
-            const rfList = line.fragrance_id ? (readyFormulas[line.fragrance_id] || []) : []
+            const rfKey = line.oil_id || line.fragrance_id
+            const rfList = rfKey ? (readyFormulas[rfKey] || []) : []
             const clientLabels = clientId
               ? (labels[clientId] || []).filter(l => !l.is_obsolete && (!l.applicable_product_type || l.applicable_product_type === line.product_type))
               : []
@@ -1225,19 +1252,20 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
                     )}
                   </div>
                   <div>
-                    <label style={lbl}>Fragrance{fragRestricted ? ' 🔒' : ''}</label>
+                    <label style={lbl}>Fragrance Library Oil</label>
                     <SearchSelect
-                      value={line.fragrance_id}
-                      onChange={v => onFragranceChange(idx, v)}
-                      options={fragOptions.map(f => ({ value: f.id, label: f.name }))}
-                      clearable={!fragRestricted}
-                      placeholder={fragRestricted ? (fragOptions.length === 0 ? 'No fragrance linked to master' : 'Select from master...') : '— None —'}
+                      value={line.oil_id}
+                      onChange={v => {
+                        setLine(idx, { oil_id: v, fragrance_id: '', use_ready_formula: false, ready_formula_id: '' })
+                        if (v) loadReadyFormula(v, true)
+                      }}
+                      options={oilOptions.map(o => ({ value: o.id, label: o.name, sub: `${o.code} · ${Number(o.current_stock).toLocaleString()} ${o.unit}` }))}
+                      clearable
+                      placeholder={oilOptions.length === 0 ? `No oils available for ${segmentFor}` : 'Select an oil...'}
                     />
-                    {fragRestricted && (
-                      <div style={{ fontSize: 10, color: 'rgba(251,191,36,0.6)', marginTop: 4 }}>
-                        Locked to this master's fragrance{fragOptions.length !== 1 ? 's' : ''} — change it in the master setup
-                      </div>
-                    )}
+                    <div style={{ fontSize: 10, color: 'rgba(232,234,242,0.35)', marginTop: 4 }}>
+                      Shared Fragrance Library, filtered to {segmentFor} — exclusive oils from other businesses are hidden
+                    </div>
                   </div>
                   <div>
                     <label style={lbl}>Qty</label>
@@ -1249,6 +1277,21 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
                       disabled={pt?.is_candle || pt?.is_pure_oil} style={{ ...inp, opacity: (pt?.is_candle || pt?.is_pure_oil) ? 0.5 : 1 }} />
                   </div>
                 </div>
+
+                {segmentFor === 'MUSE' && (
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={lbl}>Commercial Name (optional)</label>
+                    <input
+                      value={line.variant_name}
+                      onChange={e => setLine(idx, { variant_name: e.target.value })}
+                      placeholder={`Defaults to the oil's own name (e.g. leave blank for "${oilOptions.find(o => o.id === line.oil_id)?.name || 'Santal'}")`}
+                      style={inp}
+                    />
+                    <div style={{ fontSize: 10, color: 'rgba(232,234,242,0.35)', marginTop: 4 }}>
+                      The finished product can be sold under a different name than the oil itself — e.g. oil "Santal" sold as "Afterglow"
+                    </div>
+                  </div>
+                )}
 
                 {/* Label */}
                 <div style={{ marginBottom: 12 }}>
@@ -1292,7 +1335,7 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
                 </div>
 
                 {/* Ready Formula suggestion */}
-                {line.fragrance_id && rfList.length > 0 && !pt?.is_candle && !pt?.is_pure_oil && (
+                {rfKey && rfList.length > 0 && !pt?.is_candle && !pt?.is_pure_oil && (
                   <div style={{ padding: '10px 12px', background: 'rgba(251,146,60,0.08)', border: '1px solid rgba(251,146,60,0.2)', borderRadius: 8, marginBottom: 10 }}>
                     <div style={{ fontSize: 12, color: '#fb923c', fontWeight: 700, marginBottom: 6 }}>
                       ⚡ Ready Formula available — {rfList[0].name}
