@@ -296,7 +296,10 @@ function extractOrderRef(notes) {
   return '-';
 }
 
-export function exportOilUsageToExcel(transactions, periodLabel = '') {
+// Pure builder — all the report's arithmetic, no file I/O, so the regression
+// gate can assert the numbers directly (`scripts/regression-sa.js`).
+// Returns { summaryRows, detailRows }.
+export function buildOilUsageSheets(transactions) {
   // Group by oil — needed to find each oil's own opening/closing balance.
   const byOil = {};
   for (const tx of transactions) {
@@ -365,6 +368,12 @@ export function exportOilUsageToExcel(transactions, periodLabel = '') {
 
   summaryRows.sort((a, b) => a['Oil'].localeCompare(b['Oil']));
   detailRows.sort((a, b) => a['Oil Name'].localeCompare(b['Oil Name']));
+
+  return { summaryRows, detailRows };
+}
+
+export function exportOilUsageToExcel(transactions, periodLabel = '') {
+  const { summaryRows, detailRows } = buildOilUsageSheets(transactions);
 
   const wb = XLSX.utils.book_new();
 

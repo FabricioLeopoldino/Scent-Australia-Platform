@@ -307,11 +307,112 @@ async function testWebhooks() {
   record('webhook: shopify_reversal transactions written', parseInt(revTx.rows[0].count) >= 1, `rows=${revTx.rows[0].count}`);
 }
 
+// ── D15: Fragrance Library exclusivity on the oil form (Part B + §10) ──────
+async function testExclusivity() {
+  const create = await api('POST', '/api/sa/products', {
+    name: '[regression] Excl Oil', category: 'OILS', unit: 'mL', currentStock: 0, exclusivity: 'MUSE',
+  });
+  const pid = create.json?.id;
+  record('D15 exclusivity: create persists MUSE', create.json?.exclusivity === 'MUSE', `id=${pid}`);
+
+  // §10 guarantee: an exclusive oil is withheld from Shopify but STILL gets its
+  // 5 sale SKUs, so making it shared later needs no backfill.
+  const skus = await db.query(`SELECT "shopifySkus" FROM products WHERE id = $1`, [pid]);
+  const skuKeys = Object.keys(skus.rows[0]?.shopifySkus || {});
+  record('D15 §10: exclusive oil still gets its 5 sale SKUs (no backfill needed later)',
+    skuKeys.length === 5, skuKeys.join(','));
+
+  const toSm = await api('PUT', `/api/sa/products/${pid}`, { exclusivity: 'SM' });
+  record('D15 exclusivity: update MUSE → SM', toSm.json?.exclusivity === 'SM');
+
+  // The COALESCE trap: an unrelated edit must NOT silently clear exclusivity.
+  const rename = await api('PUT', `/api/sa/products/${pid}`, { name: '[regression] Excl Oil' });
+  record('D15 exclusivity: an unrelated edit does not clear it', rename.json?.exclusivity === 'SM');
+
+  // The sentinel: 'SHARED' must land as a real SQL NULL, not the string.
+  const toShared = await api('PUT', `/api/sa/products/${pid}`, { exclusivity: 'SHARED' });
+  const raw = await db.query(`SELECT exclusivity FROM products WHERE id = $1`, [pid]);
+  record('D15 exclusivity: SHARED sentinel clears to real NULL',
+    toShared.json?.exclusivity === null && raw.rows[0]?.exclusivity === null,
+    `db=${JSON.stringify(raw.rows[0]?.exclusivity)}`);
+
+  const bogus = await api('PUT', `/api/sa/products/${pid}`, { exclusivity: 'BOGUS' });
+  record('D15 exclusivity: invalid value rejected', bogus.status === 400, `status=${bogus.status}`);
+
+  await db.query(`DELETE FROM transactions WHERE product_id = $1`, [pid]);
+  await db.query(`DELETE FROM products WHERE id = $1`, [pid]);
+}
+
+// ── D15: cross-company Oil Usage report — the arithmetic finance/director sees ──
+async function testOilUsageReportMath() {
+  const { buildOilUsageSheets } = await import('../src/sa/utils/excelExport.js');
+  // The owner's own worked example: started 10 L, ended 8 L, MUSE used 2 L,
+  // SA used 7 L, SM-Standard used 1 L — which only closes if 8 L was replenished.
+  const ledger = [
+    { id: 1, product_id: 'X', product_code: 'FRAG_9999', product_name: 'Fragrance X', type: 'muse_production',   quantity: 2000, unit: 'mL', balance_after: 8000, notes: 'Production: SM-101',      created_at: '2026-07-01T09:00:00Z' },
+    { id: 2, product_id: 'X', product_code: 'FRAG_9999', product_name: 'Fragrance X', type: 'shopify_sale',      quantity: 7000, unit: 'mL', balance_after: 1000, notes: 'Shopify Order #555',     created_at: '2026-07-02T09:00:00Z' },
+    { id: 3, product_id: 'X', product_code: 'FRAG_9999', product_name: 'Fragrance X', type: 'sm_std_production', quantity: 1000, unit: 'mL', balance_after: 0,    notes: 'Production: SM-102',      created_at: '2026-07-03T09:00:00Z' },
+    { id: 4, product_id: 'X', product_code: 'FRAG_9999', product_name: 'Fragrance X', type: 'incoming',          quantity: 8000, unit: 'mL', balance_after: 8000, notes: 'PO received',             created_at: '2026-07-04T09:00:00Z' },
+  ];
+  const { summaryRows, detailRows } = buildOilUsageSheets(ledger);
+  const s = summaryRows[0];
+  record('D15 report: per-company usage split is exact',
+    s['MUSE Used'] === 2000 && s['SM-Standard Used'] === 1000 && s['SM-Major Used'] === 0 && s['SA Used'] === 7000,
+    `MUSE=${s['MUSE Used']} SM-Std=${s['SM-Standard Used']} SA=${s['SA Used']}`);
+  const balances = s['Opening Stock'] + s['Replenished (+)']
+    - s['MUSE Used'] - s['SM-Standard Used'] - s['SM-Major Used'] - s['SA Used'] === s['Closing Stock'];
+  record('D15 report: Opening + Replenished − Used(all) = Closing',
+    balances && s['Opening Stock'] === 10000 && s['Closing Stock'] === 8000,
+    `${s['Opening Stock']} + ${s['Replenished (+)']} − 10000 = ${s['Closing Stock']}`);
+  // A reversal must net against its OWN business, never count as replenishment.
+  const withReversal = buildOilUsageSheets([...ledger,
+    { id: 5, product_id: 'X', product_code: 'FRAG_9999', product_name: 'Fragrance X', type: 'muse_reversal', quantity: 500, unit: 'mL', balance_after: 8500, notes: 'cancelled', created_at: '2026-07-05T09:00:00Z' },
+  ]).summaryRows[0];
+  record('D15 report: a reversal nets against its own business, not "Replenished"',
+    withReversal['MUSE Used'] === 1500 && withReversal['Replenished (+)'] === 8000,
+    `MUSE=${withReversal['MUSE Used']} Replenished=${withReversal['Replenished (+)']}`);
+  record('D15 report: detail sheet has one row per movement + order refs',
+    detailRows.length === 4 && detailRows.some((r) => r['Order #'] === '#555') && detailRows.some((r) => r['Order #'] === 'SM-101'),
+    `${detailRows.length} rows`);
+}
+
+// ── §18 test-data discipline: the suite must leave production untouched ────
+// Snapshot-before → compare-after. Enforces the owner's rule (2026-07-16) as an
+// invariant instead of a habit: a test that leaks stock or leaves audit rows
+// behind goes RED here rather than silently dirtying the live SA ledger.
+async function snapshotStock() {
+  const r = await db.query(`SELECT id, "currentStock" FROM products`);
+  return new Map(r.rows.map((x) => [x.id, String(x.currentStock)]));
+}
+
+async function testNoResidue(before) {
+  const after = await snapshotStock();
+  const drifted = [];
+  for (const [id, stock] of before) {
+    const now = after.get(id);
+    if (now !== undefined && now !== stock) drifted.push(`${id}: ${stock}→${now}`);
+  }
+  record('§18 residue: every pre-existing product stock restored exactly',
+    drifted.length === 0, drifted.length ? drifted.slice(0, 5).join(', ') : 'zero drift');
+
+  const leftoverProducts = [...after.keys()].filter((id) => !before.has(id));
+  record('§18 residue: no test product left behind',
+    leftoverProducts.length === 0, leftoverProducts.join(', ') || 'none');
+
+  const leftoverTx = await db.query(
+    `SELECT COUNT(*)::int n FROM transactions WHERE notes LIKE '[regression]%' OR shopify_order_id LIKE '#TESTREG%'`
+  );
+  record('§18 residue: no test transaction rows left in the ledger',
+    leftoverTx.rows[0].n === 0, `${leftoverTx.rows[0].n} rows`);
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────
 async function main() {
   if (!WEBHOOK_SECRET) throw new Error('SA_SHOPIFY_WEBHOOK_SECRET / SCENT_SHOPIFY_WEBHOOK_SECRET not set');
   console.log('══════════ SA REGRESSION SUITE (Phase 2d) ══════════\n');
   const uid = await setup();
+  // Taken BEFORE any test writes, compared AFTER cleanup (§18 discipline).
+  const stockBefore = await snapshotStock();
   try {
     await testProductsCrud();
     await testStockOps();
@@ -321,8 +422,14 @@ async function main() {
     await testTechStock();
     await testDemandPlanningConsistency();
     await testWebhooks();
+    await testExclusivity();
+    await testOilUsageReportMath();
   } finally {
     await cleanup(uid);
+  }
+  try {
+    await testNoResidue(stockBefore);
+  } finally {
     await db.end();
   }
 
