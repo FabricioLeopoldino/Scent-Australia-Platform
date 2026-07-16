@@ -74,8 +74,17 @@ async function setup() {
   return uid;
 }
 
-async function cleanup(uid) {
+async function cleanup(uid, startedAt) {
   await db.query(`DELETE FROM transactions WHERE shopify_order_id LIKE '#TESTREG%' OR notes LIKE '[regression]%'`);
+  // sa.products has an AFTER UPDATE trigger (track_stock_changes) that logs EVERY
+  // currentStock change into direct_stock_changes — app-driven or not. This suite
+  // moves real oils (the webhook test) and restores them, so it leaves round-trip
+  // rows behind: the stock is correct but the log keeps the noise forever.
+  // Deleting our OWN rows only: scoped to this run's time window (§18 rule —
+  // a test restores the balance AND removes what it wrote).
+  if (startedAt) {
+    await db.query(`DELETE FROM direct_stock_changes WHERE changed_at >= $1`, [startedAt]);
+  }
   await db.query(`DELETE FROM audit_log WHERE user_id = $1`, [uid]);
   await db.query(`DELETE FROM webhook_processed WHERE order_id LIKE '%TESTREG%' OR order_id LIKE 'fulfillment_990%'`);
   await db.query(`DELETE FROM webhook_queue WHERE idempotency_key LIKE '%TESTREG%' OR idempotency_key LIKE 'fulfillment_990%'`);
@@ -397,7 +406,7 @@ async function snapshotStock() {
   return new Map(r.rows.map((x) => [x.id, String(x.currentStock)]));
 }
 
-async function testNoResidue(before) {
+async function testNoResidue(before, startedAt) {
   const after = await snapshotStock();
   const drifted = [];
   for (const [id, stock] of before) {
@@ -416,6 +425,16 @@ async function testNoResidue(before) {
   );
   record('§18 residue: no test transaction rows left in the ledger',
     leftoverTx.rows[0].n === 0, `${leftoverTx.rows[0].n} rows`);
+
+  // The trigger-written log is residue too — it is what made ~160 orphan rows
+  // pile up from earlier runs before this was caught (2026-07-16).
+  if (startedAt) {
+    const leftoverDsc = await db.query(
+      `SELECT COUNT(*)::int n FROM direct_stock_changes WHERE changed_at >= $1`, [startedAt]
+    );
+    record('§18 residue: no trigger-written stock-change rows left behind',
+      leftoverDsc.rows[0].n === 0, `${leftoverDsc.rows[0].n} rows`);
+  }
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────
@@ -425,6 +444,7 @@ async function main() {
   const uid = await setup();
   // Taken BEFORE any test writes, compared AFTER cleanup (§18 discipline).
   const stockBefore = await snapshotStock();
+  const startedAt = (await db.query(`SELECT NOW() AS t`)).rows[0].t;
   try {
     await testProductsCrud();
     await testStockOps();
@@ -437,10 +457,10 @@ async function main() {
     await testExclusivity();
     await testOilUsageReportMath();
   } finally {
-    await cleanup(uid);
+    await cleanup(uid, startedAt);
   }
   try {
-    await testNoResidue(stockBefore);
+    await testNoResidue(stockBefore, startedAt);
   } finally {
     await db.end();
   }
