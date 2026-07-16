@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { exportTransactionsToExcel } from '../utils/excelExport';
+import { exportTransactionsToExcel, exportOilUsageToExcel } from '../utils/excelExport';
 import { displayStock } from '../utils/unitConversion';
 import { GlowingEffect } from '../components/GlowingEffect';
 
@@ -108,6 +108,43 @@ export default function TransactionHistory() {
     exportTransactionsToExcel(filteredTransactions, label);
   };
 
+  // D15 — cross-company oil usage report. The main /api/transactions call
+  // above caps at 5000 rows for the whole page; a long "All Time" range of
+  // just OILS could exceed that, so this fetches its own paginated set
+  // instead of reusing `transactions`.
+  const [exportingOilUsage, setExportingOilUsage] = useState(false);
+  const fetchAllOilTransactions = async () => {
+    let all = [];
+    let offset = 0;
+    const limit = 5000;
+    for (;;) {
+      const params = new URLSearchParams({ category: 'OILS', limit: String(limit), offset: String(offset) });
+      if (dateFrom) params.append('dateFrom', dateFrom);
+      if (dateTo)   params.append('dateTo',   dateTo);
+      const res  = await fetch(`/api/transactions?${params}`);
+      const data = await res.json();
+      const rows = Array.isArray(data) ? data : [];
+      all = all.concat(rows);
+      if (rows.length < limit) break;
+      offset += limit;
+    }
+    return all;
+  };
+  const handleExportOilUsage = async () => {
+    setExportingOilUsage(true);
+    try {
+      const oilTransactions = await fetchAllOilTransactions();
+      const label = activePreset === 'custom'
+        ? `${dateFrom}_to_${dateTo}`
+        : getPreset(activePreset).label.replace(/ /g, '_');
+      exportOilUsageToExcel(oilTransactions, label);
+    } catch (error) {
+      console.error('Oil usage export error:', error);
+    } finally {
+      setExportingOilUsage(false);
+    }
+  };
+
   // ── date input style ──────────────────────────────────────────────────────
   const dateInputStyle = {
     background: 'rgba(255,255,255,0.04)',
@@ -147,9 +184,14 @@ export default function TransactionHistory() {
           <h2 className="page-title">TRANSACTION HISTORY</h2>
           <p>Complete audit trail of all stock movements</p>
         </div>
-        <button className="btn btn-secondary" onClick={handleExport}>
-          📊 Export to Excel
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-secondary" onClick={handleExport}>
+            📊 Export to Excel
+          </button>
+          <button className="btn btn-secondary" onClick={handleExportOilUsage} disabled={exportingOilUsage} title="Fragrance Library — shared oil usage across SA, SM and MUSE">
+            {exportingOilUsage ? 'Exporting…' : '🧪 Export Oil Usage (by company)'}
+          </button>
+        </div>
       </div>
 
       {/* ── Date Range Picker ────────────────────────────────────────────── */}

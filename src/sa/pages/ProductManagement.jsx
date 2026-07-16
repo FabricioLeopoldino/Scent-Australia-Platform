@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useSearch } from 'wouter';
 import { useToast } from '../components/Toast';
 import ConfirmModal from '../components/ConfirmModal';
 import { displayStock } from '../utils/unitConversion';
@@ -77,8 +78,18 @@ export default function ProductManagement({ user }) {
     unitPerBox: 1,
     shopifySkus: {},
     skuMultipliers: {},
-    bin_location: ''
+    bin_location: '',
+    exclusivity: 'SHARED'
   });
+
+  // D15: entering via the "Fragrance Library" tile lands here with
+  // ?filter=OILS — a pure UI convenience, no new data path.
+  const search = useSearch();
+  useEffect(() => {
+    const params = new URLSearchParams(search);
+    const requestedFilter = params.get('filter');
+    if (requestedFilter) setCategoryFilter(requestedFilter);
+  }, [search]);
 
   useEffect(() => {
     fetchProducts();
@@ -533,7 +544,8 @@ export default function ProductManagement({ user }) {
       unitPerBox: product.unitPerBox || 1,
       shopifySkus: product.shopifySkus || {},
       skuMultipliers: product.skuMultipliers || {},
-      bin_location: product.bin_location || ''
+      bin_location: product.bin_location || '',
+      exclusivity: product.exclusivity || 'SHARED'
     });
     setShowAddModal(true);
   };
@@ -552,7 +564,8 @@ export default function ProductManagement({ user }) {
       unitPerBox: 1,
       shopifySkus: {},
       skuMultipliers: {},
-      bin_location: ''
+      bin_location: '',
+      exclusivity: 'SHARED'
     });
   };
 
@@ -1179,6 +1192,24 @@ export default function ProductManagement({ user }) {
                   />
                   <MlHelper value={formData.minStockLevel} unit={formData.unit} />
                 </div>
+
+                {formData.category === 'OILS' && (
+                  <div className="form-group">
+                    <label>Availability</label>
+                    <select
+                      className="input"
+                      value={formData.exclusivity}
+                      onChange={(e) => setFormData({...formData, exclusivity: e.target.value})}
+                    >
+                      <option value="SHARED">Shared by all</option>
+                      <option value="MUSE">MUSE only</option>
+                      <option value="SM">SM only</option>
+                    </select>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                      Controls which businesses can use this oil in production (Fragrance Library). Doesn't affect Shopify.
+                    </div>
+                  </div>
+                )}
 
                 {formData.category !== 'OILS' && (
                   <div className="form-group">

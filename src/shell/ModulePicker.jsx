@@ -1,4 +1,4 @@
-import { Package, FlaskConical, Sparkles, Factory, Users, LogOut } from 'lucide-react';
+import { Package, FlaskConical, Sparkles, Factory, Users, LogOut, Droplets } from 'lucide-react';
 
 // Module Picker — behavioral spec in PRD Appendix B.
 // Tiles: SA / SM enabled by user.modules; MUSE always "Coming soon" (B6).
@@ -27,6 +27,17 @@ const MODULES = [
     subtitle: 'B2B clients · catalogs',
     icon: FlaskConical,
     accent: '#b1545a',
+  },
+  {
+    // D15: friendly front door into SA's existing oils page — no new page,
+    // no second numbering sequence. SA is the single source of truth for the
+    // shared Fragrance Library; this tile just deep-links into it pre-filtered.
+    key: 'FRAGLIB',
+    title: 'Fragrance Library',
+    subtitle: 'Shared oils — SA · SM · MUSE',
+    icon: Droplets,
+    accent: '#0ea5e9',
+    viewOf: 'SA',
   },
   {
     // MUSE is a VIEW over the SM module (same backend/segments) — the tile

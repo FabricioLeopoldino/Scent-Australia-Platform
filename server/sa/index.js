@@ -532,6 +532,7 @@ router.get('/products', async (req, res) => {
       shopifySkus: parseJSONB(row.shopifySkus),
       skuMultipliers: parseJSONB(row.skuMultipliers),
       incomingOrders: posMap[row.id] || [],
+      exclusivity: row.exclusivity || null,
       status: row.status || 'active',
       createdAt: row.created_at,
       updatedAt: row.updated_at
@@ -572,7 +573,8 @@ router.get('/products/:id', async (req, res) => {
       stockBoxes: parseInt(row.stockBoxes) || 0,
       shopifySkus: parseJSONB(row.shopifySkus),
       skuMultipliers: parseJSONB(row.skuMultipliers),
-      incomingOrders: parseJSONB(row.incoming_orders, [])
+      incomingOrders: parseJSONB(row.incoming_orders, []),
+      exclusivity: row.exclusivity || null
     });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
@@ -584,20 +586,30 @@ router.post('/products', async (req, res) => {
     const {
       name, category, productCode, tag, unit, currentStock,
       minStockLevel, shopifySkus, skuMultipliers, supplier, supplier_code, unitPerBox,
-      subCategory, sub_category, color, location, bin_location, userId
+      subCategory, sub_category, color, location, bin_location, userId, exclusivity
     } = req.body;
-    
+
     // Map both camelCase and snake_case
     const finalSubCategory = sub_category || subCategory || null;
     const finalColor = color || null;
     const finalLocation = location || null;
     const finalBinLocation = bin_location || null;
-    
+
     console.log('📥 Received:', { subCategory, sub_category, color, location, bin_location });
     console.log('✅ Using:', { finalSubCategory, finalColor, finalLocation, finalBinLocation });
-    
+
     if (!name || !category) {
       return res.status(400).json({ error: 'Name and category are required' });
+    }
+
+    // D15: Fragrance Library exclusivity — 'SHARED' is the form's sentinel for
+    // "no restriction" (NULL); MUSE/SM are the D14 exclusivity buckets.
+    let finalExclusivity = null;
+    if (exclusivity !== undefined && exclusivity !== null && exclusivity !== 'SHARED') {
+      if (!['MUSE', 'SM'].includes(exclusivity)) {
+        return res.status(400).json({ error: `Invalid exclusivity: ${exclusivity}. Allowed: SHARED, MUSE, SM` });
+      }
+      finalExclusivity = exclusivity;
     }
     
     // Generate new ID (with proper numeric ordering)
@@ -669,14 +681,14 @@ router.post('/products', async (req, res) => {
       `INSERT INTO products
        (id, tag, "productCode", name, category, unit, "currentStock", "minStockLevel",
         "shopifySkus", "skuMultipliers", supplier, "supplier_code", "unitPerBox", "stockBoxes", "incoming_orders",
-        sub_category, color, location, bin_location)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+        sub_category, color, location, bin_location, exclusivity)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
        RETURNING *`,
       [
         newId, newTag, newProductCode, name, category, unit || 'units',
         currentStock || 0, minStockLevel || 0, skusJson, skuMultipliersJson,
         supplier || '', supplier_code || '', unitPerBox || 1, stockBoxes, '[]',
-        finalSubCategory, finalColor, finalLocation, finalBinLocation
+        finalSubCategory, finalColor, finalLocation, finalBinLocation, finalExclusivity
       ]
     );
     
@@ -730,7 +742,8 @@ router.post('/products', async (req, res) => {
       stockBoxes: parseInt(row.stockBoxes),
       shopifySkus: parseJSONB(row.shopifySkus),
       skuMultipliers: parseJSONB(row.skuMultipliers),
-      incoming_orders: []
+      incoming_orders: [],
+      exclusivity: row.exclusivity || null
     });
   } catch (error) {
     console.error('Create product error:', error);
@@ -744,18 +757,31 @@ router.put('/products/:id', async (req, res) => {
     const {
       name, category, productCode, tag, unit, currentStock,
       minStockLevel, shopifySkus, skuMultipliers, supplier, supplier_code, unitPerBox,
-      subCategory, sub_category, color, location, bin_location
+      subCategory, sub_category, color, location, bin_location, exclusivity
     } = req.body;
-    
+
     // Map both camelCase and snake_case
     const finalSubCategory = sub_category || subCategory;
     const finalColor = color;
     const finalLocation = location;
     const finalBinLocation = bin_location;
-    
+
     console.log('📥 PUT Received:', { subCategory, sub_category, color, location, bin_location });
     console.log('✅ PUT Using:', { finalSubCategory, finalColor, finalLocation, finalBinLocation });
-    
+
+    // D15: exclusivity can legitimately be set back to NULL (Shared), which the
+    // COALESCE pattern below cannot express — so it's handled as its own
+    // "was this field sent at all" flag rather than folded into COALESCE.
+    // The form sends the 'SHARED' sentinel for "no restriction" (→ NULL).
+    const exclusivitySent = 'exclusivity' in req.body;
+    let finalExclusivity = null;
+    if (exclusivitySent && exclusivity !== null && exclusivity !== 'SHARED') {
+      if (!['MUSE', 'SM'].includes(exclusivity)) {
+        return res.status(400).json({ error: `Invalid exclusivity: ${exclusivity}. Allowed: SHARED, MUSE, SM` });
+      }
+      finalExclusivity = exclusivity;
+    }
+
     // currentStock is intentionally NOT updated here — stock only changes via
     // /api/stock/add, /api/stock/remove, /api/stock/adjust, webhook, or /api/returns.
     // Allowing the edit form to overwrite currentStock would silently reverse webhook deductions.
@@ -804,13 +830,15 @@ router.put('/products/:id', async (req, res) => {
        sub_category = CASE WHEN $12::text IS NOT NULL THEN $12 ELSE sub_category END,
        color = CASE WHEN $13::text IS NOT NULL THEN $13 ELSE color END,
        location = CASE WHEN $14::text IS NOT NULL THEN $14 ELSE location END,
-       bin_location = CASE WHEN $15::text IS NOT NULL THEN $15 ELSE bin_location END
+       bin_location = CASE WHEN $15::text IS NOT NULL THEN $15 ELSE bin_location END,
+       exclusivity = CASE WHEN $17::boolean THEN $18 ELSE exclusivity END
        WHERE id = $16
        RETURNING *`,
       [
         name, category, productCode, tag, unit, minStockLevel,
         skusJson, skuMultipliersJson, supplier, supplier_code, unitPerBox,
-        finalSubCategory ?? null, finalColor ?? null, finalLocation ?? null, finalBinLocation ?? null, productId
+        finalSubCategory ?? null, finalColor ?? null, finalLocation ?? null, finalBinLocation ?? null, productId,
+        exclusivitySent, finalExclusivity
       ]
     );
     
@@ -837,7 +865,8 @@ router.put('/products/:id', async (req, res) => {
       unitPerBox: parseInt(row.unitPerBox),
       stockBoxes: parseInt(row.stockBoxes),
       shopifySkus: parseJSONB(row.shopifySkus),
-      skuMultipliers: parseJSONB(row.skuMultipliers)
+      skuMultipliers: parseJSONB(row.skuMultipliers),
+      exclusivity: row.exclusivity || null
     });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
