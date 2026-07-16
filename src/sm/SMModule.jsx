@@ -27,7 +27,6 @@ import BOMScentedMerchandise from './pages/BOMScentedMerchandise.jsx';
 import StockScentedMerchandise from './pages/StockScentedMerchandise.jsx';
 import BOMMuse from './pages/BOMMuse.jsx';
 import ExternalProcessing from './pages/ExternalProcessing.jsx';
-import TransfersIn from './pages/TransfersIn.jsx';
 import './sm.css';
 
 // ─────────────────────────────────────────
@@ -133,7 +132,6 @@ export default function SMModule({ user, onLogout }) {
                 <Route path="/barcode" component={BarcodeScanner} />
                 <Route path="/incoming-orders" component={IncomingOrders} />
                 <Route path="/external-processing" component={ExternalProcessing} />
-                <Route path="/transfers-in" component={TransfersIn} />
                 <Route path="/returns" component={Returns} />
                 <Route path="/transactions" component={TransactionHistory} />
                 <Route path="/activity-log" component={ActivityLog} />

@@ -18,7 +18,6 @@ import Formulas from './pages/Formulas';
 import ActivityLog from './pages/ActivityLog';
 import ScentedProducts from './pages/ScentedProducts';
 import TechStock from './pages/TechStock';
-import TransfersSA from './pages/TransfersSA';
 import ThemeToggle from './components/ThemeToggle';
 
 // SA Scent Stock Manager module shell — nav/routes/role-gating identical to
@@ -83,9 +82,6 @@ function SAContent({ user, onSwitchModule, onLogout }) {
               {['admin', 'root'].includes(user.role) && (
                 <li><Link href="/sku-mapping" className={isActive('/sku-mapping') ? 'nav-active' : ''}>SKU Mapping</Link></li>
               )}
-              {['admin', 'root'].includes(user.role) && (
-                <li><Link href="/transfers" className={isActive('/transfers') ? 'nav-active' : ''}>Transfers</Link></li>
-              )}
             </>)}
             <li><Link href="/history" className={isActive('/history') ? 'nav-active' : ''}>History</Link></li>
             {['admin', 'root'].includes(user.role) && (
@@ -146,7 +142,6 @@ function SAContent({ user, onSwitchModule, onLogout }) {
           <Route path="/formulas"><Formulas user={user} /></Route>
           <Route path="/scented-products"><ScentedProducts user={user} /></Route>
           <Route path="/tech-stock"><TechStock user={user} /></Route>
-          <Route path="/transfers">{['admin', 'root'].includes(user?.role) ? <TransfersSA user={user} /> : null}</Route>
           <Route path="/bom"><BOMViewer user={user} /></Route>
           <Route path="/diffuser-bom"><DiffuserMachineBOM user={user} /></Route>
           <Route path="/sku-mapping">{['admin', 'root'].includes(user?.role) ? <SkuMapping user={user} /> : null}</Route>
