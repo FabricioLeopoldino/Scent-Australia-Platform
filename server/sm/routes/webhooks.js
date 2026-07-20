@@ -6,6 +6,8 @@ const { query, withTransaction } = require('../db')
 const { auth, auditLog } = require('../auth')
 const { enqueueDraftOrder } = require('../services/shopify-sync')
 const { adjustProductStock } = require('../services/stock-service')
+const { computeFinishedGoodBom } = require('../services/bom-builder')
+const { consumeFragranceOil, restoreFragranceOil } = require('../services/fragrance-library')
 
 const processingOrders = new Set()
 const processingFulfillments = new Set()
@@ -89,26 +91,45 @@ async function smFulfillmentHandler(req, res, topic, body) {
           continue;
         }
         const p = prod.rows[0];
-        const delta = isCancel ? qty : -qty;
         const note = isCancel
           ? `Reversal: Shopify Order ${body.name || orderId} — fulfillment ${fulfillmentId} cancelled (${qty}x)`
           : `Shopify Order ${body.name || orderId} — fulfilled (${qty}x)`;
+        const txType = isCancel ? 'shopify_reversal' : 'shopify_sale';
+        // Shopify already moved its own count (skipShopifyPush); the sale is a
+        // physical fact already shipped, so never let one short line refuse and
+        // roll back the whole fulfillment — record it and allow negative.
+        const opts = { skipShopifyPush: true, allowNegative: true };
 
-        const updated = await adjustProductStock(
-          p.id, delta,
-          isCancel ? 'shopify_reversal' : 'shopify_sale',
-          note, null, null, null, tq,
-          // Shopify already moved its own count (skipShopifyPush); the sale is a
-          // physical fact already shipped, so never let one short line refuse and
-          // roll back the whole fulfillment — record it and allow negative.
-          { skipShopifyPush: true, allowNegative: true }
-        );
-        const stockAfter = parseFloat(updated.current_stock);
-        const oversold = isShip && stockAfter < 0;
-        if (oversold) {
-          console.warn(`[muse-fulfil] ${sku} oversold — stock now ${stockAfter} (sale recorded; investigate physical count)`);
+        // D16 — MUSE make-to-order: if the variant has an oil_id AND its master
+        // defines a BOM, the finished good was NOT pre-produced. Deduct its full
+        // BOM here instead of a finished-good stock row: oil from the shared
+        // Fragrance Library (MUSE bucket) + ethanol + packaging. On cancel, restore
+        // all. Variants without oil_id/BOM keep the legacy finished-good deduction.
+        const bom = await computeFinishedGoodBom(tq, p.id, qty);
+        if (bom.makeToOrder) {
+          if (isCancel) {
+            await restoreFragranceOil(tq, bom.oil.oil_id, bom.oil.ml, 'MUSE', `${note} — oil restored`);
+          } else {
+            await consumeFragranceOil(tq, bom.oil.oil_id, bom.oil.ml, 'MUSE', `${note} — MUSE retail sale`);
+          }
+          const matResults = [];
+          for (const m of bom.materials) {
+            const u = await adjustProductStock(
+              m.product_id, isCancel ? m.qty : -m.qty, txType, note, null, null, null, tq, opts
+            );
+            matResults.push({ code: m.product_code, qty: m.qty, unit: m.unit, stock_after: parseFloat(u.current_stock) });
+          }
+          results.push({ sku, name: p.name, qty, make_to_order: true, oil_ml: bom.oil.ml, materials: matResults });
+        } else {
+          const delta = isCancel ? qty : -qty;
+          const updated = await adjustProductStock(p.id, delta, txType, note, null, null, null, tq, opts);
+          const stockAfter = parseFloat(updated.current_stock);
+          const oversold = isShip && stockAfter < 0;
+          if (oversold) {
+            console.warn(`[muse-fulfil] ${sku} oversold — stock now ${stockAfter} (sale recorded; investigate physical count)`);
+          }
+          results.push({ sku, name: p.name, qty, delta, stock_after: stockAfter, oversold });
         }
-        results.push({ sku, name: p.name, qty, delta, stock_after: stockAfter, oversold });
       }
 
       await tq(

@@ -199,6 +199,54 @@ async function buildLineComponents(orderId, line, lineInput, clientId, qFn) {
   }
 }
 
+// D16 (MUSE make-to-order): compute the full BOM to DEDUCT when a finished-good
+// variant is sold on Shopify WITHOUT a production order. Read-only — returns the
+// oil (from the shared Fragrance Library) + the sm materials (ethanol + packaging)
+// to debit. A variant qualifies as make-to-order only when it has an oil_id AND
+// its master defines a BOM; otherwise the caller keeps the legacy finished-good
+// stock deduction (D13). Mirrors buildLineComponents' formula so the numbers match
+// what a production order would have consumed.
+async function computeFinishedGoodBom(tq, variantId, qty) {
+  const qFn = tq || query
+  const q = parseInt(qty)
+  const vr = await qFn(
+    `SELECT v.id, v.oil_id, v.default_oil_pct AS v_oil_pct, v.volume_ml AS v_volume,
+            m.product_code AS master_code, m.volume_ml AS m_volume, m.default_oil_pct AS m_oil_pct, m.is_pure_oil
+     FROM products v LEFT JOIN products m ON m.id = v.master_product_id
+     WHERE v.id = $1`,
+    [variantId]
+  )
+  const v = vr.rows[0]
+  if (!v || !v.oil_id || !(q > 0)) return { makeToOrder: false }
+
+  const volume = parseFloat(v.v_volume) || parseFloat(v.m_volume) || 0
+  const oilPct = parseFloat(v.v_oil_pct) || parseFloat(v.m_oil_pct) || 25
+  if (!volume) return { makeToOrder: false }
+
+  const bom = await qFn(
+    `SELECT pb.quantity_formula, pb.quantity_per_unit, p.id AS product_id, p.product_code, p.name, p.unit
+     FROM product_bom pb JOIN products p ON p.id = pb.component_product_id
+     WHERE pb.product_type = $1 AND pb.is_active = true
+     ORDER BY pb.sort_order, pb.id`,
+    [v.master_code]
+  )
+  if (!bom.rows.length) return { makeToOrder: false } // master has no BOM → not make-to-order
+
+  const oilMl = v.is_pure_oil ? q * volume : q * volume * (oilPct / 100)
+  const materials = []
+  for (const e of bom.rows) {
+    const isEthanol = e.quantity_formula === 'ethanol_pct'
+    const amount = isEthanol
+      ? q * volume * ((100 - oilPct) / 100)
+      : q * parseFloat(e.quantity_per_unit)
+    materials.push({
+      product_id: e.product_id, product_code: e.product_code, product_name: e.name,
+      qty: amount, unit: e.unit || (isEthanol ? 'ml' : 'units'), is_ethanol: isEthanol,
+    })
+  }
+  return { makeToOrder: true, oil: { oil_id: v.oil_id, ml: oilMl }, materials }
+}
+
 // Backwards-compat wrapper — returns just the volume number (sync-style usage broken,
 // but callers should migrate to getMasterAttrs which is async).
 async function getProductVolume(productType, qFn) {
@@ -206,4 +254,4 @@ async function getProductVolume(productType, qFn) {
   return attrs.volume
 }
 
-module.exports = { buildLineComponents, getMasterAttrs, getProductVolume }
+module.exports = { buildLineComponents, getMasterAttrs, getProductVolume, computeFinishedGoodBom }
