@@ -8,8 +8,13 @@ const { enqueueInventoryAdjust } = require('./shopify-sync')
 // (production, manual adjust, receiving) still push — we stay the source of truth.
 async function adjustProductStock(productId, delta, type, notes, userId, orderId, lineId, qFn, opts = {}) {
   const qry = qFn || query
-  // Guard: prevent stock going negative (deductions only)
-  if (delta < 0) {
+  // Guard: prevent stock going negative (deductions only).
+  // opts.allowNegative — opt-out for movements that record a PHYSICAL fact which
+  // already happened and cannot be refused: a MUSE retail sale Shopify already
+  // shipped. Refusing it would roll back the whole fulfillment and lose the sale;
+  // instead we record it and let the balance go negative (a signal to investigate,
+  // mirroring the SA/oil model). Production/BOM consumption keeps the guard.
+  if (delta < 0 && !opts.allowNegative) {
     const check = await qry(`SELECT current_stock FROM products WHERE id = $1`, [productId])
     if (!check.rows[0]) throw new Error('Product not found')
     const newStock = parseFloat(check.rows[0].current_stock) + delta

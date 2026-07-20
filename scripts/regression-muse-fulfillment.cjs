@@ -10,7 +10,8 @@
 //   · an unknown SKU is skipped, never guessed
 //   · NO Shopify push is queued (Shopify already moved its own count —
 //     pushing would deduct twice)
-//   · insufficient stock never drives the balance negative
+//   · an oversold line is RECORDED (stock allowed negative — the sale already
+//     shipped) and never rolls back the healthy lines in the same fulfillment
 //
 // Usage: REGRESSION_BASE=http://localhost:3010 node scripts/regression-muse-fulfillment.cjs
 // ═══════════════════════════════════════════════════════════════════════════
@@ -27,6 +28,13 @@ let pass = 0, fail = 0;
 const ok = (m, d = '') => { pass++; console.log(`PASS  ${m}${d ? ' — ' + d : ''}`); };
 const bad = (m, d = '') => { fail++; console.log(`FAIL  ${m}${d ? ' — ' + d : ''}`); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// The handler answers 200 first then commits async; against a remote Neon a fixed
+// sleep races the commit. Poll the expected end-state (bounded) for determinism.
+const waitUntil = async (fn, ms = 15000, gap = 400) => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { if (await fn()) return true; await sleep(gap); }
+  return false;
+};
 
 async function send(topic, body) {
   const raw = JSON.stringify(body);
@@ -44,27 +52,34 @@ const stockOf = async (sku) =>
   parseFloat((await sm.query(`SELECT current_stock FROM products WHERE sku = $1`, [sku])).rows[0].current_stock);
 
 const FID = 900000000 + Math.floor(Math.random() * 99999999); // unique per run
-let SKU = null;
+let SKU = null, SKU2 = null, ORIG1 = null, ORIG2 = null;
 
 async function cleanup() {
   await sm.query(`DELETE FROM webhook_processed WHERE shopify_order_id BETWEEN $1 AND $2`, [FID, FID + 10]);
-  if (SKU) {
+  // Delete the probe transactions AND restore each variant's original stock, so a
+  // run — even one that ships/oversells fixtures — leaves the catalog untouched.
+  for (const [s, orig] of [[SKU, ORIG1], [SKU2, ORIG2]]) {
+    if (!s) continue;
     await sm.query(
       `DELETE FROM transactions WHERE product_id = (SELECT id FROM products WHERE sku = $1) AND notes LIKE '%D13-PROBE%'`,
-      [SKU]
+      [s]
     );
+    if (orig !== null) await sm.query(`UPDATE products SET current_stock = $1 WHERE sku = $2`, [orig, s]);
   }
 }
 
 (async () => {
-  // Fixture: a real MUSE variant, given a known stock level
-  const v = (await sm.query(
-    `SELECT id, sku, name FROM products WHERE sku LIKE 'Muse\\_RD%' AND COALESCE(archived,false)=false ORDER BY sku LIMIT 1`
-  )).rows[0];
-  if (!v) { bad('no MUSE variant found — import the catalog first'); process.exit(1); }
-  SKU = v.sku;
+  // Fixtures: two real MUSE variants (the mixed-fulfillment check needs a second).
+  // Original stock captured so cleanup restores them exactly.
+  const vs = (await sm.query(
+    `SELECT id, sku, name, current_stock FROM products WHERE sku LIKE 'Muse\\_RD%' AND COALESCE(archived,false)=false ORDER BY sku LIMIT 2`
+  )).rows;
+  if (vs.length < 2) { bad('need at least 2 MUSE variants — import the catalog first'); process.exit(1); }
+  const v = vs[0], v2 = vs[1];
+  SKU = v.sku; SKU2 = v2.sku;
+  ORIG1 = parseFloat(v.current_stock); ORIG2 = parseFloat(v2.current_stock);
   await sm.query(`UPDATE products SET current_stock = 10 WHERE id = $1`, [v.id]);
-  console.log(`fixture: ${v.name} (${SKU}) set to 10 units\n`);
+  console.log(`fixture: ${v.name} (${SKU}) set to 10 units; 2nd variant ${v2.name} (${SKU2})\n`);
 
   const order = { name: '#D13-PROBE', order_id: FID };
 
@@ -73,6 +88,7 @@ async function cleanup() {
     id: FID, order_id: FID, status: 'success', ...order,
     line_items: [{ sku: SKU, quantity: 3 }],
   });
+  await waitUntil(async () => (await stockOf(SKU)) === 7);
   let s = await stockOf(SKU);
   s === 7 ? ok('fulfillments/create deducts stock', '10 → 7 (shipped 3)')
           : bad('shipment did not deduct correctly', `stock=${s}, expected 7`);
@@ -100,6 +116,7 @@ async function cleanup() {
     id: FID, order_id: FID, status: 'cancelled', ...order,
     line_items: [{ sku: SKU, quantity: 3 }],
   });
+  await waitUntil(async () => (await stockOf(SKU)) === 10);
   s = await stockOf(SKU);
   s === 10 ? ok('fulfillments/update cancelled restores stock', '7 → 10')
            : bad('cancellation did not restore', `stock=${s}, expected 10`);
@@ -131,16 +148,25 @@ async function cleanup() {
     ? ok('no inventory push queued to Shopify', 'Shopify already moved its own count')
     : bad('a Shopify inventory push was queued — stock would deduct TWICE', `${queued} queued`);
 
-  // ── 8. Stock never goes negative ─────────────────────────────────────────
-  await sm.query(`UPDATE products SET current_stock = 2 WHERE sku = $1`, [SKU]);
+  // ── 8. An oversold line is RECORDED and never drops the healthy lines ──────
+  // The retail sale already shipped on Shopify — refusing it would roll back the
+  // whole fulfillment and lose the sale. So a mixed order with one short line must
+  // record BOTH: the healthy line deducts normally, the short line goes negative.
+  await sm.query(`UPDATE products SET current_stock = 2 WHERE sku = $1`, [SKU]);   // short line
+  await sm.query(`UPDATE products SET current_stock = 50 WHERE sku = $1`, [SKU2]); // healthy line
   await send('fulfillments/create', {
     id: FID + 2, order_id: FID + 2, status: 'success', name: '#D13-PROBE',
-    line_items: [{ sku: SKU, quantity: 99 }],
+    line_items: [{ sku: SKU2, quantity: 5 }, { sku: SKU, quantity: 99 }],
   });
-  s = await stockOf(SKU);
-  s >= 0
-    ? ok('oversell never drives stock negative', `stock=${s}`)
-    : bad('stock went NEGATIVE', `stock=${s}`);
+  await waitUntil(async () => (await stockOf(SKU)) === 2 - 99 && (await stockOf(SKU2)) === 50 - 5);
+  const shortAfter = await stockOf(SKU);
+  const healthyAfter = await stockOf(SKU2);
+  shortAfter === 2 - 99
+    ? ok('oversold line is recorded — stock allowed negative (sale not lost)', `${SKU}: 2 → ${shortAfter}`)
+    : bad('oversold line was not recorded correctly', `stock=${shortAfter}, expected ${2 - 99}`);
+  healthyAfter === 50 - 5
+    ? ok('a short line does NOT roll back the healthy line in the same fulfillment', `${SKU2}: 50 → ${healthyAfter}`)
+    : bad('the healthy line was rolled back by the short line', `stock=${healthyAfter}, expected 45`);
 
   // ── 9. The sale wrote an auditable transaction ────────────────────────────
   const tx = await sm.query(
@@ -152,8 +178,7 @@ async function cleanup() {
     ? ok('sale + reversal wrote auditable transactions', tx.rows.map((r) => r.type).join(', '))
     : bad('transactions missing', JSON.stringify(tx.rows));
 
-  await cleanup();
-  await sm.query(`UPDATE products SET current_stock = 0 WHERE sku = $1`, [SKU]);
+  await cleanup(); // deletes probe transactions AND restores both variants' original stock
   console.log(`\n══════ D13 MUSE FULFILLMENT: ${fail === 0 ? '✅ ALL PASS' : '❌ FAILURES'} (${pass} pass / ${fail} fail) ══════`);
   await sm.end();
   process.exit(fail === 0 ? 0 : 1);

@@ -94,13 +94,21 @@ async function smFulfillmentHandler(req, res, topic, body) {
           ? `Reversal: Shopify Order ${body.name || orderId} — fulfillment ${fulfillmentId} cancelled (${qty}x)`
           : `Shopify Order ${body.name || orderId} — fulfilled (${qty}x)`;
 
-        await adjustProductStock(
+        const updated = await adjustProductStock(
           p.id, delta,
           isCancel ? 'shopify_reversal' : 'shopify_sale',
           note, null, null, null, tq,
-          { skipShopifyPush: true } // Shopify already moved its own count
+          // Shopify already moved its own count (skipShopifyPush); the sale is a
+          // physical fact already shipped, so never let one short line refuse and
+          // roll back the whole fulfillment — record it and allow negative.
+          { skipShopifyPush: true, allowNegative: true }
         );
-        results.push({ sku, name: p.name, qty, delta });
+        const stockAfter = parseFloat(updated.current_stock);
+        const oversold = isShip && stockAfter < 0;
+        if (oversold) {
+          console.warn(`[muse-fulfil] ${sku} oversold — stock now ${stockAfter} (sale recorded; investigate physical count)`);
+        }
+        results.push({ sku, name: p.name, qty, delta, stock_after: stockAfter, oversold });
       }
 
       await tq(
