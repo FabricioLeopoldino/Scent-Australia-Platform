@@ -23,17 +23,21 @@ async function processDraftOrder(payload) {
   if (!order.rows[0]) throw new Error('Order not found')
 
   const lines = await query(
-    `SELECT pol.*, pf.name as fragrance_name, master.name as master_name
+    `SELECT pol.*, pf.name as fragrance_name, master.name as master_name, oil.name as oil_name
      FROM production_order_lines pol
      LEFT JOIN products pf ON pol.fragrance_id = pf.id
      LEFT JOIN products master ON master.product_code = pol.product_type AND master.is_master = true
+     LEFT JOIN sa.products oil ON oil.id = pol.oil_id
      WHERE pol.production_order_id = $1`,
     [payload.production_order_id]
   )
 
   // FR-HOOK-5 (shared store): no SKUs on SM draft-order line items.
+  // Scent name resolves in priority: commercial variant_name → legacy fragrance
+  // → D14 Fragrance Library oil name → 'N/A'. Before this, a D14 oil line (no
+  // fragrance_id) always showed 'N/A' on the Shopify draft.
   const lineItems = lines.rows.map(l => ({
-    title: `${l.master_name || l.product_type.replace(/_/g, ' ')} — ${l.fragrance_name || 'N/A'}`,
+    title: `${l.master_name || l.product_type.replace(/_/g, ' ')} — ${l.variant_name || l.fragrance_name || l.oil_name || 'N/A'}`,
     quantity: l.quantity,
     price: '0.00',
     requires_shipping: true

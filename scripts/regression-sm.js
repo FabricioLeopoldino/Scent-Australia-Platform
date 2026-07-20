@@ -226,6 +226,9 @@ async function main() {
       [blocker.json?.id, majorOrder.json?.id]
     );
     record('major: cancel releases reservations', leftover.rows[0].count === '0');
+    // …then discard both so they don't accumulate as cancelled test residue on reruns.
+    await api('DELETE', `/api/sm/production-orders/${blocker.json?.id}?mode=discard`).catch(() => {});
+    await api('DELETE', `/api/sm/production-orders/${majorOrder.json?.id}?mode=discard`).catch(() => {});
 
     // ── Candle line: send-for-filling → waiting_external → receive ──
     const candleMasterExists = await db.query(`SELECT id FROM products WHERE product_code = 'CANDLE_240G' AND is_master = true`);
@@ -290,6 +293,53 @@ async function main() {
       editLocked.status === 400 && /Only draft orders/.test(editLocked.json?.error || ''), `status=${editLocked.status}`);
     await api('DELETE', `/api/sm/production-orders/${dId}?mode=cancel`).catch(() => {});
     await api('DELETE', `/api/sm/production-orders/${dId}?mode=discard`).catch(() => {});
+
+    // ── D14 Fragrance Library oil VISIBILITY (bug 2026-07-21): an oil picked from
+    //    the Library is stored on the line (oil_id + oil_qty_ml), debited at start,
+    //    NOT a reserved component — but it must still be VISIBLE in the BOM preview,
+    //    the order detail, and the Shopify draft title (was showing 'N/A'). No oil
+    //    is consumed here (the order is never started), then it's discarded. ──
+    const saOil = (await db.query(`SELECT id, name, "productCode" AS code FROM sa.products WHERE category = 'OILS' ORDER BY id LIMIT 1`)).rows[0];
+    if (!saOil) { record('fraglib-vis: an SA oil exists to test with', false); }
+    else {
+      // (a) BOM preview surfaces the oil line (50 mL = 1 × 200 × 25%)
+      const prev = await api('POST', '/api/sm/bom-preview', {
+        lines: [{ product_type: 'RD200_TEST', oil_id: saOil.id, oil_pct: 25, quantity: 1 }],
+      });
+      const prevComps = prev.json?.[0] || []; // endpoint returns an array of component-arrays
+      const prevOil = prevComps.find((c) => c.source === 'fragrance_library');
+      record('fraglib-vis: BOM preview shows the Library oil (50 mL)',
+        !!prevOil && prevOil.product_name === saOil.name && near(prevOil.quantity_required, 50),
+        `oil=${JSON.stringify(prevOil && { n: prevOil.product_name, q: prevOil.quantity_required })}`);
+
+      // (b) order detail surfaces the oil as a component + resolves oil_name
+      const oOrder = await api('POST', '/api/sm/production-orders', {
+        order_type: 'STANDARD',
+        lines: [{ product_type: 'RD200_TEST', oil_id: saOil.id, oil_pct: 25, quantity: 1 }],
+      });
+      const oId = oOrder.json?.id;
+      const detail = await api('GET', `/api/sm/production-orders/${oId}`);
+      const line0 = detail.json?.lines?.[0] || {};
+      const detailOil = (line0.components || []).find((c) => c.source === 'fragrance_library');
+      record('fraglib-vis: order detail shows the oil component (50 mL) + oil_name',
+        !!detailOil && detailOil.product_name === saOil.name && near(detailOil.quantity_required, 50) && line0.oil_name === saOil.name,
+        `oil=${JSON.stringify(detailOil && { n: detailOil.product_name, q: detailOil.quantity_required })}`);
+
+      // (c) the Shopify draft title resolves the oil name (no more 'N/A') — assert
+      //     the exact resolution the title builder uses (variant→fragrance→oil→N/A)
+      const titleRow = (await db.query(
+        `SELECT COALESCE(pol.variant_name, pf.name, oil.name, 'N/A') AS scent
+         FROM production_order_lines pol
+         LEFT JOIN products pf ON pol.fragrance_id = pf.id
+         LEFT JOIN sa.products oil ON oil.id = pol.oil_id
+         WHERE pol.production_order_id = $1`, [oId]
+      )).rows[0];
+      record('fraglib-vis: Shopify draft title resolves oil name (not N/A)',
+        titleRow?.scent === saOil.name, `scent=${titleRow?.scent}`);
+
+      await api('DELETE', `/api/sm/production-orders/${oId}?mode=cancel`).catch(() => {});
+      await api('DELETE', `/api/sm/production-orders/${oId}?mode=discard`).catch(() => {});
+    }
 
     // ── Hardening (Phase 3b) ──
     const upload = await api('PATCH', `/api/sm/products/${frag1}/image`, { image_data: 'data:image/png;base64,AAAA' });

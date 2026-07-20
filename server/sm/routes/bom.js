@@ -60,7 +60,7 @@ router.post('/bom-preview', auth, async (req, res) => {
     for (const r of reservedRows.rows) reservedMap[r.product_id] = parseFloat(r.total_reserved) || 0
 
     for (const line of lines) {
-      const { product_type, fragrance_id, oil_pct, quantity, volume_ml: volOverride, label_client_label_id, use_client_stock, is_large_client, client_id, needs_packing, needs_labeling, use_ready_formula, ready_formula_id } = line
+      const { product_type, fragrance_id, oil_id, oil_pct, quantity, volume_ml: volOverride, label_client_label_id, use_client_stock, is_large_client, client_id, needs_packing, needs_labeling, use_ready_formula, ready_formula_id } = line
       const qty = parseInt(quantity) || 0
       const oilPct = parseFloat(oil_pct) || 25
       const masterAttrs = await getMasterAttrs(product_type)
@@ -119,6 +119,31 @@ router.post('/bom-preview', auth, async (req, res) => {
               available_stock: Math.max(0, fragRaw - (reservedMap[p.rows[0].id] || 0)),
               unit: 'ml',
               _is_fragrance: true,
+            }
+            components.push(fragEntry)
+          }
+        }
+
+        // D14 Fragrance Library oil (picked instead of a legacy fragrance_id).
+        // Show it in the preview — same mL formula as a fragrance — even though it
+        // is debited from sa.products at start and not reserved (D14.6). Marked
+        // source='fragrance_library' so the UI can label it accordingly.
+        if (!fragrance_id && oil_id) {
+          const oilQty = isPureOil ? qty * volume : qty * volume * (oilPct / 100)
+          const oilRow = await query(`SELECT id, "productCode" AS product_code, name, "currentStock" AS current_stock FROM sa.products WHERE id = $1`, [oil_id])
+          if (oilRow.rows[0]) {
+            const oilRaw = parseFloat(oilRow.rows[0].current_stock)
+            fragEntry = {
+              product_id: null,
+              product_code: oilRow.rows[0].product_code,
+              product_name: oilRow.rows[0].name,
+              source: 'fragrance_library',
+              quantity_required: oilQty,
+              current_stock: oilRaw,
+              available_stock: oilRaw, // Library oil is never reserved (debited at start)
+              unit: 'ml',
+              _is_fragrance: true,
+              _is_oil: true,
             }
             components.push(fragEntry)
           }

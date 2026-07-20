@@ -274,11 +274,13 @@ router.get('/production-orders/:id', auth, async (req, res) => {
     if (!result.rows[0]) return res.status(404).json({ error: 'Not found' })
     const order = result.rows[0]
     const lines = await query(
-      `SELECT pol.*, pf.name as fragrance_name, pp.name as packaging_name, pfg.name as fg_product_name, pfg.volume_ml, pfg.default_oil_pct
+      `SELECT pol.*, pf.name as fragrance_name, pp.name as packaging_name, pfg.name as fg_product_name, pfg.volume_ml, pfg.default_oil_pct,
+              oil.name as oil_name, oil."productCode" as oil_code, oil."currentStock" as oil_stock
        FROM production_order_lines pol
        LEFT JOIN products pf ON pol.fragrance_id = pf.id
        LEFT JOIN products pp ON pol.packaging_component_id = pp.id
        LEFT JOIN products pfg ON pfg.product_code = pol.product_type AND pfg.category = 'FINISHED_GOOD'
+       LEFT JOIN sa.products oil ON oil.id = pol.oil_id
        WHERE pol.production_order_id = $1 ORDER BY pol.line_number`,
       [order.id]
     )
@@ -289,6 +291,22 @@ router.get('/production-orders/:id', auth, async (req, res) => {
         [line.id]
       )
       line.components = comps.rows
+      // D14 Fragrance Library oil is stored on the line (oil_id + oil_qty_ml),
+      // NOT as a production_order_components row (D14.6: debited direct from
+      // sa.products at production start, never reserved). Surface it as a
+      // display-only component so the operator can see WHICH oil and how much —
+      // marked source='fragrance_library' so the UI can label it "debited at start".
+      if (line.oil_id && parseFloat(line.oil_qty_ml) > 0) {
+        line.components.unshift({
+          product_id: null,
+          product_code: line.oil_code,
+          product_name: line.oil_name,
+          source: 'fragrance_library',
+          quantity_required: parseFloat(line.oil_qty_ml),
+          unit: 'ml',
+          current_stock: line.oil_stock != null ? parseFloat(line.oil_stock) : null,
+        })
+      }
     }
     const ep = await query(
       `SELECT * FROM external_processing WHERE production_order_id = $1 ORDER BY sent_date DESC`,
