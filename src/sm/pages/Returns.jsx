@@ -50,12 +50,11 @@ export default function Returns() {
     }
     setSaving(true)
     try {
-      await axios.post('/api/stock/add', {
+      await axios.post('/api/stock/return', {
         product_id: form.product_id,
         quantity: parseFloat(form.quantity),
-        notes: form.notes ? `RETURN: ${form.notes}` : 'Return'
+        notes: form.notes || null
       }, api())
-      // Update transaction type to 'return' via adjust (workaround — direct add records as 'add')
       addToast('Return registered — stock updated')
       setShowModal(false)
       setForm({ product_id: '', quantity: '', notes: '' })

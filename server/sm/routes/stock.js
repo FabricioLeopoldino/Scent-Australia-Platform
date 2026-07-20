@@ -23,6 +23,21 @@ router.post('/stock/remove', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
+// A customer return puts finished goods back into stock. It is a positive
+// movement like 'add', but must be recorded as its OWN type so the Returns page
+// (which lists transactions of type='return') and the audit trail can tell a
+// return apart from a generic manual add. Previously the UI posted to /stock/add,
+// so returns were mislabelled 'add' and never appeared in their own list.
+router.post('/stock/return', auth, async (req, res) => {
+  try {
+    const { product_id, quantity, notes } = req.body
+    if (!product_id || !quantity || quantity <= 0) return res.status(400).json({ error: 'product_id and positive quantity required' })
+    const p = await adjustProductStock(product_id, quantity, 'return', notes ? `RETURN: ${notes}` : 'Return', req.user.id)
+    await auditLog(req.user.id, 'stock_return', 'product', p.id, `Return +${quantity} ${p.unit || ''} — ${p.name}`, { quantity, notes: notes || null })
+    res.json(p)
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
+})
+
 router.post('/stock/adjust', auth, async (req, res) => {
   try {
     const { product_id, new_stock, notes } = req.body

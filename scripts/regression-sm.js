@@ -251,6 +251,46 @@ async function main() {
     record('candle: receive-from-filling → line done', recv.status === 200 && lineRow.rows[0].candle_status === 'received_from_filling' && lineRow.rows[0].line_status === 'done');
     await api('DELETE', `/api/sm/production-orders/${cOrderId}?mode=cancel`).catch(() => {});
 
+    // ── Returns: a registered return must be recorded as type='return' (not 'add'),
+    //    so it shows in the Returns list and is distinguishable in the audit trail.
+    //    Regression for the fixed /stock/return path (the page used to post to
+    //    /stock/add, which hardcodes type='add' → returns never appeared in their
+    //    own list). Restores stock + deletes the row, no residue. ──
+    const retBefore = await stockOf(frag1);
+    const ret = await api('POST', '/api/sm/stock/return', { product_id: frag1, quantity: 5, notes: '__regression_return' });
+    const retAfter = await stockOf(frag1);
+    record('returns: /stock/return adds stock (+5)', ret.status === 200 && near(retAfter, retBefore + 5), `${retBefore}→${retAfter}`);
+    const retTx = await db.query(
+      `SELECT COUNT(*)::int n FROM transactions WHERE product_id = $1 AND type = 'return' AND notes LIKE '%__regression_return%'`, [frag1]
+    );
+    record('returns: recorded as type=return (not add)', retTx.rows[0].n === 1, `rows=${retTx.rows[0].n}`);
+    const retList = await api('GET', '/api/sm/transactions?type=return');
+    record('returns: shows in the Returns list (type=return filter)',
+      Array.isArray(retList.json) && retList.json.some((t) => /__regression_return/.test(t.notes || '')));
+    await db.query(`UPDATE products SET current_stock = $1 WHERE id = $2`, [retBefore, frag1]);
+    await db.query(`DELETE FROM transactions WHERE product_id = $1 AND notes LIKE '%__regression_return%'`, [frag1]);
+
+    // ── Draft-only edit guard: a production order can be edited ONLY while 'draft'
+    //    — once it leaves draft, its lines/reservations are locked. Fixture is
+    //    fully discarded afterwards. ──
+    const dOrder = await api('POST', '/api/sm/production-orders', {
+      order_type: 'STANDARD',
+      lines: [{ product_type: 'RD200_TEST', fragrance_id: frag1, oil_pct: 25, quantity: 1 }],
+    });
+    const dId = dOrder.json?.id;
+    const editDraft = await api('PUT', `/api/sm/production-orders/${dId}`, {
+      lines: [{ product_type: 'RD200_TEST', fragrance_id: frag1, oil_pct: 25, quantity: 2 }],
+    });
+    record('draft-edit: a draft order CAN be edited', editDraft.status === 200, `status=${editDraft.status}`);
+    await api('PUT', `/api/sm/production-orders/${dId}/status`, { status: 'confirmed' });
+    const editLocked = await api('PUT', `/api/sm/production-orders/${dId}`, {
+      lines: [{ product_type: 'RD200_TEST', fragrance_id: frag1, oil_pct: 25, quantity: 3 }],
+    });
+    record('draft-edit: a non-draft order is refused (400)',
+      editLocked.status === 400 && /Only draft orders/.test(editLocked.json?.error || ''), `status=${editLocked.status}`);
+    await api('DELETE', `/api/sm/production-orders/${dId}?mode=cancel`).catch(() => {});
+    await api('DELETE', `/api/sm/production-orders/${dId}?mode=discard`).catch(() => {});
+
     // ── Hardening (Phase 3b) ──
     const upload = await api('PATCH', `/api/sm/products/${frag1}/image`, { image_data: 'data:image/png;base64,AAAA' });
     record('hardening: upload endpoint 403 behind FEATURE_UPLOADS', upload.status === 403);
