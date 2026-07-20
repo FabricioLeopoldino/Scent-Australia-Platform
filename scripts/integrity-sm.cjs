@@ -25,7 +25,16 @@ const check = async (name, sql, pool = sm, expectZero = true) => {
     `SELECT COUNT(*) n FROM platform.users pu JOIN sm.users su ON su.id = pu.id WHERE su.name <> pu.name`, plat);
 
   // ── products ──
-  await check('no negative stock', `SELECT COUNT(*) n FROM products WHERE current_stock < 0`);
+  // Negative stock is a hard invariant for raw materials / components (production
+  // guards them). MUSE finished-good retail variants are EXEMPT: a Shopify sale
+  // already shipped may legitimately drive them negative (D13 allow-negative,
+  // 2026-07-20) — that is a permitted "investigate the physical count" state, not
+  // a data-integrity failure. Identify a MUSE finished-good by its master's segment.
+  await check('no negative stock (raw materials / components; MUSE retail finished goods exempt)',
+    `SELECT COUNT(*) n FROM products v
+     WHERE v.current_stock < 0
+       AND NOT (v.master_product_id IS NOT NULL
+                AND EXISTS (SELECT 1 FROM products m WHERE m.id = v.master_product_id AND m.segment = 'MUSE'))`);
   await check('no duplicate product_code (active)', `SELECT COUNT(*) n FROM (SELECT product_code FROM products WHERE COALESCE(archived,false)=false GROUP BY product_code HAVING COUNT(*)>1) d`);
   await check('no duplicate sku (active, non-null)', `SELECT COUNT(*) n FROM (SELECT sku FROM products WHERE sku IS NOT NULL AND COALESCE(archived,false)=false GROUP BY sku HAVING COUNT(*)>1) d`);
   await check('variants: master exists & is_master', `SELECT COUNT(*) n FROM products v WHERE v.master_product_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM products m WHERE m.id = v.master_product_id AND m.is_master = true)`);
