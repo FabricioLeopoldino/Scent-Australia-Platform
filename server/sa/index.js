@@ -52,6 +52,20 @@ const storage = multer.diskStorage({
   }
 });
 
+// D14.7 — Transaction types that count as OIL DEMAND for replenishment planning.
+// Retail streams (remove/shopify_sale/sale) PLUS the three Fragrance-Library debit
+// types: when SM/MUSE production draws oil from the shared pool, that oil really
+// left SA's building and must pull SA reordering. Reversal types
+// (muse_reversal/sm_std_reversal/sm_major_reversal) are deliberately EXCLUDED —
+// they credit oil back; a reversed production conservatively overstates demand
+// only until its debit row ages out of the 30-day window (buy-safe, matches the
+// DP Conservative scenario). Single source of truth so the replenishment query
+// and the per-product detail query can never drift apart.
+const DEMAND_TX_TYPES = [
+  'remove', 'shopify_sale', 'sale',
+  'muse_production', 'sm_std_production', 'sm_major_production',
+];
+
 const ALLOWED_MIME_TYPES = new Set([
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
   'application/vnd.ms-excel',                                           // .xls
@@ -4002,11 +4016,11 @@ router.get('/products/:id/transactions', async (req, res) => {
         COUNT(*) AS transactions
       FROM transactions
       WHERE product_id = $1
-        AND type IN ('remove', 'shopify_sale', 'sale')
+        AND type = ANY($3)
         AND (created_at::timestamptz AT TIME ZONE 'Australia/Sydney')::date >= ((NOW() AT TIME ZONE 'Australia/Sydney') - make_interval(days => $2))::date
       GROUP BY DATE(created_at::timestamptz AT TIME ZONE 'Australia/Sydney'), type
       ORDER BY date ASC
-    `, [id, days]);
+    `, [id, days, DEMAND_TX_TYPES]);
 
     // Get product unit to know if we need to convert
     const prodResult = await pool.query(
@@ -4018,7 +4032,12 @@ router.get('/products/:id/transactions', async (req, res) => {
     const dailySales = result.rows.map(r => ({
       date: new Date(r.date).toLocaleDateString('en-AU', { day: '2-digit', month: 'short' }),
       volume_l: parseFloat((parseFloat(r.volume_raw) / R).toFixed(3)),
-      type: r.type === 'shopify_sale' ? 'Shopify' : r.type === 'remove' ? 'Manual' : r.type,
+      type: r.type === 'shopify_sale' ? 'Shopify'
+          : r.type === 'remove' ? 'Manual'
+          : r.type === 'muse_production' ? 'MUSE prod.'
+          : r.type === 'sm_std_production' ? 'SM Std prod.'
+          : r.type === 'sm_major_production' ? 'SM Major prod.'
+          : r.type,
       transactions: parseInt(r.transactions)
     }));
 
@@ -4128,11 +4147,11 @@ router.get('/dashboard/replenishment', async (req, res) => {
           DATE(created_at::timestamptz AT TIME ZONE 'Australia/Sydney') AS sale_date,
           SUM(quantity) AS daily_volume
         FROM transactions
-        WHERE type IN ('remove', 'shopify_sale', 'sale')
+        WHERE type = ANY($1)
           AND (created_at::timestamptz AT TIME ZONE 'Australia/Sydney')::date >= (NOW() AT TIME ZONE 'Australia/Sydney')::date - INTERVAL '30 days'
         GROUP BY product_id, DATE(created_at::timestamptz AT TIME ZONE 'Australia/Sydney')
         ORDER BY product_id, sale_date
-      `),
+      `, [DEMAND_TX_TYPES]),
       // Latest forecast per product
       pool.query(`
         SELECT DISTINCT ON (product_code)

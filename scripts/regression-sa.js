@@ -244,6 +244,42 @@ async function testDemandPlanningConsistency() {
   record('demand-planning: realStock consistency (25 sampled)', checked > 0 && mismatches === 0, `mismatches=${mismatches}`);
 }
 
+// ── D14.7: SM/MUSE oil draw from the shared pool must register as SA demand ──
+// The Fragrance-Library debit types (sm_std_production / muse_production / …) are
+// real oil leaving SA's building, so they now feed replenishment. Their reversal
+// counterparts must NOT — they credit oil back, and counting both would double-
+// count. Proven on a disposable fixture oil via the per-product detail endpoint,
+// which shares DEMAND_TX_TYPES with the headline replenishment query.
+async function testDemandCountsFragranceConsumption() {
+  const create = await api('POST', '/api/sa/products', {
+    name: '[regression] D14.7 DP Oil', category: 'OILS', unit: 'mL', currentStock: 0,
+  });
+  const pid = create.json?.id;
+  if (!pid) { record('D14.7 demand: fixture oil created', false, `status=${create.status}`); return; }
+
+  // Two dated-now movements on the SAME oil: a 250 mL production debit (demand)
+  // and a 100 mL reversal (not demand). No currentStock touch → no trigger rows.
+  const insTx = (type, qty) => db.query(
+    `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes)
+     VALUES ($1, $2, $3, 'OILS', $4, $5, 'mL', 0, '[regression] D14.7 dp')`,
+    [pid, create.json?.productCode || pid, '[regression] D14.7 DP Oil', type, qty]
+  );
+  await insTx('sm_std_production', 250);
+  await insTx('sm_std_reversal', 100);
+
+  const detail = await api('GET', `/api/sa/products/${pid}/transactions?days=30`);
+  const rows = detail.json?.dailySales || [];
+  const debit = rows.find((r) => r.type === 'SM Std prod.');
+  record('D14.7 demand: production debit counts as demand (250 mL → 0.25 L)',
+    !!debit && near(debit.volume_l, 0.25), `row=${JSON.stringify(debit)}`);
+  record('D14.7 demand: reversal is excluded from demand (not double-counted)',
+    rows.every((r) => !/reversal/i.test(r.type)) &&
+    !rows.some((r) => near(r.volume_l, 0.1)), `types=${rows.map((r) => r.type).join(',')}`);
+
+  await db.query(`DELETE FROM transactions WHERE product_id = $1`, [pid]);
+  await db.query(`DELETE FROM products WHERE id = $1`, [pid]);
+}
+
 // ── Webhook replay (the critical path) ────────────────────────────────────
 function sign(body) {
   return crypto.createHmac('sha256', WEBHOOK_SECRET).update(Buffer.from(body)).digest('base64');
@@ -266,6 +302,20 @@ async function testWebhooks() {
     return new Map(r.rows.map((x) => [x.id, String(x.s)]));
   };
 
+  // The webhook handler responds 200 early and commits asynchronously; against a
+  // remote Neon a fixed sleep races the commit. Poll the expected end-state
+  // (bounded) instead of guessing a duration — deterministic regardless of latency.
+  const waitUntil = async (fn, ms = 20000, gap = 750) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (await fn()) return true;
+      await new Promise((r) => setTimeout(r, gap));
+    }
+    return false;
+  };
+  const stockOf = async (id) =>
+    parseFloat((await db.query(`SELECT "currentStock" FROM products WHERE id = $1`, [id])).rows[0].currentStock);
+
   const oil = await db.query(
     `SELECT id, name, "currentStock", "shopifySkus"->>'SA_CA' AS sku
      FROM products WHERE category = 'OILS' AND "shopifySkus" ? 'SA_CA' LIMIT 1`
@@ -285,20 +335,23 @@ async function testWebhooks() {
 
   // (b) valid delivery → oil debited 400 mL (SA_CA) + BOM components
   const ok = await postWebhook('fulfillments/create', payload);
-  await new Promise((r) => setTimeout(r, 4000)); // handler responds 200 early, then commits
-  const afterCreate = parseFloat(
-    (await db.query(`SELECT "currentStock" FROM products WHERE id = $1`, [prodId])).rows[0].currentStock
-  );
+  // Wait for the async commit to land (debit applied AND sale row written).
+  await waitUntil(async () => {
+    const s = await stockOf(prodId);
+    const n = (await db.query(`SELECT COUNT(*) FROM transactions WHERE shopify_order_id = '#TESTREG1' AND type = 'shopify_sale'`)).rows[0].count;
+    return near(s, before - 400) && parseInt(n) >= 1;
+  });
+  const afterCreate = await stockOf(prodId);
   const saleTx = await db.query(`SELECT COUNT(*) FROM transactions WHERE shopify_order_id = '#TESTREG1' AND type = 'shopify_sale'`);
   record('webhook: fulfillment debits oil −400 mL', ok.status === 200 && near(afterCreate, before - 400), `stock ${before}→${afterCreate}`);
   record('webhook: shopify_sale transactions written', parseInt(saleTx.rows[0].count) >= 1, `rows=${saleTx.rows[0].count}`);
 
-  // (c) redelivery → idempotent (no double debit)
+  // (c) redelivery → idempotent (no double debit). Can't poll for "nothing
+  // happens"; give a hypothetical bad double-debit time to appear, then assert
+  // it did not.
   const again = await postWebhook('fulfillments/create', payload);
-  await new Promise((r) => setTimeout(r, 2500));
-  const afterDup = parseFloat(
-    (await db.query(`SELECT "currentStock" FROM products WHERE id = $1`, [prodId])).rows[0].currentStock
-  );
+  await new Promise((r) => setTimeout(r, 3000));
+  const afterDup = await stockOf(prodId);
   const saleTx2 = await db.query(`SELECT COUNT(*) FROM transactions WHERE shopify_order_id = '#TESTREG1' AND type = 'shopify_sale'`);
   record(
     'webhook: redelivery is a no-op (3-layer guard)',
@@ -307,12 +360,17 @@ async function testWebhooks() {
 
   // (d) fulfillments/update cancelled → symmetric reversal, ALL stocks restored
   const cancel = await postWebhook('fulfillments/update', { ...payload, status: 'cancelled' });
-  await new Promise((r) => setTimeout(r, 4000));
+  // Poll until every product is back to its pre-test value (reversal committed).
+  const restored = await waitUntil(async () => {
+    const snap = await snapAll();
+    for (const [id, s] of snapBefore) if (snap.get(id) !== s) return false;
+    return true;
+  });
   const snapAfter = await snapAll();
   let diffs = 0;
   for (const [id, s] of snapBefore) if (snapAfter.get(id) !== s) diffs++;
   const revTx = await db.query(`SELECT COUNT(*) FROM transactions WHERE shopify_order_id = '#TESTREG1' AND type = 'shopify_reversal'`);
-  record('webhook: cancellation reversal restores EVERY product exactly', cancel.status === 200 && diffs === 0, `stock diffs=${diffs}`);
+  record('webhook: cancellation reversal restores EVERY product exactly', cancel.status === 200 && restored && diffs === 0, `stock diffs=${diffs}`);
   record('webhook: shopify_reversal transactions written', parseInt(revTx.rows[0].count) >= 1, `rows=${revTx.rows[0].count}`);
 }
 
@@ -453,6 +511,7 @@ async function main() {
     await testScentedGroup();
     await testTechStock();
     await testDemandPlanningConsistency();
+    await testDemandCountsFragranceConsumption();
     await testWebhooks();
     await testExclusivity();
     await testOilUsageReportMath();
