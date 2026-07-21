@@ -188,7 +188,14 @@ async function startProductionInternal(orderId, userId, targetStatus = 'in_produ
       )
       for (const comp of clientComps.rows) {
         await tq(`SELECT id FROM client_stock WHERE id = $1 FOR UPDATE`, [comp.client_stock_id])
-        await tq(`UPDATE client_stock SET quantity = GREATEST(0, quantity - $1) WHERE id = $2`, [comp.total_qty, comp.client_stock_id])
+        // The client's reserved stock physically went into this production run — record the
+        // exact debit even if it drives the balance negative (short on their own stock), rather
+        // than clamping to zero and silently discarding the shortfall. Mirrors the allow-and-log
+        // philosophy already used for oil (Fragrance Library) and MUSE retail fulfillment.
+        const csUpd = await tq(`UPDATE client_stock SET quantity = quantity - $1 WHERE id = $2 RETURNING quantity`, [comp.total_qty, comp.client_stock_id])
+        if (parseFloat(csUpd.rows[0]?.quantity) < 0) {
+          console.warn(`[production] client_stock ${comp.client_stock_id} short — now ${csUpd.rows[0].quantity} (recorded; investigate physical count)`)
+        }
         await tq(
           `INSERT INTO client_stock_transactions (client_stock_id, client_id, type, quantity, unit, notes, user_id) VALUES ($1,$2,'remove',$3,$4,$5,$6)`,
           [comp.client_stock_id, comp.cs_client_id, comp.total_qty, comp.unit, `Used in ${order.rows[0].order_number}`, userId]
@@ -205,7 +212,12 @@ async function startProductionInternal(orderId, userId, targetStatus = 'in_produ
       [orderId]
     )
     for (const ll of labelLines.rows) {
-      await tq(`UPDATE client_labels SET quantity = GREATEST(0, quantity - $1) WHERE id = $2`, [ll.quantity, ll.label_client_label_id])
+      // Same allow-and-log philosophy as client_stock above — the labels were physically
+      // consumed; record the real debit rather than clamping the shortfall away.
+      const clUpd = await tq(`UPDATE client_labels SET quantity = quantity - $1 WHERE id = $2 RETURNING quantity`, [ll.quantity, ll.label_client_label_id])
+      if (parseFloat(clUpd.rows[0]?.quantity) < 0) {
+        console.warn(`[production] client_labels ${ll.label_client_label_id} short — now ${clUpd.rows[0].quantity} (recorded; investigate physical count)`)
+      }
       await tq(
         `INSERT INTO client_label_transactions (client_label_id, client_id, type, quantity, production_order_id, notes, user_id) VALUES ($1,$2,'used',$3,$4,'Used in production',$5)`,
         [ll.label_client_label_id, ll.client_id, ll.quantity, orderId, userId]
@@ -340,7 +352,11 @@ router.post('/manufacturing/:id/complete', auth, async (req, res) => {
               )
             } else if (delta < 0) {
               const debitQty = Math.abs(delta)
-              await tq(`UPDATE client_labels SET quantity = GREATEST(0, quantity - $1) WHERE id = $2`, [debitQty, label_client_label_id])
+              // Same allow-and-log philosophy — labels lost/damaged already happened; record it.
+              const wasteUpd = await tq(`UPDATE client_labels SET quantity = quantity - $1 WHERE id = $2 RETURNING quantity`, [debitQty, label_client_label_id])
+              if (parseFloat(wasteUpd.rows[0]?.quantity) < 0) {
+                console.warn(`[production] client_labels ${label_client_label_id} short — now ${wasteUpd.rows[0].quantity} (waste recorded; investigate physical count)`)
+              }
               await tq(
                 `INSERT INTO client_label_transactions (client_label_id, client_id, type, quantity, production_order_id, notes, user_id) VALUES ($1,$2,'waste',$3,$4,'Labels lost or damaged in production',$5)`,
                 [label_client_label_id, client_id, debitQty, parseInt(req.params.id), req.user.id]
