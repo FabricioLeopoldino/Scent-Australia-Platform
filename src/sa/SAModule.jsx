@@ -11,7 +11,6 @@ import ProductReturns from './pages/ProductReturns';
 import ColdRoomMap from './pages/ColdRoomMap';
 import BOMViewer from './pages/BOMViewer';
 import DiffuserMachineBOM from './pages/DiffuserMachineBOM';
-import Attachments from './pages/Attachments';
 import ReplenishmentDashboard from './pages/ReplenishmentDashboard';
 import RawMaterials from './pages/RawMaterials';
 import Formulas from './pages/Formulas';
@@ -145,7 +144,6 @@ function SAContent({ user, onSwitchModule, onLogout }) {
           <Route path="/bom"><BOMViewer user={user} /></Route>
           <Route path="/diffuser-bom"><DiffuserMachineBOM user={user} /></Route>
           <Route path="/sku-mapping">{['admin', 'root'].includes(user?.role) ? <SkuMapping user={user} /> : null}</Route>
-          <Route path="/attachments"><Attachments user={user} /></Route>
           <Route path="/history"><TransactionHistory user={user} /></Route>
           <Route path="/activity">{['admin', 'root'].includes(user?.role) ? <ActivityLog user={user} /> : null}</Route>
           <Route path="/raw-materials"><RawMaterials user={user} /></Route>
