@@ -209,7 +209,9 @@ export default function BOMViewer({ user }) {
   };
 
   const currentBOM = bom[selectedVariant] || [];
-  const isAdmin = ['admin', 'root'].includes(user?.role);
+  // Oil BOM edits drive raw-material debits — backend requires root (not admin).
+  // Was showing admin an enabled Add/Edit/Remove that 403'd on submit.
+  const isAdmin = user?.role === 'root';
   // Ensure selectedVariant stays within filtered set when subcategory changes
   // (handled in filter button onClick — selectedVariant auto-updates)
 

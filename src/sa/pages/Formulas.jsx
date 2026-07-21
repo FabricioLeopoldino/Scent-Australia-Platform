@@ -75,6 +75,9 @@ export default function Formulas({ user }) {
   const handleSave = async () => {
     if (!form.tag || !form.product_code || !form.name || !form.base_product_code || !form.oil_product_code)
       return showToast('Fill all required fields', 'error');
+    const pctSum = parseFloat(form.base_percentage || 0) + parseFloat(form.oil_percentage || 0);
+    if (Math.abs(pctSum - 100) > 0.01)
+      return showToast(`Base + Oil must equal 100% (currently ${pctSum}%)`, 'error');
     const payload = {
       ...form,
       shopify_skus: form.shopify_skus ? form.shopify_skus.split(',').map(s => s.trim()).filter(Boolean) : [],
@@ -169,7 +172,9 @@ export default function Formulas({ user }) {
     f.tag.toLowerCase().includes(search.toLowerCase())
   );
 
-  const canEdit = ['admin', 'root'].includes(user?.role);
+  // Formula create/edit/delete drives raw-material debit %s — backend requires
+  // root (not admin). Was showing admin an enabled form that 403'd on submit.
+  const canEdit = user?.role === 'root';
 
   return (
     <div style={{ padding: '24px 32px', maxWidth: 1400, margin: '0 auto' }}>

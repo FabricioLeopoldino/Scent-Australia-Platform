@@ -3278,6 +3278,11 @@ router.post('/formulas', async (req, res) => {
             oil_product_code, oil_percentage, userId, publishToShopify } = req.body;
     if (!tag || !product_code || !name || !base_product_code || !base_percentage || !oil_product_code || !oil_percentage)
       return res.status(400).json({ error: 'Missing required fields' });
+    // Base%+Oil% drive the exact mL split debited on every Shopify sale of this
+    // formula (webhook math) — a mismatch silently over/under-debits raw stock
+    // forever. The UI warning used to be informational-only; enforce it here too.
+    if (Math.abs(parseFloat(base_percentage) + parseFloat(oil_percentage) - 100) > 0.01)
+      return res.status(400).json({ error: 'Base % + Oil % must equal 100' });
 
     const result = await pool.query(
       `INSERT INTO formulas (tag, product_code, name, shopify_skus, base_product_code, base_percentage, oil_product_code, oil_percentage)
@@ -3316,6 +3321,9 @@ router.put('/formulas/:id', async (req, res) => {
     const existing = await pool.query('SELECT * FROM formulas WHERE id = $1', [req.params.id]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'Formula not found' });
     const old = existing.rows[0];
+
+    if (Math.abs(parseFloat(base_percentage) + parseFloat(oil_percentage) - 100) > 0.01)
+      return res.status(400).json({ error: 'Base % + Oil % must equal 100' });
 
     const result = await pool.query(
       `UPDATE formulas SET tag=$1, product_code=$2, name=$3, shopify_skus=$4,

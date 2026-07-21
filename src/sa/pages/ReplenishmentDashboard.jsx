@@ -528,7 +528,9 @@ function SupplierModal({ suppliers, onClose, onSaved }) {
   );
 }
 
-export default function ReplenishmentDashboard() {
+export default function ReplenishmentDashboard({ user }) {
+  const isAdmin = ['admin', 'root'].includes(user?.role);
+  const isRoot = user?.role === 'root';
   const showToast = useToast();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -767,10 +769,12 @@ export default function ReplenishmentDashboard() {
             {meta.calculatedAt && <span style={{ marginLeft: 12, color: '#94a3b8' }}>Updated: {new Date(meta.calculatedAt).toLocaleTimeString()}</span>}
           </p>
         </div>
-        <button onClick={() => setShowSupplierModal(true)}
-          style={{ padding: '10px 20px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: 8 }}>
-          🏭 Manage Suppliers & Lead Times
-        </button>
+        {isAdmin && (
+          <button onClick={() => setShowSupplierModal(true)}
+            style={{ padding: '10px 20px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: 8 }}>
+            🏭 Manage Suppliers & Lead Times
+          </button>
+        )}
       </div>
 
       {/* ── Supplier pills ── */}
@@ -782,7 +786,9 @@ export default function ReplenishmentDashboard() {
               <span style={{ fontWeight: 700, color: s.lead_time > 30 ? '#d97706' : '#16a34a' }}>{s.lead_time}d</span>
             </div>
           ))}
-          <button onClick={() => setShowSupplierModal(true)} style={{ background: 'none', border: '1px dashed rgba(255,255,255,0.12)', borderRadius: 20, padding: '4px 14px', fontSize: 12, color: 'rgba(232,234,242,0.3)', cursor: 'pointer' }}>+ Edit</button>
+          {isAdmin && (
+            <button onClick={() => setShowSupplierModal(true)} style={{ background: 'none', border: '1px dashed rgba(255,255,255,0.12)', borderRadius: 20, padding: '4px 14px', fontSize: 12, color: 'rgba(232,234,242,0.3)', cursor: 'pointer' }}>+ Edit</button>
+          )}
         </div>
       )}
 
@@ -803,19 +809,25 @@ export default function ReplenishmentDashboard() {
 
       {/* ── Import panel ── */}
       <div style={{ background: 'rgba(14,14,26,0.7)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, padding: 20, marginBottom: 20, display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end' }}>
-        <div>
-          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 6 }}>Your name (Imported by)</label>
-          <input type="text" value={importedBy} onChange={e => setImportedBy(e.target.value)} placeholder="e.g. John Smith"
-            style={{ border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, padding: '8px 12px', fontSize: 13, width: 200, background: 'rgba(255,255,255,0.06)', color: '#e2e8f0' }} />
-        </div>
+        {isRoot && (
+          <div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 6 }}>Your name (Imported by)</label>
+            <input type="text" value={importedBy} onChange={e => setImportedBy(e.target.value)} placeholder="e.g. John Smith"
+              style={{ border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, padding: '8px 12px', fontSize: 13, width: 200, background: 'rgba(255,255,255,0.06)', color: '#e2e8f0' }} />
+          </div>
+        )}
         <div>
           <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 6 }}>Salesforce Forecast (.xlsx)</label>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => fileInputRef.current?.click()} disabled={importing}
-              style={{ padding: '9px 18px', background: '#2563eb', color: 'white', border: 'none', borderRadius: 8, cursor: importing ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600, opacity: importing ? 0.7 : 1 }}>
-              {importing ? '⏳ Importing...' : '⬆️ Import Forecast'}
-            </button>
-            <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleFileSelect} style={{ display: 'none' }} />
+            {isRoot && (
+              <>
+                <button onClick={() => fileInputRef.current?.click()} disabled={importing}
+                  style={{ padding: '9px 18px', background: '#2563eb', color: 'white', border: 'none', borderRadius: 8, cursor: importing ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600, opacity: importing ? 0.7 : 1 }}>
+                  {importing ? '⏳ Importing...' : '⬆️ Import Forecast'}
+                </button>
+                <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleFileSelect} style={{ display: 'none' }} />
+              </>
+            )}
             <button onClick={handleExportPrevious}
               style={{ padding: '9px 18px', background: 'rgba(255,255,255,0.08)', color: '#cbd5e1', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
               ⬇️ Export Previous

@@ -181,7 +181,9 @@ export default function DiffuserMachineBOM({ user }) {
   };
 
   const currentBOM = bom[selectedMachine] || [];
-  const isAdmin = ['admin', 'root'].includes(user?.role);
+  // Diffuser BOM edits drive spare-part debits — backend requires root (not admin).
+  // Was showing admin an enabled Add/Edit/Remove that 403'd on submit.
+  const isAdmin = user?.role === 'root';
 
   if (loading) {
     return (

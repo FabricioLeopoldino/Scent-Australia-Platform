@@ -137,7 +137,7 @@ function SAContent({ user, onSwitchModule, onLogout }) {
           <Route path="/returns"><ProductReturns user={user} /></Route>
           <Route path="/cold-room-map"><ColdRoomMap user={user} /></Route>
           <Route path="/stock"><StockManagement user={user} /></Route>
-          <Route path="/replenishment">{user?.role !== 'user' ? <ReplenishmentDashboard user={user} /> : null}</Route>
+          <Route path="/replenishment">{!['user', 'technician'].includes(user?.role) ? <ReplenishmentDashboard user={user} /> : null}</Route>
           <Route path="/formulas"><Formulas user={user} /></Route>
           <Route path="/scented-products"><ScentedProducts user={user} /></Route>
           <Route path="/tech-stock"><TechStock user={user} /></Route>
