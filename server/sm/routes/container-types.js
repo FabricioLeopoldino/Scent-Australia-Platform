@@ -2,7 +2,7 @@ const express = require('express')
 const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query } = require('../db')
-const { auth, auditLog } = require('../auth')
+const { auth, auditLog, requireRole } = require('../auth')
 
 // List all container types (active by default)
 router.get('/container-types', auth, async (req, res) => {
@@ -24,7 +24,7 @@ router.get('/container-types/:id', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.post('/container-types', auth, async (req, res) => {
+router.post('/container-types', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const { name, code, is_candle, is_pure_oil, default_unit, notes } = req.body
     if (!name?.trim() || !code?.trim()) return res.status(400).json({ error: 'name and code required' })
@@ -41,7 +41,7 @@ router.post('/container-types', auth, async (req, res) => {
   }
 })
 
-router.put('/container-types/:id', auth, async (req, res) => {
+router.put('/container-types/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const { name, code, is_candle, is_pure_oil, default_unit, notes } = req.body
     const result = await query(
@@ -65,7 +65,7 @@ router.put('/container-types/:id', auth, async (req, res) => {
 })
 
 // Restore archived container type
-router.post('/container-types/:id/restore', auth, async (req, res) => {
+router.post('/container-types/:id/restore', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const result = await query(
       `UPDATE container_types SET archived = false WHERE id = $1 RETURNING *`,
@@ -79,7 +79,7 @@ router.post('/container-types/:id/restore', auth, async (req, res) => {
 
 // DELETE — soft (archive) by default, hard delete with ?permanent=1
 // Blocks if any active master uses it. Permanent delete also requires no archived references.
-router.delete('/container-types/:id', auth, async (req, res) => {
+router.delete('/container-types/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const permanent = req.query.permanent === '1'
 

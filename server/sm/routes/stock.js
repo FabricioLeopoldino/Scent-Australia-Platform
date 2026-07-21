@@ -64,7 +64,7 @@ router.get('/purchase-orders', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.post('/products/:id/incoming', auth, async (req, res) => {
+router.post('/products/:id/incoming', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const { order_number, quantity, supplier, estimated_delivery_date, notes } = req.body
     if (!quantity || quantity <= 0) return res.status(400).json({ error: 'Valid quantity required' })
@@ -142,7 +142,7 @@ router.post('/purchase-orders/:poId/receive', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.delete('/purchase-orders/:poId', auth, async (req, res) => {
+router.delete('/purchase-orders/:poId', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const mode = req.query.mode || 'cancel'
     const po = await query(`SELECT po.*, p.name as product_name FROM purchase_orders po JOIN products p ON po.product_id = p.id WHERE po.id = $1`, [req.params.poId])

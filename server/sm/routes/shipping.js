@@ -2,7 +2,7 @@ const express = require('express')
 const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query } = require('../db')
-const { auth, auditLog } = require('../auth')
+const { auth, auditLog, requireRole } = require('../auth')
 const { easypostRequest } = require('../services/shipping-service')
 
 router.get('/production-orders/:id/shipping', auth, async (req, res) => {
@@ -44,7 +44,7 @@ router.post('/shipping/rates', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.post('/shipping/buy', auth, async (req, res) => {
+router.post('/shipping/buy', auth, requireRole('admin', 'root'), async (req, res) => {
   const { production_order_id, shipment_id, rate_id, carrier, service, rate_amount, currency } = req.body
   if (!production_order_id || !shipment_id || !rate_id) return res.status(400).json({ error: 'Missing required fields' })
   try {
@@ -77,7 +77,7 @@ router.post('/shipping/manual', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.delete('/shipping/:id', auth, async (req, res) => {
+router.delete('/shipping/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const existing = await query(`SELECT * FROM shipping_labels WHERE id = $1`, [req.params.id])
     if (!existing.rows[0]) return res.status(404).json({ error: 'Not found' })

@@ -2,7 +2,7 @@ const express = require('express')
 const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query, withTransaction } = require('../db')
-const { auth, auditLog } = require('../auth')
+const { auth, auditLog, requireRole } = require('../auth')
 
 // Slugify a string for use in product codes
 function slugify(s) {
@@ -150,7 +150,7 @@ router.get('/masters/:id', auth, async (req, res) => {
 })
 
 // POST /api/masters — create master + (optional) generate variants
-router.post('/masters', auth, async (req, res) => {
+router.post('/masters', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const {
       name, product_code, segment, client_id,
@@ -283,7 +283,7 @@ router.post('/masters', auth, async (req, res) => {
 
 // PUT /api/masters/:id — update master (name, volume, oil_pct, container_type, notes)
 // product_code and segment are immutable after creation
-router.put('/masters/:id', auth, async (req, res) => {
+router.put('/masters/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const { name, volume_ml, volume_unit, default_oil_pct, container_name, is_pure_oil, is_candle, notes, image_data, price } = req.body
     const result = await query(
@@ -314,7 +314,7 @@ router.put('/masters/:id', auth, async (req, res) => {
 })
 
 // DELETE /api/masters/:id — soft archive (preserves variants/stock/history)
-router.delete('/masters/:id', auth, async (req, res) => {
+router.delete('/masters/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const result = await query(
       `UPDATE products SET archived = true WHERE id = $1 AND is_master = true RETURNING name, segment`,
@@ -327,7 +327,7 @@ router.delete('/masters/:id', auth, async (req, res) => {
 })
 
 // POST /api/masters/:id/fragrances — add fragrance, auto-create variant if MUSE
-router.post('/masters/:id/fragrances', auth, async (req, res) => {
+router.post('/masters/:id/fragrances', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const { fragrance_id } = req.body
     if (!fragrance_id) return res.status(400).json({ error: 'fragrance_id required' })
@@ -378,7 +378,7 @@ router.post('/masters/:id/fragrances', auth, async (req, res) => {
 })
 
 // DELETE /api/masters/:id/fragrances/:fragId — remove fragrance, archive variant (preserves stock history)
-router.delete('/masters/:id/fragrances/:fragId', auth, async (req, res) => {
+router.delete('/masters/:id/fragrances/:fragId', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const masterRes = await query(`SELECT * FROM products WHERE id = $1 AND is_master = true`, [req.params.id])
     if (!masterRes.rows[0]) return res.status(404).json({ error: 'Master not found' })

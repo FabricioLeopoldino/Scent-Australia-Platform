@@ -2,7 +2,7 @@ const express = require('express')
 const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query } = require('../db')
-const { auth, auditLog, requireUploads } = require('../auth')
+const { auth, auditLog, requireUploads, requireRole } = require('../auth')
 
 router.get('/clients', auth, async (req, res) => {
   try {
@@ -24,7 +24,7 @@ router.get('/clients/:id', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.post('/clients', auth, async (req, res) => {
+router.post('/clients', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const { shopify_customer_id, name, email, phone, address, is_large_client, notes } = req.body
     if (!name?.trim()) return res.status(400).json({ error: 'Name required' })
@@ -41,7 +41,7 @@ router.post('/clients', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.put('/clients/:id', auth, async (req, res) => {
+router.put('/clients/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const { name, email, phone, address, is_large_client, notes, shopify_customer_id } = req.body
     if (name?.trim()) {
@@ -117,14 +117,14 @@ router.put('/clients/:clientId/labels/:labelId/obsolete', auth, async (req, res)
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.delete('/clients/:id', auth, async (req, res) => {
+router.delete('/clients/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     await query(`DELETE FROM clients WHERE id = $1`, [req.params.id])
     res.json({ success: true })
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.delete('/clients/:clientId/labels/:labelId', auth, async (req, res) => {
+router.delete('/clients/:clientId/labels/:labelId', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     await query(`DELETE FROM client_labels WHERE id = $1 AND client_id = $2`, [req.params.labelId, req.params.clientId])
     res.json({ ok: true })
@@ -173,7 +173,7 @@ router.get('/client-products/:id/bom', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.post('/client-products/:id/bom', auth, async (req, res) => {
+router.post('/client-products/:id/bom', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const { client_stock_id, general_product_id, quantity_per_unit, unit, notes } = req.body
     if (!client_stock_id && !general_product_id) return res.status(400).json({ error: 'client_stock_id or general_product_id required' })
@@ -186,7 +186,7 @@ router.post('/client-products/:id/bom', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.delete('/client-products/:id/bom/:entryId', auth, async (req, res) => {
+router.delete('/client-products/:id/bom/:entryId', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     await query(`DELETE FROM client_product_bom WHERE id = $1 AND product_id = $2`, [req.params.entryId, req.params.id])
     res.json({ ok: true })
@@ -326,14 +326,14 @@ router.get('/client-stock/:id/history', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.delete('/client-stock/:id', auth, async (req, res) => {
+router.delete('/client-stock/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     await query(`DELETE FROM client_stock WHERE id = $1`, [req.params.id])
     res.json({ ok: true })
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.put('/client-stock/:id', auth, async (req, res) => {
+router.put('/client-stock/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const { product_code, product_name, category, unit, barcode, notes } = req.body
     if (!product_code || !product_name) return res.status(400).json({ error: 'product_code and product_name required' })

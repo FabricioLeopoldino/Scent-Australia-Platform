@@ -2,7 +2,7 @@ const express = require('express')
 const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query } = require('../db')
-const { auth, auditLog } = require('../auth')
+const { auth, auditLog, requireRole } = require('../auth')
 const { getMasterAttrs } = require('../services/bom-builder')
 
 async function getBomCurrentVersion(productType) {
@@ -34,7 +34,7 @@ router.get('/bom-rules', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.put('/bom-rules/:id', auth, async (req, res) => {
+router.put('/bom-rules/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const { quantity_per_unit } = req.body
     if (quantity_per_unit == null || isNaN(parseFloat(quantity_per_unit))) return res.status(400).json({ error: 'Invalid quantity' })
@@ -235,7 +235,7 @@ router.get('/product-bom/:productType/history', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.post('/product-bom/:productType/rollback', auth, async (req, res) => {
+router.post('/product-bom/:productType/rollback', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const { version } = req.body
     if (!version) return res.status(400).json({ error: 'version required' })
@@ -264,7 +264,7 @@ router.post('/product-bom/:productType/rollback', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.post('/product-bom', auth, async (req, res) => {
+router.post('/product-bom', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const { product_type, component_product_id, client_stock_id, quantity_formula, quantity_per_unit, sort_order, component_group } = req.body
     if (!product_type) return res.status(400).json({ error: 'product_type required' })
@@ -306,7 +306,7 @@ router.post('/product-bom', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.put('/product-bom/:id', auth, async (req, res) => {
+router.put('/product-bom/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const { quantity_formula, quantity_per_unit, sort_order, component_group } = req.body
     const result = await query(
@@ -319,7 +319,7 @@ router.put('/product-bom/:id', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.delete('/product-bom/:id', auth, async (req, res) => {
+router.delete('/product-bom/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const row = await query(`SELECT product_type FROM product_bom WHERE id = $1`, [req.params.id])
     const productType = row.rows[0]?.product_type

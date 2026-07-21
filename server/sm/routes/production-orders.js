@@ -2,7 +2,7 @@ const express = require('express')
 const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query, withTransaction } = require('../db')
-const { auth, auditLog } = require('../auth')
+const { auth, auditLog, requireRole } = require('../auth')
 const { buildLineComponents } = require('../services/bom-builder')
 const { startProductionInternal } = require('./manufacturing')
 
@@ -480,10 +480,37 @@ router.put('/production-orders/:id', auth, async (req, res) => {
   }
 })
 
+// Server-side state machine for the generic status endpoint. Previously this
+// accepted ANY string from ANY current status — the lifecycle was enforced only
+// by which buttons the UI happened to render, so a buggy/scripted client could
+// e.g. revert an in_production order (stock already debited) back to draft,
+// stranding its job/reservations. Keys = target status, values = allowed
+// current statuses. 'cancelled' is deliberately absent: cancellation goes
+// through DELETE ?mode=cancel (which releases reservations) or the Shopify
+// webhook, never this endpoint.
+const STATUS_TRANSITIONS = {
+  confirmed: ['draft'],
+  queued: ['draft', 'confirmed'],
+  in_production: ['queued', 'waiting_external'],
+  waiting_external: ['draft', 'confirmed', 'queued', 'in_production'],
+  completed: ['in_production'],
+  ready_to_ship: ['completed'],
+  fulfilled: ['completed', 'ready_to_ship'],
+  draft: ['queued'], // "Return to Orders" — queued only; production has not debited yet
+}
+
 router.put('/production-orders/:id/status', auth, async (req, res) => {
   try {
     const { status, external_type, external_supplier, external_expected_at } = req.body
     const orderId = parseInt(req.params.id)
+
+    const allowedFrom = STATUS_TRANSITIONS[status]
+    if (!allowedFrom) return res.status(400).json({ error: `Invalid status: ${status}` })
+    const cur = await query(`SELECT status FROM production_orders WHERE id = $1`, [orderId])
+    if (!cur.rows[0]) return res.status(404).json({ error: 'Not found' })
+    if (!allowedFrom.includes(cur.rows[0].status)) {
+      return res.status(400).json({ error: `Cannot move an order from '${cur.rows[0].status}' to '${status}'` })
+    }
 
     // Transitioning to 'in_production' for the first time?
     // If no production_jobs exists yet, run the full start logic (debit stock + create job).
@@ -542,6 +569,10 @@ router.delete('/production-orders/:id', auth, async (req, res) => {
     const po = await query(`SELECT * FROM production_orders WHERE id = $1`, [req.params.id])
     if (!po.rows[0]) return res.status(404).json({ error: 'Not found' })
     if (mode === 'discard') {
+      // Hard delete is destructive/irreversible — admin+root only (soft-cancel stays open to ops).
+      if (!['admin', 'root'].includes(req.user.role)) {
+        return res.status(403).json({ error: 'Only admin or root can permanently delete orders' })
+      }
       if (!['draft', 'cancelled'].includes(po.rows[0].status)) {
         return res.status(400).json({ error: 'Only draft or cancelled orders can be permanently deleted' })
       }

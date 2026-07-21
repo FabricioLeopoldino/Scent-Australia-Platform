@@ -46,7 +46,7 @@ router.get('/products/:id', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.post('/products', auth, async (req, res) => {
+router.post('/products', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const { name, product_code, category, sub_category, unit, current_stock, min_stock_level, supplier, supplier_id, supplier_code, bin_location, barcode, shopify_variant_id, lead_time, notes, image_data, client_id, volume_ml, default_oil_pct, is_master, master_product_id, fragrance_id, segment, price, description } = req.body
     if (!name || !product_code || !category) return res.status(400).json({ error: 'Name, product_code and category required' })
@@ -66,7 +66,7 @@ router.post('/products', auth, async (req, res) => {
   }
 })
 
-router.put('/products/:id', auth, async (req, res) => {
+router.put('/products/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const { name, product_code, category, sub_category, unit, min_stock_level, supplier, supplier_id, supplier_code, bin_location, barcode, shopify_variant_id, lead_time, notes, image_data, client_id, volume_ml, default_oil_pct, segment, price, description } = req.body
     const result = await query(
@@ -109,7 +109,7 @@ router.put('/products/:id/location', auth, async (req, res) => {
 // Soft archive by default — keeps history (transactions, reservations) intact.
 // ?mode=permanent forces hard delete, only allowed when zero stock + zero transactions
 // + zero reservations (otherwise FK constraints would fail anyway).
-router.delete('/products/:id', auth, async (req, res) => {
+router.delete('/products/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const prod = await query(`SELECT * FROM products WHERE id = $1`, [req.params.id])
     if (!prod.rows[0]) return res.status(404).json({ error: 'Not found' })
@@ -166,7 +166,7 @@ router.delete('/products/:id', auth, async (req, res) => {
 })
 
 // Restore an archived product back to active.
-router.post('/products/:id/restore', auth, async (req, res) => {
+router.post('/products/:id/restore', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const prod = await query(`SELECT * FROM products WHERE id = $1`, [req.params.id])
     if (!prod.rows[0]) return res.status(404).json({ error: 'Not found' })
@@ -280,7 +280,7 @@ router.delete('/products/:id/attachments/:attachId', auth, requireRole('root', '
 })
 
 // Publish a product to Shopify as a draft (system stays source of truth for stock/price).
-router.post('/products/:id/shopify/publish', auth, async (req, res) => {
+router.post('/products/:id/shopify/publish', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     if (!process.env.SM_SHOPIFY_SHOP_DOMAIN || !process.env.SM_SHOPIFY_ACCESS_TOKEN) {
       return res.status(503).json({ error: 'Shopify not configured' })

@@ -2,7 +2,7 @@ const express = require('express')
 const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query } = require('../db')
-const { auth } = require('../auth')
+const { auth, requireRole } = require('../auth')
 
 router.get('/suppliers', auth, async (req, res) => {
   try {
@@ -15,7 +15,7 @@ router.get('/suppliers', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.post('/suppliers', auth, async (req, res) => {
+router.post('/suppliers', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const { name, contact_name, contact_email, contact_phone, website, lead_time, notes } = req.body
     if (!name) return res.status(400).json({ error: 'Name required' })
@@ -27,7 +27,7 @@ router.post('/suppliers', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.put('/suppliers/:id', auth, async (req, res) => {
+router.put('/suppliers/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const { name, contact_name, contact_email, contact_phone, website, lead_time, notes } = req.body
     const result = await query(
@@ -39,7 +39,7 @@ router.put('/suppliers/:id', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.delete('/suppliers/:id', auth, async (req, res) => {
+router.delete('/suppliers/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     await query(`DELETE FROM suppliers WHERE id = $1`, [req.params.id])
     res.json({ success: true })
