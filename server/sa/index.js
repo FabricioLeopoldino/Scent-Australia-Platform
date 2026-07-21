@@ -596,6 +596,7 @@ router.get('/products/:id', async (req, res) => {
 });
 
 router.post('/products', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can create products' });
   try {
     const {
       name, category, productCode, tag, unit, currentStock,
@@ -776,6 +777,7 @@ router.post('/products', async (req, res) => {
 });
 
 router.put('/products/:id', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can edit products' });
   try {
     const productId = req.params.id;
     const {
@@ -898,6 +900,7 @@ router.put('/products/:id', async (req, res) => {
 });
 
 router.delete('/products/:id', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can delete products' });
   const client = await pool.connect();
 
   try {
@@ -953,8 +956,9 @@ router.delete('/products/:id', async (req, res) => {
 // STOCK OPERATIONS
 // ========================================================================
 router.post('/stock/add', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can adjust stock' });
   const client = await pool.connect();
-  
+
   try {
     await client.query('BEGIN');
     
@@ -1007,6 +1011,7 @@ router.post('/stock/add', async (req, res) => {
 });
 
 router.post('/stock/remove', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can adjust stock' });
   const client = await pool.connect();
   
   try {
@@ -1066,8 +1071,9 @@ router.post('/stock/remove', async (req, res) => {
 // STOCK ADJUST - Manual stock adjustments (add or remove)
 // ========================================================================
 router.post('/stock/adjust', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can adjust stock' });
   const client = await pool.connect();
-  
+
   try {
     await client.query('BEGIN');
     
@@ -1862,6 +1868,7 @@ router.get('/shopify/pending-orders', async (req, res) => {
 // SHOPIFY PUBLISH - create a local product in Shopify (draft)
 // ========================================================================
 router.post('/shopify/publish/:productId', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can publish to Shopify' });
   try {
     const { productId } = req.params;
     const { userId } = req.body || {};
@@ -1897,6 +1904,7 @@ const VARIANT_DETAILS = {
 };
 
 router.post('/shopify/add-missing-variants/:productId', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can publish to Shopify' });
   try {
     const accessToken = process.env.SHOPIFY_ACCESS_TOKEN || process.env.SHOPIFY_API_PASSWORD;
     if (!process.env.SHOPIFY_STORE_NAME || !accessToken) {
@@ -2831,6 +2839,7 @@ export async function saWebhookHandler(req, res) {
 // PURCHASE ORDERS - Add Incoming Order
 // ========================================================================
 router.post('/products/:id/incoming', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can create purchase orders' });
   try {
     const { id } = req.params;
     const { orderNumber, quantity, supplier, notes, addedBy, userId, estimatedDeliveryDate } = req.body;
@@ -2908,6 +2917,7 @@ router.get('/purchase-orders', async (req, res) => {
 });
 
 router.delete('/purchase-orders/:poId', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can cancel/discard purchase orders' });
   try {
     const id = parseInt(req.params.poId);
     if (isNaN(id)) return res.status(400).json({ error: 'Invalid ID' });
@@ -2970,6 +2980,7 @@ router.delete('/purchase-orders/:poId', async (req, res) => {
 // RECEIVE PURCHASE ORDER — update stock, mark PO as received/partial
 // ========================================================================
 router.post('/purchase-orders/:poId/receive', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can receive purchase orders' });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -3543,6 +3554,7 @@ router.post('/po/import/preview', upload.single('file'), async (req, res) => {
 
 // ── POST /api/po/import/confirm — Create POs for confirmed rows
 router.post('/po/import/confirm', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can import purchase orders' });
   try {
     const { rows, userId, importedBy } = req.body;
     if (!Array.isArray(rows) || rows.length === 0) {
@@ -3832,6 +3844,7 @@ router.get('/suppliers', async (req, res) => {
 
 // ── POST /api/suppliers — Create a new supplier
 router.post('/suppliers', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can manage suppliers' });
   try {
     const { name, lead_time, notes } = req.body;
     if (!name || !lead_time) return res.status(400).json({ error: 'name and lead_time are required' });
@@ -3849,6 +3862,7 @@ router.post('/suppliers', async (req, res) => {
 
 // ── PUT /api/suppliers/:id — Update supplier lead time
 router.put('/suppliers/:id', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can manage suppliers' });
   try {
     const { id } = req.params;
     const { name, lead_time, notes } = req.body;
@@ -3870,6 +3884,7 @@ router.put('/suppliers/:id', async (req, res) => {
 
 // ── DELETE /api/suppliers/:id — Delete a supplier
 router.delete('/suppliers/:id', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can manage suppliers' });
   try {
     const result = await pool.query(`DELETE FROM suppliers WHERE id = $1 RETURNING id`, [parseInt(req.params.id)]);
     if (!result.rows.length) return res.status(404).json({ error: 'Supplier not found' });
@@ -3881,6 +3896,7 @@ router.delete('/suppliers/:id', async (req, res) => {
 
 // ── PATCH /api/products/:id/status — Toggle Active / Inactive
 router.patch('/products/:id/status', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can activate/deactivate products' });
   try {
     const { id } = req.params;
     const { status, userId } = req.body;

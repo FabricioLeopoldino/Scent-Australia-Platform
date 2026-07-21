@@ -150,12 +150,16 @@ export default function RawMaterials({ user }) {
                   )}
                 </td>
                 <td>
-                  <button
-                    className="btn btn-primary"
-                    onClick={() => setAdjustingProduct(product)}
-                  >
-                    Adjust Stock
-                  </button>
+                  {['admin', 'root'].includes(user?.role) ? (
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => setAdjustingProduct(product)}
+                    >
+                      Adjust Stock
+                    </button>
+                  ) : (
+                    <button className="btn btn-primary" disabled title="Admin only">🔒 Admin Only</button>
+                  )}
                 </td>
               </tr>
             ))}
