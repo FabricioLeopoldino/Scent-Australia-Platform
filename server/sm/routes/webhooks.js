@@ -4,7 +4,7 @@ const router = express.Router()
 const crypto = require('crypto')
 const { query, withTransaction } = require('../db')
 const { auth, auditLog } = require('../auth')
-const { enqueueDraftOrder } = require('../services/shopify-sync')
+const { enqueueDraftOrder, buildDraftOrderPayload } = require('../services/shopify-sync')
 const { adjustProductStock } = require('../services/stock-service')
 const { computeFinishedGoodBom } = require('../services/bom-builder')
 const { consumeFragranceOil, restoreFragranceOil } = require('../services/fragrance-library')
@@ -252,43 +252,11 @@ router.post('/shopify/draft-order', auth, async (req, res) => {
       return res.status(503).json({ error: 'Shopify not configured' })
     }
 
-    const order = await query(
-      `SELECT po.*, c.shopify_customer_id FROM production_orders po LEFT JOIN clients c ON po.client_id = c.id WHERE po.id = $1`,
-      [production_order_id]
-    )
-    if (!order.rows[0]) return res.status(404).json({ error: 'Order not found' })
-
-    const lines = await query(
-      `SELECT pol.*, pf.name as fragrance_name, master.name as master_name
-       FROM production_order_lines pol
-       LEFT JOIN products pf ON pol.fragrance_id = pf.id
-       LEFT JOIN products master ON master.product_code = pol.product_type AND master.is_master = true
-       WHERE pol.production_order_id = $1`,
-      [production_order_id]
-    )
-
-    // FR-HOOK-5 (shared store): SM draft-order line items MUST NOT carry SKUs —
-    // the SA webhook debits by SKU match; a SKU here would cross-debit SA stock.
-    const lineItems = lines.rows.map(l => ({
-      title: `${l.master_name || l.product_type.replace(/_/g, ' ')} — ${l.fragrance_name || 'N/A'}`,
-      quantity: l.quantity,
-      price: '0.00',
-      requires_shipping: true
-    }))
-
-    const draftOrder = {
-      draft_order: {
-        send_receipt: false,
-        send_invoice: false,
-        line_items: lineItems,
-        note: `SM Order: ${order.rows[0].order_number} | Due: ${order.rows[0].due_date || 'TBD'}${order.rows[0].notes ? '\n\n' + order.rows[0].notes : ''}`,
-        tags: 'SA Custom Orders'
-      }
-    }
-
-    if (order.rows[0].shopify_customer_id) {
-      draftOrder.draft_order.customer = { id: order.rows[0].shopify_customer_id }
-    }
+    // Built by the SHARED builder (services/shopify-sync). This route used to
+    // construct its own query + line titles, which is how it kept printing
+    // "— N/A" for Fragrance Library lines long after the retry path was fixed:
+    // the oil join simply didn't exist here. One builder now, no drift.
+    const draftOrder = await buildDraftOrderPayload(production_order_id)
 
     const response = await fetch(
       `https://${process.env.SM_SHOPIFY_SHOP_DOMAIN}/admin/api/2025-01/draft_orders.json`,

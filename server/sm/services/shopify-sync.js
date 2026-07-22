@@ -11,16 +11,20 @@ async function enqueueDraftOrder(productionOrderId) {
   )
 }
 
-async function processDraftOrder(payload) {
-  if (!process.env.SM_SHOPIFY_SHOP_DOMAIN || !process.env.SM_SHOPIFY_ACCESS_TOKEN) {
-    throw new Error('Shopify not configured')
-  }
-
+// Builds the Shopify draft-order payload for a production order.
+//
+// SHARED ON PURPOSE: two paths create draft orders — the direct publish route
+// (routes/webhooks.js, what the "Shopify" button calls) and this queued retry.
+// They used to build the payload independently, and it bit us: the oil-name fix
+// was applied to the retry path while the primary route kept printing "— N/A"
+// for every Fragrance Library line. One builder, so they cannot drift again.
+async function buildDraftOrderPayload(productionOrderId) {
   const order = await query(
     `SELECT po.*, c.shopify_customer_id FROM production_orders po LEFT JOIN clients c ON po.client_id = c.id WHERE po.id = $1`,
-    [payload.production_order_id]
+    [productionOrderId]
   )
   if (!order.rows[0]) throw new Error('Order not found')
+  const o = order.rows[0]
 
   const lines = await query(
     `SELECT pol.*, pf.name as fragrance_name, master.name as master_name, oil.name as oil_name
@@ -28,14 +32,14 @@ async function processDraftOrder(payload) {
      LEFT JOIN products pf ON pol.fragrance_id = pf.id
      LEFT JOIN products master ON master.product_code = pol.product_type AND master.is_master = true
      LEFT JOIN sa.products oil ON oil.id = pol.oil_id
-     WHERE pol.production_order_id = $1`,
-    [payload.production_order_id]
+     WHERE pol.production_order_id = $1
+     ORDER BY pol.line_number`,
+    [productionOrderId]
   )
 
   // FR-HOOK-5 (shared store): no SKUs on SM draft-order line items.
   // Scent name resolves in priority: commercial variant_name → legacy fragrance
-  // → D14 Fragrance Library oil name → 'N/A'. Before this, a D14 oil line (no
-  // fragrance_id) always showed 'N/A' on the Shopify draft.
+  // → D14 Fragrance Library oil name → 'N/A'.
   const lineItems = lines.rows.map(l => ({
     title: `${l.master_name || l.product_type.replace(/_/g, ' ')} — ${l.variant_name || l.fragrance_name || l.oil_name || 'N/A'}`,
     quantity: l.quantity,
@@ -43,18 +47,29 @@ async function processDraftOrder(payload) {
     requires_shipping: true
   }))
 
+  // The note used to be system text ONLY — whatever the user typed on the order
+  // never reached Shopify — and the due date was a raw JS Date
+  // ("Thu Jul 30 2026 00:00:00 GMT+1000 (Australian Eastern Standard Time)").
+  // User note first (that's what a human reads), system reference underneath.
+  const due = o.due_date
+    ? new Date(o.due_date).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' })
+    : 'TBD'
+  const note = [o.notes && o.notes.trim(), `SM Order: ${o.order_number} | Due: ${due}`]
+    .filter(Boolean).join('\n\n')
+
   const draftOrder = {
-    draft_order: {
-      send_receipt: false,
-      send_invoice: false,
-      line_items: lineItems,
-      note: `SM Order: ${order.rows[0].order_number} | Due: ${order.rows[0].due_date || 'TBD'}`,
-      tags: 'SA Custom Orders'
-    }
+    draft_order: { send_receipt: false, send_invoice: false, line_items: lineItems, note, tags: 'SA Custom Orders' }
   }
-  if (order.rows[0].shopify_customer_id) {
-    draftOrder.draft_order.customer = { id: order.rows[0].shopify_customer_id }
+  if (o.shopify_customer_id) draftOrder.draft_order.customer = { id: o.shopify_customer_id }
+  return draftOrder
+}
+
+async function processDraftOrder(payload) {
+  if (!process.env.SM_SHOPIFY_SHOP_DOMAIN || !process.env.SM_SHOPIFY_ACCESS_TOKEN) {
+    throw new Error('Shopify not configured')
   }
+
+  const draftOrder = await buildDraftOrderPayload(payload.production_order_id)
 
   const response = await fetch(
     `https://${process.env.SM_SHOPIFY_SHOP_DOMAIN}/admin/api/2025-01/draft_orders.json`,
@@ -222,4 +237,4 @@ async function registerWebhooks() {
   }
 }
 
-module.exports = { enqueueDraftOrder, enqueueInventoryAdjust, startSyncCron, registerWebhooks }
+module.exports = { buildDraftOrderPayload, enqueueDraftOrder, enqueueInventoryAdjust, startSyncCron, registerWebhooks }
