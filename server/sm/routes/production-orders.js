@@ -5,6 +5,7 @@ const { query, withTransaction } = require('../db')
 const { auth, auditLog, requireRole } = require('../auth')
 const { buildLineComponents } = require('../services/bom-builder')
 const { startProductionInternal } = require('./manufacturing')
+const { setOrderStatus, STATUS_TRANSITIONS, InvalidStatusTransition } = require('../services/order-status')
 
 // If production already started (production_jobs exists) and labels weren't debited yet
 // (because they didn't exist when start ran), debit them now and log transaction.
@@ -226,7 +227,18 @@ router.post('/reservations/check-displacement', auth, async (req, res) => {
 router.get('/production-orders', auth, async (req, res) => {
   try {
     const { status, order_type, client_id } = req.query
-    let q = `SELECT po.*, c.name as client_name FROM production_orders po LEFT JOIN clients c ON po.client_id = c.id WHERE 1=1`
+    // "Is something of this order physically out at a supplier?" is DERIVED from
+    // the external_processing records ('sent'/'partial' = dispatched), not from
+    // production_orders.status. That keeps the truth visible on any order —
+    // including one still in 'draft' — and it can't be forgotten, unlike the
+    // manual "Mark as Waiting External" checkbox.
+    // 'requested' is excluded on purpose: ordered, but nothing has left yet.
+    let q = `SELECT po.*, c.name as client_name,
+                    (SELECT COUNT(*)::int FROM external_processing ep
+                      WHERE ep.production_order_id = po.id AND ep.status IN ('sent','partial')) AS external_out_count,
+                    (SELECT string_agg(DISTINCT ep.supplier, ', ') FROM external_processing ep
+                      WHERE ep.production_order_id = po.id AND ep.status IN ('sent','partial') AND ep.supplier IS NOT NULL) AS external_out_suppliers
+             FROM production_orders po LEFT JOIN clients c ON po.client_id = c.id WHERE 1=1`
     const params = []
     if (status) { params.push(status); q += ` AND po.status = $${params.length}` }
     if (order_type) { params.push(order_type); q += ` AND po.order_type = $${params.length}` }
@@ -527,29 +539,15 @@ router.put('/production-orders/:id', auth, async (req, res) => {
 // current statuses. 'cancelled' is deliberately absent: cancellation goes
 // through DELETE ?mode=cancel (which releases reservations) or the Shopify
 // webhook, never this endpoint.
-const STATUS_TRANSITIONS = {
-  confirmed: ['draft'],
-  queued: ['draft', 'confirmed'],
-  in_production: ['queued', 'waiting_external'],
-  waiting_external: ['draft', 'confirmed', 'queued', 'in_production'],
-  completed: ['in_production'],
-  ready_to_ship: ['completed'],
-  fulfilled: ['completed', 'ready_to_ship'],
-  draft: ['queued'], // "Return to Orders" — queued only; production has not debited yet
-}
 
 router.put('/production-orders/:id/status', auth, async (req, res) => {
   try {
     const { status, external_type, external_supplier, external_expected_at } = req.body
     const orderId = parseInt(req.params.id)
 
-    const allowedFrom = STATUS_TRANSITIONS[status]
-    if (!allowedFrom) return res.status(400).json({ error: `Invalid status: ${status}` })
+    if (!STATUS_TRANSITIONS[status]) return res.status(400).json({ error: `Invalid status: ${status}` })
     const cur = await query(`SELECT status FROM production_orders WHERE id = $1`, [orderId])
     if (!cur.rows[0]) return res.status(404).json({ error: 'Not found' })
-    if (!allowedFrom.includes(cur.rows[0].status)) {
-      return res.status(400).json({ error: `Cannot move an order from '${cur.rows[0].status}' to '${status}'` })
-    }
 
     // Transitioning to 'in_production' for the first time?
     // If no production_jobs exists yet, run the full start logic (debit stock + create job).
@@ -564,14 +562,11 @@ router.put('/production-orders/:id/status', auth, async (req, res) => {
       }
     }
 
-    if (status === 'waiting_external') {
-      await query(
-        `UPDATE production_orders SET status = $1, external_type = $2, external_supplier = $3, external_expected_at = $4, updated_at = NOW() WHERE id = $5`,
-        [status, external_type || null, external_supplier || null, external_expected_at || null, orderId]
-      )
-    } else {
-      await query(`UPDATE production_orders SET status = $1, updated_at = NOW() WHERE id = $2`, [status, orderId])
-    }
+    await setOrderStatus(orderId, status, {
+      extra: status === 'waiting_external'
+        ? { external_type: external_type || null, external_supplier: external_supplier || null, external_expected_at: external_expected_at || null }
+        : {},
+    })
 
     if (status === 'queued') {
       await createReservations(orderId)
@@ -596,7 +591,11 @@ router.put('/production-orders/:id/status', auth, async (req, res) => {
     const orderRow = await query(`SELECT order_number FROM production_orders WHERE id = $1`, [req.params.id])
     await auditLog(req.user.id, 'production_order_status_changed', 'production_order', parseInt(req.params.id), orderRow.rows[0]?.order_number, { status })
     res.json({ success: true })
-  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
+  } catch (e) {
+    // A rejected transition is a client error, not a server fault.
+    if (e instanceof InvalidStatusTransition) return res.status(400).json({ error: e.message })
+    res.status(500).json({ error: sanitizeError(e) })
+  }
 })
 
 // ?mode=cancel → soft-cancel (status=cancelled, stays visible in filter)
@@ -622,7 +621,7 @@ router.delete('/production-orders/:id', auth, async (req, res) => {
       if (!['draft', 'confirmed'].includes(po.rows[0].status)) {
         return res.status(400).json({ error: 'Only draft or confirmed orders can be cancelled' })
       }
-      await query(`UPDATE production_orders SET status = 'cancelled', updated_at = NOW() WHERE id = $1`, [req.params.id])
+      await setOrderStatus(parseInt(req.params.id), 'cancelled')
       await query(`UPDATE stock_reservations SET status = 'cancelled' WHERE production_order_id = $1 AND status = 'reserved'`, [req.params.id])
       await auditLog(userId, 'production_order_cancelled', 'production_order', parseInt(req.params.id), po.rows[0].order_number, {})
       res.json({ success: true, mode: 'cancelled' })
@@ -657,9 +656,9 @@ router.post('/external-processing', auth, async (req, res) => {
       // Requesting external processing does NOT debit stock. The BOM stays reserved
       // and is only debited when the warehouse actually starts production
       // (startProductionInternal, triggered by Start/Resume Production → in_production).
-      await query(
-        `UPDATE production_orders SET status = 'waiting_external', external_type = $1, external_supplier = $2, updated_at = NOW() WHERE id = $3`,
-        [processing_type, supplier || null, production_order_id]
+      await setOrderStatus(
+        production_order_id, 'waiting_external',
+        { extra: { external_type: processing_type, external_supplier: supplier || null } }
       )
     }
     await auditLog(req.user.id, 'external_processing_created', 'external_processing', result.rows[0].id, product_name, { processing_type, qty_sent })
@@ -787,7 +786,10 @@ router.put('/external-processing/:id/return', auth, async (req, res) => {
           [item.production_order_id]
         )
         if (parseInt(pending.rows[0].count) === 0 && item.production_order_id) {
-          await query(`UPDATE production_orders SET status = 'in_production', updated_at = NOW() WHERE id = $1 AND status = 'waiting_external'`, [item.production_order_id])
+          // Resume production once the external work came back. setOrderStatus'
+          // whitelist already restricts in_production to queued/waiting_external,
+          // which is what the old inline `AND status = 'waiting_external'` enforced.
+          await setOrderStatus(item.production_order_id, 'in_production').catch(() => {})
         }
       }
     }

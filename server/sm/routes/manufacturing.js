@@ -6,6 +6,7 @@ const { auth, auditLog } = require('../auth')
 const { adjustProductStock } = require('../services/stock-service')
 const { ensureMuseSku } = require('./masters')
 const { consumeFragranceOil, restoreFragranceOil } = require('../services/fragrance-library')
+const { setOrderStatus } = require('../services/order-status')
 
 // D14: which of the 4 usage buckets (SA is the 4th, native to the SA module)
 // an order belongs to — MUSE (no client) vs a B2B client, split by
@@ -88,7 +89,7 @@ async function startProductionInternal(orderId, userId, targetStatus = 'in_produ
   const existingJob = await query(`SELECT id FROM production_jobs WHERE production_order_id = $1 LIMIT 1`, [orderId])
   if (existingJob.rows[0]) {
     // Job already exists — just update order status if needed (e.g., resume from waiting_external)
-    await query(`UPDATE production_orders SET status = $1, updated_at = NOW() WHERE id = $2`, [targetStatus, orderId])
+    await setOrderStatus(orderId, targetStatus)
     return { job: existingJob.rows[0], skipped_debit: true }
   }
 
@@ -99,7 +100,7 @@ async function startProductionInternal(orderId, userId, targetStatus = 'in_produ
       `INSERT INTO production_jobs (production_order_id, started_by, status) VALUES ($1,$2,'in_production') RETURNING *`,
       [orderId, userId]
     )
-    await tq(`UPDATE production_orders SET status = $1, updated_at = NOW() WHERE id = $2`, [targetStatus, orderId])
+    await setOrderStatus(orderId, targetStatus, { tq })
 
     // Safety net: if reservations are missing (e.g. order was edited and the recreate
     // step failed for some reason), rebuild them from production_order_components so
@@ -274,7 +275,7 @@ router.post('/manufacturing/:id/complete', auth, async (req, res) => {
       await tq(`UPDATE production_jobs SET completed_at = NOW(), status = 'completed', notes_on_completion = $1 WHERE production_order_id = $2`, [notes_on_completion || null, req.params.id])
       // MUSE: auto-fulfill (products land in internal stock as variants)
       // Standard/Major: status='completed' (await shipping / client OK)
-      await tq(`UPDATE production_orders SET status = $1, updated_at = NOW() WHERE id = $2`, [isMuse ? 'fulfilled' : 'completed', req.params.id])
+      await setOrderStatus(parseInt(req.params.id), isMuse ? 'fulfilled' : 'completed', { tq })
 
       for (const ll of (line_leftovers || [])) {
         if (ll.leftover_formula_ml && parseFloat(ll.leftover_formula_ml) > 0) {
@@ -557,7 +558,7 @@ router.post('/manufacturing/:id/lines/:lineId/send-for-filling', auth, async (re
       `UPDATE production_order_lines SET candle_status = 'sent_for_filling', line_status = 'sent_for_filling', sent_for_filling_at = NOW(), filling_supplier = $1 WHERE id = $2 AND production_order_id = $3`,
       [supplier || null, req.params.lineId, req.params.id]
     )
-    await query(`UPDATE production_orders SET status = 'waiting_external', updated_at = NOW() WHERE id = $1`, [req.params.id])
+    await setOrderStatus(parseInt(req.params.id), 'waiting_external')
     const [lineRow4, ord4] = await Promise.all([
       query(`SELECT product_type FROM production_order_lines WHERE id = $1`, [req.params.lineId]),
       query(`SELECT order_number FROM production_orders WHERE id = $1`, [req.params.id]),
@@ -580,7 +581,7 @@ router.post('/manufacturing/:id/lines/:lineId/receive-from-filling', auth, async
     )
     const pending = await query(`SELECT COUNT(*) FROM production_order_lines WHERE production_order_id = $1 AND line_status = 'sent_for_filling'`, [req.params.id])
     if (parseInt(pending.rows[0].count) === 0) {
-      await query(`UPDATE production_orders SET status = 'in_production', updated_at = NOW() WHERE id = $1`, [req.params.id])
+      await setOrderStatus(parseInt(req.params.id), 'in_production')
     }
     const ord5 = await query(`SELECT order_number FROM production_orders WHERE id = $1`, [req.params.id])
     await auditLog(req.user.id, 'line_received_from_filling', 'production_order', parseInt(req.params.id), ord5.rows[0]?.order_number, { line: l.product_type })

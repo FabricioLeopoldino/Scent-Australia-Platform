@@ -8,6 +8,7 @@ const { enqueueDraftOrder } = require('../services/shopify-sync')
 const { adjustProductStock } = require('../services/stock-service')
 const { computeFinishedGoodBom } = require('../services/bom-builder')
 const { consumeFragranceOil, restoreFragranceOil } = require('../services/fragrance-library')
+const { setOrderStatus } = require('../services/order-status')
 
 const processingOrders = new Set()
 const processingFulfillments = new Set()
@@ -211,10 +212,14 @@ async function smWebhookHandler(req, res) {
         const order = prodOrder.rows[0]
 
         if (topic === 'orders/cancelled') {
-          await query(
-            `UPDATE production_orders SET status = 'cancelled', shopify_order_id = $1, shopify_order_number = $2, updated_at = NOW() WHERE id = $3`,
-            [shopifyOrderId, body.name, order.id]
-          )
+          // force: a cancellation coming FROM Shopify is the customer's decision
+          // arriving from outside. Refusing it because of our own state machine
+          // would silently drop the event — worse than recording a late cancel.
+          // This is the ONE deliberate bypass; everything else validates.
+          await setOrderStatus(order.id, 'cancelled', {
+            force: true,
+            extra: { shopify_order_id: shopifyOrderId, shopify_order_number: body.name },
+          })
           // Release any stock reservations
           await query(`UPDATE stock_reservations SET status = 'released' WHERE production_order_id = $1 AND status = 'reserved'`, [order.id])
           console.log(`[webhook] cancelled ${order.order_number} — stock reservations released`)

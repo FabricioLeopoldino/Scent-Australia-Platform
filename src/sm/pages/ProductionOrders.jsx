@@ -290,6 +290,13 @@ export default function ProductionOrders() {
                   {!order.client_id && <Chip color="#fbbf24">MUSE</Chip>}
                   {order.shopify_draft_order_number && !order.shopify_order_number && <Chip color="#94a3b8">Shopify {order.shopify_draft_order_number}</Chip>}
                   {order.shopify_order_number && <Chip color="#60a5fa">Shopify {order.shopify_order_number}</Chip>}
+                  {/* Derived from open external_processing records — shows the truth
+                      on ANY status, and can't be forgotten like the manual checkbox. */}
+                  {order.external_out_count > 0 && (
+                    <Chip color="#a78bfa">
+                      ⏳ At supplier{order.external_out_suppliers ? ` · ${order.external_out_suppliers}` : ''}
+                    </Chip>
+                  )}
                 </div>
                 <div style={{ fontSize: 12, color: 'rgba(232,234,242,0.45)', marginTop: 3 }}>
                   {order.client_name || 'MUSE Internal'} · {order.lines?.length || 0} line{order.lines?.length !== 1 ? 's' : ''}
