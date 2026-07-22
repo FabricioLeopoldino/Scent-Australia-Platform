@@ -145,6 +145,10 @@ export default function MachineInventory({ user }) {
         setEditingMachine(null);
         resetForm();
         fetchMachines();
+      } else {
+        // Was silently doing nothing on 400/403/500 — the modal just sat there.
+        const body = await res.json().catch(() => ({}));
+        showToast(body.error || `Failed to save machine (${res.status})`, 'error');
       }
     } catch (error) {
       showToast('Error saving machine: ' + error.message, 'error');
@@ -162,6 +166,10 @@ export default function MachineInventory({ user }) {
         if (res.ok) {
           showToast('Machine deleted!', 'success');
           fetchMachines();
+        } else {
+          // Surfaces the new "has transaction history — deactivate instead" guard.
+          const body = await res.json().catch(() => ({}));
+          showToast(body.error || `Failed to delete machine (${res.status})`, 'error');
         }
       } catch (error) {
         showToast('Error deleting machine: ' + error.message, 'error');

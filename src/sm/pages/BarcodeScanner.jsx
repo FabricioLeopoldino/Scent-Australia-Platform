@@ -33,6 +33,8 @@ export default function BarcodeScanner() {
   const [selectedPO, setSelectedPO] = useState(null)
   const [receiveQty, setReceiveQty] = useState('')
   const [receiveNotes, setReceiveNotes] = useState('')
+  const [tolWarn, setTolWarn] = useState(null)
+  const [discrepancyReason, setDiscrepancyReason] = useState('')
 
   // Transfer workflow
   const [newLocation, setNewLocation] = useState('')
@@ -54,6 +56,7 @@ export default function BarcodeScanner() {
     setQuantity(''); setNewStock(''); setNotes('')
     setSelectedPO(null); setReceiveQty(''); setReceiveNotes('')
     setNewLocation('')
+    setTolWarn(null); setDiscrepancyReason('')
     setTimeout(() => barcodeRef.current?.focus(), 50)
   }
 
@@ -96,18 +99,26 @@ export default function BarcodeScanner() {
   }
 
   // ─── Receiving ─────────────────────────────
-  async function handleReceive() {
+  // Same tolerance rule as Incoming Orders: first attempt WITHOUT force_accept;
+  // if the server flags tolerance_exceeded, require a discrepancy reason before
+  // accepting. (This page used to always send force_accept:true, silently
+  // skipping the check that Incoming Orders enforces for the same operation.)
+  async function handleReceive(force = false) {
     if (!selectedPO) { addToast('Select a purchase order', 'error'); return }
     if (!receiveQty || parseFloat(receiveQty) <= 0) { addToast('Enter received quantity', 'error'); return }
+    if (force && !discrepancyReason.trim()) { addToast('A discrepancy reason is required', 'error'); return }
     setSaving(true)
     try {
-      await axios.post(`/api/purchase-orders/${selectedPO.id}/receive`, {
+      const res = await axios.post(`/api/purchase-orders/${selectedPO.id}/receive`, {
         quantity_received: parseFloat(receiveQty),
         notes: receiveNotes || null,
-        force_accept: true
+        force_accept: force,
+        discrepancy_reason: force ? discrepancyReason.trim() : undefined
       }, api())
+      if (res.data?.tolerance_exceeded) { setTolWarn(res.data); return }
       addToast(`Received ${receiveQty} ${found.unit} — PO ${selectedPO.order_number || '#'+selectedPO.id}`)
       pushHistory({ product: found.name, code: found.product_code, action: 'receive', delta: +parseFloat(receiveQty), unit: found.unit })
+      setTolWarn(null); setDiscrepancyReason('')
       clearScan()
     } catch (e) { addToast(e.response?.data?.error || 'Failed', 'error') }
     finally { setSaving(false) }
@@ -296,7 +307,23 @@ export default function BarcodeScanner() {
                         <label style={lbl}>Notes (optional)</label>
                         <input value={receiveNotes} onChange={e => setReceiveNotes(e.target.value)} placeholder="Condition, batch, remarks..." style={inp} />
                       </div>
-                      <ActionButtons onCancel={clearScan} onConfirm={handleReceive} saving={saving} confirmLabel="Confirm Receipt" confirmColor="#34d399" />
+                      {tolWarn && (
+                        <div style={{ marginBottom: 16, padding: 14, background: 'rgba(217,119,6,0.1)', border: '1px solid rgba(217,119,6,0.35)', borderRadius: 8 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: '#fbbf24', marginBottom: 6 }}>⚠️ Outside receiving tolerance</div>
+                          <div style={{ fontSize: 11, color: 'rgba(232,234,242,0.7)', marginBottom: 10 }}>
+                            Expected {Number(tolWarn.expected).toLocaleString()} · Received {Number(tolWarn.received).toLocaleString()} · Difference {Number(tolWarn.difference) > 0 ? '+' : ''}{Number(tolWarn.difference).toLocaleString()} ({tolWarn.diff_pct}%)
+                          </div>
+                          <label style={lbl}>Discrepancy reason (required)</label>
+                          <input value={discrepancyReason} onChange={e => setDiscrepancyReason(e.target.value)} placeholder="e.g. supplier short-shipped, damaged units" style={inp} />
+                        </div>
+                      )}
+                      <ActionButtons
+                        onCancel={clearScan}
+                        onConfirm={() => handleReceive(!!tolWarn)}
+                        saving={saving}
+                        confirmLabel={tolWarn ? 'Accept with Discrepancy' : 'Confirm Receipt'}
+                        confirmColor={tolWarn ? '#d97706' : '#34d399'}
+                      />
                     </>
                   )}
                 </>

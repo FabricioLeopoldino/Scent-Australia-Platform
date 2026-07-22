@@ -47,8 +47,8 @@ function getPresetRange(key) {
 const CATEGORIES = ['ALL','FRAGRANCE','RAW_MATERIALS','COMPONENTS','FINISHED_GOODS','READY_FORMULA']
 const CAT_COLORS = { FRAGRANCE:'#a78bfa', RAW_MATERIALS:'#fbbf24', COMPONENTS:'#60a5fa', FINISHED_GOODS:'#4ade80', READY_FORMULA:'#fb923c' }
 
-function isPositive(type) { return ['add','po_received','ready_formula_in','return','stock_reserved'].includes(type) }
-function isNegative(type) { return ['remove','production_debit','ready_formula_used','stock_reservation_released'].includes(type) }
+function isPositive(type) { return ['add','po_received','ready_formula_in','return','stock_reserved','shopify_reversal','muse_reversal'].includes(type) }
+function isNegative(type) { return ['remove','production_debit','ready_formula_used','stock_reservation_released','shopify_sale','muse_sale','muse_production','sm_std_production','sm_major_production'].includes(type) }
 
 export default function TransactionHistory() {
   const [transactions, setTransactions] = useState([])

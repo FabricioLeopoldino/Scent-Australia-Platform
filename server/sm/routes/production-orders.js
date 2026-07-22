@@ -408,6 +408,18 @@ router.put('/production-orders/:id', auth, async (req, res) => {
       return res.status(400).json({ error: 'Only draft orders can be edited' })
     }
 
+    // Editing wipes and rebuilds all lines (CASCADE). An external-processing
+    // record tied to one of the old line ids would be orphaned mid-flight —
+    // its production_order_line_id would dangle and label auto-linking at
+    // return time would silently stop working. Refuse instead of corrupting.
+    const epCheck = await query(
+      `SELECT COUNT(*)::int n FROM external_processing WHERE production_order_id = $1 AND status NOT IN ('done','cancelled')`,
+      [orderId]
+    )
+    if (epCheck.rows[0].n > 0) {
+      return res.status(400).json({ error: 'This order has active external processing records — close or return them before editing the order' })
+    }
+
     await withTransaction(async (client) => {
       const tq = (text, params) => client.query(text, params)
 

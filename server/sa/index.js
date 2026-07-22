@@ -919,7 +919,20 @@ router.delete('/products/:id', async (req, res) => {
     }
     const product = productRes.rows[0];
 
-    await client.query('DELETE FROM transactions WHERE product_id = $1', [productId]);
+    // The stock ledger is the audit trail — hard-deleting a product used to wipe
+    // every transaction row it ever had, silently destroying history that other
+    // reports (Oil Usage, Demand Planning, Activity Log) are computed from.
+    // A product that has moved stock can only be DEACTIVATED, never hard-deleted.
+    const txCount = await client.query(
+      'SELECT COUNT(*)::int n FROM transactions WHERE product_id = $1',
+      [productId]
+    );
+    if (txCount.rows[0].n > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: `This product has ${txCount.rows[0].n} transaction(s) in the ledger and cannot be permanently deleted — deactivate it instead to keep its history.`
+      });
+    }
 
     // For SA_SCENTED_PRODUCTS the BOM variant equals the productCode of the SKU itself
     // (one BOM row set per finished-good SKU). Remove those rows so the BOM Viewer

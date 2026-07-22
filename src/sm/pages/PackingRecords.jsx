@@ -283,7 +283,7 @@ function PackingDetail({ record, onClose }) {
               {leftovers.map((li, i) => (
                 <div key={i} style={{ padding: '10px 14px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 9, marginBottom: 6 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: '#e8eaf2', marginBottom: 6 }}>
-                    Linha {li.line_number}{li.fragrance_name ? ` — ${li.fragrance_name}` : ''}
+                    Line {li.line_number}{li.fragrance_name ? ` — ${li.fragrance_name}` : ''}
                   </div>
                   <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                     {li.leftover_formula_ml > 0 && (

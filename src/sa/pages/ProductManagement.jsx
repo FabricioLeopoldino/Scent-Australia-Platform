@@ -210,6 +210,11 @@ export default function ProductManagement({ user }) {
         if (res.ok) {
           showToast('Product deleted!', 'success');
           fetchProducts();
+        } else {
+          // Surfaces the "has transaction history — deactivate instead" guard
+          // and the admin/root permission check, instead of silently no-op'ing.
+          const body = await res.json().catch(() => ({}));
+          showToast(body.error || `Failed to delete product (${res.status})`, 'error');
         }
       } catch (error) {
         showToast('Error deleting product: ' + error.message, 'error');
