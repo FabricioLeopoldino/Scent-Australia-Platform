@@ -89,6 +89,17 @@ export default function ProductionOrders() {
     } catch {}
   }
 
+  // Deep-link support: /production-orders?order=123 opens that order directly
+  // (Major Client "Awaiting Ship" links here with a specific order in mind).
+  useEffect(() => {
+    const wanted = Number(new URLSearchParams(window.location.search).get('order'))
+    if (!wanted || !orders.length) return
+    setExpanded(wanted)
+    requestAnimationFrame(() => {
+      document.getElementById(`order-row-${wanted}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+  }, [orders])
+
   function toggleExpand(id) {
     if (expanded === id) { setExpanded(null); return }
     setExpanded(id)
@@ -266,7 +277,7 @@ export default function ProductionOrders() {
         const displayOrders = museOnly ? orders.filter(o => !o.client_id) : orders
         if (displayOrders.length === 0) return <div style={{ textAlign: 'center', color: 'rgba(232,234,242,0.3)', fontSize: 14, padding: 48 }}>No orders found</div>
         const renderOrderRow = (order, cardStyle = {}) => (
-          <div key={order.id} style={{ background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', ...cardStyle }}>
+          <div key={order.id} id={`order-row-${order.id}`} style={{ background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', ...cardStyle }}>
             <div style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 14 }}>
               <button onClick={() => toggleExpand(order.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(232,234,242,0.5)', padding: 0 }}>
                 {expanded === order.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />}

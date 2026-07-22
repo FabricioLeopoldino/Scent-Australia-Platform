@@ -129,9 +129,13 @@ function resizeImage(file) {
  *   allProducts — list used to compute next sequential code
  *   categories  — optional subset of ALL_PROD_CATEGORIES (default: all)
  */
-export default function ProductFormModal({ mode, form, setForm, saving, onClose, onSave, allProducts, categories }) {
+// `segments` scopes the segment picker the same way `categories` scopes the
+// category list — a page that only owns one segment (e.g. MUSE Stock) shouldn't
+// offer to create Major-client reserved stock from its own "New Product" button.
+export default function ProductFormModal({ mode, form, setForm, saving, onClose, onSave, allProducts, categories, segments }) {
   const fileRef = useRef(null)
   const cats = categories || ALL_PROD_CATEGORIES
+  const segs = segments || PRODUCT_SEGMENTS
   const [majorClients, setMajorClients] = useState([])
   const [majorLoading, setMajorLoading] = useState(false)
 
@@ -190,7 +194,7 @@ export default function ProductFormModal({ mode, form, setForm, saving, onClose,
 
           <PField label="Segment *" full>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {PRODUCT_SEGMENTS.map(s => {
+              {segs.map(s => {
                 // Major routes to client_stock — only meaningful at creation time. Disable on edit.
                 const isMajorDisabled = s.key === 'MAJOR' && mode === 'edit'
                 return (

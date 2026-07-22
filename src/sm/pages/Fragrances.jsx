@@ -25,6 +25,17 @@ export default function Fragrances() {
 
   useEffect(() => { load() }, [])
 
+  // /fragrances?new=1 opens the create form straight away — the MUSE Dashboard's
+  // "Add Fragrance" quick action used to just drop you on the list, leaving you
+  // to find the New Fragrance button yourself. Runs after load so suggestCode()
+  // sees the existing codes.
+  useEffect(() => {
+    if (!fragrances.length) return
+    if (new URLSearchParams(window.location.search).get('new') !== '1') return
+    setForm({ ...EMPTY_FORM, product_code: suggestCode() })
+    setShowCreate(true)
+  }, [fragrances])
+
   async function load() {
     setLoading(true)
     try {

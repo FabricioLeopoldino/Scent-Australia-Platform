@@ -224,7 +224,7 @@ export default function MajorClientDetail() {
       {tab === 'catalog' && <CatalogTab masters={client.masters || []} highlightCode={highlightCode} onSelectMaster={setSelectedMaster} onNewMaster={openCreateMaster} onEditMaster={openEditMaster} onDeleteMaster={setDeleteMaster} onZoom={setZoomImage} />}
       {tab === 'stock' && <ClientStockTab items={summary?.client_stock || []} />}
       {tab === 'labels' && <LabelsTab labels={summary?.labels || []} />}
-      {tab === 'ship' && <AwaitingShipTab groups={summary?.awaiting_ship_grouped || []} total={summary?.awaiting_ship_total_units || 0} onClickOrder={(orderId) => navigate('/production-orders')} />}
+      {tab === 'ship' && <AwaitingShipTab groups={summary?.awaiting_ship_grouped || []} total={summary?.awaiting_ship_total_units || 0} onClickOrder={(orderId) => navigate(`/production-orders?order=${orderId}`)} />}
 
       {/* Master detail drawer with BOM editor */}
       {selectedMaster && (

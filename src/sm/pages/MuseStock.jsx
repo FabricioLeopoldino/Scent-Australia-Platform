@@ -9,7 +9,7 @@ import { useToast } from '../SMModule.jsx'
 import AttachmentsModal from '../components/AttachmentsModal.jsx'
 import MlHint from '../components/MlHint.jsx'
 import { splitVolume } from '../utils/volume.js'
-import ProductFormModal, { EMPTY_PRODUCT_FORM, ALL_PROD_CATEGORIES } from '../components/ProductFormModal.jsx'
+import ProductFormModal, { EMPTY_PRODUCT_FORM, ALL_PROD_CATEGORIES, PRODUCT_SEGMENTS } from '../components/ProductFormModal.jsx'
 import StockTable from '../components/StockTable.jsx'
 import MuseHeader from '../components/MuseHeader.jsx'
 
@@ -698,6 +698,9 @@ export default function MuseStock() {
           onSave={handleSaveProduct}
           allProducts={allProducts}
           categories={ALL_PROD_CATEGORIES.filter(c => MUSE_COMP_CATEGORIES.includes(c.key))}
+          // This page owns MUSE stock only — creating Standard or Major-client
+          // reserved stock from here was possible but never the intent.
+          segments={PRODUCT_SEGMENTS.filter(s => ['MUSE', 'SHARED'].includes(s.key))}
         />
       )}
 

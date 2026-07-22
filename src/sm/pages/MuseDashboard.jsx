@@ -191,7 +191,7 @@ export default function MuseDashboard() {
       {/* Quick actions */}
       <div style={{ marginTop: 28, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         <QuickAction label="Create New Master" icon={<Star size={14} />} color="#fbbf24" onClick={() => navigate('/muse/products')} />
-        <QuickAction label="Add Fragrance" icon={<FlaskConical size={14} />} color="#a78bfa" onClick={() => navigate('/fragrances')} />
+        <QuickAction label="Add Fragrance" icon={<FlaskConical size={14} />} color="#a78bfa" onClick={() => navigate('/fragrances?new=1')} />
         <QuickAction label="New Production Order" icon={<ShoppingBag size={14} />} color="#60a5fa" onClick={() => navigate('/production-orders')} />
       </div>
     </div>
