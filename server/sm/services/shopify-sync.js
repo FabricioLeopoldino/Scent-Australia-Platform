@@ -67,8 +67,15 @@ async function processDraftOrder(payload) {
   const data = await response.json()
   if (!response.ok) throw new Error(data.errors ? JSON.stringify(data.errors) : 'Shopify API error')
 
+  // Same rule as the direct publish route: only advance the commercial lifecycle
+  // if the order is still 'draft'. A queued retry must never reset a physical
+  // state (waiting_external / in_production) that moved on while Shopify was down.
   await query(
-    `UPDATE production_orders SET shopify_draft_order_id = $1, status = 'confirmed', updated_at = NOW() WHERE id = $2`,
+    `UPDATE production_orders
+        SET shopify_draft_order_id = $1,
+            status = CASE WHEN status = 'draft' THEN 'confirmed' ELSE status END,
+            updated_at = NOW()
+      WHERE id = $2`,
     [data.draft_order.id, payload.production_order_id]
   )
 }

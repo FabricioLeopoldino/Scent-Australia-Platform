@@ -301,8 +301,19 @@ router.post('/shopify/draft-order', auth, async (req, res) => {
       return res.json({ queued: true, message: 'Shopify unavailable — draft order queued for retry' })
     }
 
+    // Record the Shopify ids, and advance the COMMERCIAL lifecycle only if the
+    // order is still sitting in 'draft'. It used to force status='confirmed'
+    // unconditionally, which silently erased a physical state like
+    // 'waiting_external' or 'in_production' — publishing an order that was out at
+    // a supplier would have reset it as if nothing were dispatched.
+    // (Consistent with STATUS_TRANSITIONS, where 'confirmed' may only follow 'draft'.)
     await query(
-      `UPDATE production_orders SET shopify_draft_order_id = $1, shopify_draft_order_number = $2, status = 'confirmed', updated_at = NOW() WHERE id = $3`,
+      `UPDATE production_orders
+          SET shopify_draft_order_id = $1,
+              shopify_draft_order_number = $2,
+              status = CASE WHEN status = 'draft' THEN 'confirmed' ELSE status END,
+              updated_at = NOW()
+        WHERE id = $3`,
       [data.draft_order.id, data.draft_order.name, production_order_id]
     )
     res.json({ draft_order_id: data.draft_order.id, draft_order_number: data.draft_order.name, draft_order_url: data.draft_order.invoice_url })

@@ -301,7 +301,13 @@ export default function ProductionOrders() {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                {order.status === 'draft' && !order.shopify_draft_order_id && (
+                {/* Creating the Shopify draft order is a COMMERCIAL step; it must not
+                    depend on where the order sits in the PHYSICAL/production lifecycle.
+                    This used to require status==='draft', so marking an order "Waiting
+                    External" (to get labels or send candles for filling) made the button
+                    disappear — the exact reason the owner stopped using that feature.
+                    Now it only asks: has it been published already, and is it alive? */}
+                {!order.shopify_draft_order_id && order.status !== 'cancelled' && (
                   <button onClick={() => sendToShopify(order)} style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 10px', cursor: 'pointer', color: '#60a5fa', fontSize: 11, fontWeight: 600 }}>
                     Shopify
                   </button>
