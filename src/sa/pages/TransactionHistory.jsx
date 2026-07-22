@@ -45,6 +45,7 @@ export default function TransactionHistory() {
   const [filter, setFilter]                 = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
   const [totalCount, setTotalCount]         = useState(0);
+  const [truncated, setTruncated]           = useState(false);
 
   // Date range — default: this month
   const defaultPreset = getPreset('thisMonth');
@@ -67,6 +68,10 @@ export default function TransactionHistory() {
       const rows = Array.isArray(data) ? data : [];
       setTransactions(rows);
       setTotalCount(rows.length);
+      // The backend hard-caps at 5,000 rows (Math.min(limit, 5000)) regardless of
+      // what we ask for. Hitting exactly the cap means older rows were silently
+      // dropped — say so instead of showing a partial history as if it were whole.
+      setTruncated(rows.length >= 5000);
     } catch (error) {
       console.error('Error:', error);
     } finally {
@@ -399,9 +404,15 @@ export default function TransactionHistory() {
               </table>
             </div>
 
+            {truncated && (
+              <div style={{ marginTop: '12px', padding: '10px 14px', background: 'rgba(217,119,6,0.1)', border: '1px solid rgba(217,119,6,0.35)', borderRadius: 8, fontSize: 12, color: '#fbbf24' }}>
+                ⚠️ Showing the most recent 5,000 transactions — older entries in this period were not loaded. Narrow the date range to see them.
+              </div>
+            )}
+
             <div style={{ marginTop: '16px', fontSize: '13px', color: 'rgba(232,234,242,0.45)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span>
-                Showing <strong style={{ color: '#22c55e' }}>{filteredTransactions.length}</strong> of <strong>{totalCount}</strong> transactions in period
+                Showing <strong style={{ color: '#22c55e' }}>{filteredTransactions.length}</strong> of <strong>{totalCount}</strong>{truncated ? '+' : ''} transactions in period
               </span>
               <button className="btn btn-secondary" onClick={handleExport} style={{ fontSize: '12px', padding: '6px 14px' }}>
                 📊 Export {filteredTransactions.length} rows

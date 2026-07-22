@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { exportToShopifyCSV, exportLowStockToShopifyCSV } from '../utils/shopifyExport';
 import { displayStock, displayUnit } from '../utils/unitConversion';
+import { isLowStock } from '../utils/stockStatus';
 import { GlowingEffect } from '../components/GlowingEffect';
 
 export default function Dashboard() {
@@ -126,7 +127,7 @@ export default function Dashboard() {
     );
   }
 
-  const lowStockProducts = products.filter(p => p.currentStock < p.minStockLevel);
+  const lowStockProducts = products.filter(isLowStock);
   const oilsData = products.filter(p => p.category === 'OILS');
   const machinesData = products.filter(p => p.category === 'MACHINES_SPARES');
   const rawMaterialsData = products.filter(p => p.category === 'RAW_MATERIALS');
@@ -151,21 +152,21 @@ export default function Dashboard() {
     {
       label: 'Spares',
       value: countByCategory('MACHINES_SPARES'),
-      sub: `${machinesData.filter(p => p.currentStock < p.minStockLevel).length} low stock`,
+      sub: `${machinesData.filter(isLowStock).length} low stock`,
       color: '#a78bfa',
       icon: <Cpu size={18} color="#a78bfa" />,
     },
     {
       label: 'Raw Materials',
       value: countByCategory('RAW_MATERIALS'),
-      sub: `${rawMaterialsData.filter(p => p.currentStock < p.minStockLevel).length} low stock`,
+      sub: `${rawMaterialsData.filter(isLowStock).length} low stock`,
       color: '#f59e0b',
       icon: <Beaker size={18} color="#f59e0b" />,
     },
     {
       label: 'Diffuser Machines',
       value: countByCategory('SCENT_MACHINES'),
-      sub: `${products.filter(p => p.category === 'SCENT_MACHINES' && p.currentStock < p.minStockLevel).length} low stock`,
+      sub: `${products.filter(p => p.category === 'SCENT_MACHINES' && isLowStock(p)).length} low stock`,
       color: '#a78bfa',
       icon: <Cpu size={18} color="#a78bfa" />,
     },

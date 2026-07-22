@@ -317,10 +317,32 @@ router.get('/production-orders/:id', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
+// Returns the product_type values on these lines that don't match a master.
+async function validateProductTypes(lines) {
+  const types = [...new Set((lines || []).map(l => l && l.product_type).filter(Boolean))]
+  if (!types.length) return []
+  const found = await query(
+    `SELECT product_code FROM products WHERE is_master = true AND product_code = ANY($1)`,
+    [types]
+  )
+  const ok = new Set(found.rows.map(r => r.product_code))
+  return types.filter(t => !ok.has(t))
+}
+
 router.post('/production-orders', auth, async (req, res) => {
   try {
     const { client_id, order_type, due_date, notes, lines, displace_low_priority } = req.body
     if (!lines || lines.length === 0) return res.status(400).json({ error: 'At least one line item required' })
+
+    // Every line's product_type must resolve to a real master. Without this an
+    // order could be created against a code that doesn't exist (found live:
+    // SM-071 / 'FLRF') — it then builds ZERO BOM components and can still be
+    // started, "producing" something while debiting nothing and leaving a
+    // dangling line that integrity-sm.cjs flags forever.
+    const badTypes = await validateProductTypes(lines)
+    if (badTypes.length) {
+      return res.status(400).json({ error: `Unknown product type(s): ${badTypes.join(', ')} — pick a registered master` })
+    }
 
     const orderNumber = await getNextOrderNumber()
 
@@ -418,6 +440,11 @@ router.put('/production-orders/:id', auth, async (req, res) => {
     )
     if (epCheck.rows[0].n > 0) {
       return res.status(400).json({ error: 'This order has active external processing records — close or return them before editing the order' })
+    }
+
+    const badTypes = await validateProductTypes(lines)
+    if (badTypes.length) {
+      return res.status(400).json({ error: `Unknown product type(s): ${badTypes.join(', ')} — pick a registered master` })
     }
 
     await withTransaction(async (client) => {

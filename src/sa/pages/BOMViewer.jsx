@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useToast } from '../components/Toast';
 import ConfirmModal from '../components/ConfirmModal';
 import { GlowingEffect } from '../components/GlowingEffect';
+import { isLowStock } from '../utils/stockStatus';
+import { SA_SKU_VARIANTS, SA_SKU_KEYS } from '../../../shared/sa-sku-variants.js';
 
 export default function BOMViewer({ user }) {
   const showToast = useToast();
@@ -51,12 +53,18 @@ export default function BOMViewer({ user }) {
     return products.find(p => p.productCode === code);
   };
 
+  // Names + volumes come from shared/sa-sku-variants.js (QA #16); only the
+  // chart colours and the refurb entries (not sale SKUs) are local to this page.
+  const VARIANT_COLORS = {
+    SA_CA: '#667eea', SA_HF: '#fa709a', SA_CDIFF: '#4facfe', SA_1L: '#f093fb', SA_PRO: '#43e97b',
+  };
   const VARIANT_CONFIG = {
-    'SA_CA':           { name: 'Oil Cartridge (400ml)',  volume: 400,  color: '#667eea', subCategory: 'Oil Products' },
-    'SA_HF':           { name: '500ml Refill Bottle',    volume: 500,  color: '#fa709a', subCategory: 'Oil Products' },
-    'SA_CDIFF':        { name: '700ml Oil Refill',       volume: 700,  color: '#4facfe', subCategory: 'Oil Products' },
-    'SA_1L':           { name: '1L Refill Bottle',       volume: 1000, color: '#f093fb', subCategory: 'Oil Products' },
-    'SA_PRO':          { name: '1L PRO Bottle',          volume: 1000, color: '#43e97b', subCategory: 'Oil Products' },
+    ...Object.fromEntries(SA_SKU_KEYS.map(k => [k, {
+      name: SA_SKU_VARIANTS[k].label,
+      volume: SA_SKU_VARIANTS[k].volumeMl,
+      color: VARIANT_COLORS[k],
+      subCategory: 'Oil Products',
+    }])),
     'REFURB_SCENTPRO': { name: 'Refurb - Scentpro',     volume: 0,    color: '#f59e0b', subCategory: 'Refurb - Scentpro' },
     'REFURB_SCENTLITE':{ name: 'Refurb - ScentLite',    volume: 0,    color: '#06b6d4', subCategory: 'Refurb - ScentLite' },
   };
@@ -449,7 +457,7 @@ export default function BOMViewer({ user }) {
           <div style={{ fontSize: '32px', fontWeight: '900', color: '#ef4444', marginBottom: '8px' }}>
             {currentBOM.filter(item => {
               const product = getProductByCode(item.componentCode);
-              return product && (parseFloat(product.currentStock) <= parseFloat(product.minStockLevel));
+              return product && isLowStock(product);
             }).length}
           </div>
           <div style={{ fontSize: '13px', color: 'rgba(232,234,242,0.45)', fontWeight: '600' }}>Low Stock Components</div>

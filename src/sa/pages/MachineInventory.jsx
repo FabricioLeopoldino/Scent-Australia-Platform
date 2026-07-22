@@ -3,6 +3,7 @@ import { useToast } from '../components/Toast';
 import ConfirmModal from '../components/ConfirmModal';
 import { GlowingEffect } from '../components/GlowingEffect';
 import { LiquidMetalButton } from '../components/LiquidMetalButton';
+import { getStockStatus as getSharedStockStatus, isLowStock } from '../utils/stockStatus';
 
 export default function MachineInventory({ user }) {
   const showToast = useToast();
@@ -283,18 +284,9 @@ export default function MachineInventory({ user }) {
     }
   };
 
-  const getStockStatus = (machine) => {
-    if (machine.currentStock < 0) {
-      return { label: 'Negative Stock', color: 'red' };
-    }
-    if (machine.currentStock === 0) {
-      return { label: 'Out of Stock', color: 'red' };
-    }
-    if (machine.currentStock < machine.minStockLevel) {
-      return { label: 'Low Stock', color: 'yellow' };
-    }
-    return { label: 'In Stock', color: 'green' };
-  };
+  // Shared definition (utils/stockStatus) — this page's rules were the canonical
+  // ones; they now live in one place instead of being duplicated per screen.
+  const getStockStatus = (machine) => getSharedStockStatus(machine);
 
   const uniqueSubCategories = [...new Set(machines.map(m => m.sub_category).filter(Boolean))];
   const uniqueColors = [...new Set(machines.map(m => m.color).filter(Boolean))];
@@ -302,7 +294,7 @@ export default function MachineInventory({ user }) {
 
   const totalMachines = machines.length;
   const inStock = machines.filter(m => m.currentStock > 0).length;
-  const lowStock = machines.filter(m => m.currentStock > 0 && m.currentStock < m.minStockLevel).length;
+  const lowStock = machines.filter(isLowStock).length;
   const outOfStock = machines.filter(m => m.currentStock === 0).length;
 
   if (loading) {

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useToast } from '../components/Toast';
 import ConfirmModal from '../components/ConfirmModal';
 import { GlowingEffect } from '../components/GlowingEffect';
+import { isLowStock } from '../utils/stockStatus';
 
 export default function DiffuserMachineBOM({ user }) {
   const showToast = useToast();
@@ -396,7 +397,7 @@ export default function DiffuserMachineBOM({ user }) {
           <div style={{ fontSize: '32px', fontWeight: '900', color: '#ef4444', marginBottom: '8px' }}>
             {currentBOM.filter(item => {
               const product = getProductByCode(item.componentCode);
-              return product && product.currentStock <= product.minStockLevel;
+              return product && isLowStock(product);
             }).length}
           </div>
           <div style={{ fontSize: '13px', color: 'rgba(232,234,242,0.45)', fontWeight: '600' }}>Low Stock Components</div>

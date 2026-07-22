@@ -1,3 +1,5 @@
+import { isLowStock } from './stockStatus';
+import { SA_SKU_VARIANTS, SA_SKU_KEYS } from '../../../shared/sa-sku-variants.js';
 /**
  * Export products to Shopify CSV format for inventory sync
  * Format matches Shopify's inventory_bin_new_on_hand_template.csv
@@ -32,13 +34,10 @@ export function exportToShopifyCSV(products) {
   products.forEach(product => {
     if (product.category === 'OILS' && product.shopifySkus) {
       // Essential oils have 4 variants
-      const variants = [
-        { name: 'SA_CA',    label: 'Oil Cartridge (400ml)',      sku: product.shopifySkus.SA_CA },
-        { name: 'SA_HF',    label: '500ML Oil Refill Bottle',    sku: product.shopifySkus.SA_HF },
-        { name: 'SA_1L',    label: '1L Oil Refill Bottle',       sku: product.shopifySkus.SA_1L },
-        { name: 'SA_CDIFF', label: 'Oil Refill (700ml)',         sku: product.shopifySkus.SA_CDIFF },
-        { name: 'SA_PRO',   label: '1L Oil Refill Pro Bottle',   sku: product.shopifySkus.SA_PRO }
-      ];
+      // Labels from shared/sa-sku-variants.js (QA #16) — was a 4th copy.
+      const variants = SA_SKU_KEYS.map(k => ({
+        name: k, label: SA_SKU_VARIANTS[k].label, sku: product.shopifySkus[k],
+      }));
 
       variants.forEach(variant => {
         if (variant.sku) {
@@ -125,7 +124,7 @@ export function exportToShopifyCSV(products) {
  * Export only products with low stock to Shopify CSV
  */
 export function exportLowStockToShopifyCSV(products) {
-  const lowStockProducts = products.filter(p => p.currentStock < p.minStockLevel);
+  const lowStockProducts = products.filter(isLowStock);
   exportToShopifyCSV(lowStockProducts);
 }
 

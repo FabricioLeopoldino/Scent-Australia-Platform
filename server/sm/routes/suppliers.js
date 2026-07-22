@@ -41,6 +41,12 @@ router.put('/suppliers/:id', auth, requireRole('admin', 'root'), async (req, res
 
 router.delete('/suppliers/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
+    // Products reference suppliers by supplier_id — deleting one out from under
+    // them left those products pointing at a supplier that no longer exists.
+    const inUse = await query(`SELECT COUNT(*)::int n FROM products WHERE supplier_id = $1`, [req.params.id])
+    if (inUse.rows[0].n > 0) {
+      return res.status(400).json({ error: `This supplier is assigned to ${inUse.rows[0].n} product(s) — reassign them before deleting it` })
+    }
     await query(`DELETE FROM suppliers WHERE id = $1`, [req.params.id])
     res.json({ success: true })
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }

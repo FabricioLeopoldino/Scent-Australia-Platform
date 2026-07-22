@@ -20,6 +20,24 @@ import { dirname, join } from 'path';
 // Platform DB with search_path=sa,public (PRD §7.3) — unqualified SA queries
 // resolve to schema sa with zero SQL changes. UTC type parser lives in db.js.
 import { saPool as pool } from '../db.js';
+import { SA_SKU_VARIANTS } from '../../shared/sa-sku-variants.js';
+
+// The five sale SKUs as Shopify sees them. Volumes come from the shared module
+// (single source of truth, QA #16); suffix/price are commercial data and live
+// only here. This used to exist twice in this file (once inline in the publish
+// helper, once module-level for add-missing-variants) with identical values —
+// two more copies that had to be edited in lockstep. Now: one.
+const VARIANT_DETAILS = {
+  'SA_CA':    { suffix: 'Oil Cartridge (400ml)',      price: '165.00', weight: SA_SKU_VARIANTS.SA_CA.volumeMl,    weight_unit: 'g' },
+  'SA_HF':    { suffix: '-500ML Oil Refill Bottle',   price: '150.00', weight: SA_SKU_VARIANTS.SA_HF.volumeMl,    weight_unit: 'g' },
+  'SA_CDIFF': { suffix: 'Oil Refill (700ml)',         price: '275.00', weight: SA_SKU_VARIANTS.SA_CDIFF.volumeMl, weight_unit: 'g' },
+  'SA_1L':    { suffix: '1L Oil Refill Bottle',       price: '218.90', weight: SA_SKU_VARIANTS.SA_1L.volumeMl,    weight_unit: 'g' },
+  'SA_PRO':   { suffix: '-1L Oil Refill Pro Bottle',  price: '275.00', weight: SA_SKU_VARIANTS.SA_PRO.volumeMl,   weight_unit: 'g' },
+  // Non-oil categories publish as a single default SKU with no size suffix.
+  'SA_DM':    { suffix: '', price: '0.00', weight: 0, weight_unit: 'g' },
+  'SA_MAC':   { suffix: '', price: '0.00', weight: 0, weight_unit: 'g' },
+  'SA_RM':    { suffix: '', price: '0.00', weight: 0, weight_unit: 'g' },
+};
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -102,16 +120,7 @@ async function createProductInShopify(product) {
   const productName = product.name;
 
   // Scent Australia structure: one separate Shopify product per SKU type (not variants of one product)
-  const variantDetails = {
-    'SA_CA':    { suffix: 'Oil Cartridge (400ml)',      price: '165.00',  weight: 400  },
-    'SA_HF':    { suffix: '-500ML Oil Refill Bottle',   price: '150.00',  weight: 500  },
-    'SA_CDIFF': { suffix: 'Oil Refill (700ml)',          price: '275.00',  weight: 700  },
-    'SA_1L':    { suffix: '1L Oil Refill Bottle',       price: '218.90',  weight: 1000 },
-    'SA_PRO':   { suffix: '-1L Oil Refill Pro Bottle',  price: '275.00',  weight: 1000 },
-    'SA_DM':    { suffix: '',                           price: '0.00',    weight: 0    },
-    'SA_MAC':   { suffix: '',                           price: '0.00',    weight: 0    },
-    'SA_RM':    { suffix: '',                           price: '0.00',    weight: 0    },
-  };
+  const variantDetails = VARIANT_DETAILS;
 
   const productTypeMap = {
     'OILS': 'Fragrance Oil',
@@ -1908,14 +1917,6 @@ router.post('/shopify/publish/:productId', async (req, res) => {
 // SHOPIFY ADD MISSING PRODUCTS - create separate Shopify products for missing SKUs
 // Each SKU type is published as its own product (matching Scent Australia's Shopify structure)
 // ========================================================================
-const VARIANT_DETAILS = {
-  'SA_CA':    { suffix: 'Oil Cartridge (400ml)',       price: '165.00',  weight: 400,  weight_unit: 'g' },
-  'SA_HF':    { suffix: '-500ML Oil Refill Bottle',    price: '150.00',  weight: 500,  weight_unit: 'g' },
-  'SA_CDIFF': { suffix: 'Oil Refill (700ml)',           price: '275.00',  weight: 700,  weight_unit: 'g' },
-  'SA_1L':    { suffix: '1L Oil Refill Bottle',        price: '218.90',  weight: 1000, weight_unit: 'g' },
-  'SA_PRO':   { suffix: '-1L Oil Refill Pro Bottle',   price: '275.00',  weight: 1000, weight_unit: 'g' },
-};
-
 router.post('/shopify/add-missing-variants/:productId', async (req, res) => {
   if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can publish to Shopify' });
   try {

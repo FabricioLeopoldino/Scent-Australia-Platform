@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { SA_SKU_KEYS, skuSizeLabel } from '../../../shared/sa-sku-variants.js';
 import { GlowingEffect } from '../components/GlowingEffect';
 import { useToast } from '../components/Toast';
 
@@ -109,13 +110,8 @@ export default function SkuMapping({ user }) {
     );
   };
 
-  const SKU_SIZES = {
-    SA_CA:    '400ml',
-    SA_HF:    '500ml',
-    SA_CDIFF: '700ml',
-    SA_1L:    '1000ml',
-    SA_PRO:   '1000ml PRO',
-  };
+  // Sizes derived from shared/sa-sku-variants.js (QA #16) — was a 4th copy.
+  const SKU_SIZES = Object.fromEntries(SA_SKU_KEYS.map(k => [k, skuSizeLabel(k)]));
 
   const getCategoryLabel = (category) => {
     const labels = {

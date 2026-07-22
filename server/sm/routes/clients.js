@@ -119,7 +119,24 @@ router.put('/clients/:clientId/labels/:labelId/obsolete', auth, async (req, res)
 
 router.delete('/clients/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
-    await query(`DELETE FROM clients WHERE id = $1`, [req.params.id])
+    // Deleting a client used to run unchecked: production_orders.client_id is
+    // ON DELETE SET NULL (silently orphaning their order history), while
+    // client_stock / client_labels CASCADE (destroying the record of the
+    // client-owned inventory we physically hold). Refuse if any of it exists.
+    const id = req.params.id
+    const [orders, stock, labels] = await Promise.all([
+      query(`SELECT COUNT(*)::int n FROM production_orders WHERE client_id = $1`, [id]),
+      query(`SELECT COUNT(*)::int n FROM client_stock WHERE client_id = $1`, [id]),
+      query(`SELECT COUNT(*)::int n FROM client_labels WHERE client_id = $1`, [id]),
+    ])
+    const blockers = []
+    if (orders.rows[0].n) blockers.push(`${orders.rows[0].n} production order(s)`)
+    if (stock.rows[0].n) blockers.push(`${stock.rows[0].n} client stock item(s)`)
+    if (labels.rows[0].n) blockers.push(`${labels.rows[0].n} client label(s)`)
+    if (blockers.length) {
+      return res.status(400).json({ error: `This client still has ${blockers.join(', ')} — remove or reassign them before deleting the client` })
+    }
+    await query(`DELETE FROM clients WHERE id = $1`, [id])
     res.json({ success: true })
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })

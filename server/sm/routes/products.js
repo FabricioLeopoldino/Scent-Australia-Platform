@@ -295,6 +295,12 @@ router.post('/products/:id/shopify/publish', auth, requireRole('admin', 'root'),
     if (!prod.rows[0]) return res.status(404).json({ error: 'Not found' })
     const p = prod.rows[0]
 
+    // Publishing with no price used to silently fall back to '0.00' — a real,
+    // buyable $0 product on the live store. Refuse instead; set a price first.
+    if (p.price == null || p.price === '' || parseFloat(p.price) <= 0) {
+      return res.status(400).json({ error: 'Set a price on this product before publishing it to Shopify (publishing would list it at $0.00)' })
+    }
+
     const images = []
     if (p.image_data) {
       const base64 = p.image_data.replace(/^data:image\/\w+;base64,/, '')
@@ -313,7 +319,7 @@ router.post('/products/:id/shopify/publish', auth, requireRole('admin', 'root'),
           // B2B products keep product_code as the single-source SKU.
           sku: p.sku || p.product_code,
           barcode: p.barcode || undefined,
-          price: p.price != null ? String(p.price) : '0.00',
+          price: String(p.price), // guaranteed set + > 0 by the guard above
           inventory_management: 'shopify',
           inventory_policy: 'deny',
           inventory_quantity: Math.max(0, Math.trunc(parseFloat(p.current_stock) || 0)),

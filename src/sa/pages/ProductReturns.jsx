@@ -305,8 +305,19 @@ export default function ProductReturns({ user }) {
   };
 
   // ── Scanner: batch submit (uses grouped + edited quantities) ──────────────
-  const handleBatchSubmit = async () => {
+  // The Manual tab on this same page confirms before restocking; this one used to
+  // fire straight into a multi-item stock write with no confirmation step.
+  const handleBatchSubmit = () => {
     if (!scanReturnedBy.trim()) { showToast('Enter the name of the person processing the return', 'warning'); return; }
+    const totalItems = groupedCheckRows.length;
+    const totalQty = groupedCheckRows.reduce((s, r) => s + (parseFloat(r.finalQty) || 0), 0);
+    setConfirmState({
+      message: `Restock ${totalItems} item(s) — ${totalQty} unit(s) total — back into stock? This writes ledger entries and cannot be undone from this screen.`,
+      onConfirm: () => { setConfirmState(null); doBatchSubmit(); },
+    });
+  };
+
+  const doBatchSubmit = async () => {
     setBatchProcessing(true);
     let successCount = 0;
     try {

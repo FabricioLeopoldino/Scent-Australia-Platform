@@ -5,9 +5,12 @@ import BinLocationInput from '../components/BinLocationInput';
 import { GlowingEffect } from '../components/GlowingEffect';
 import MlHelper from '../components/MlHelper';
 import { LiquidMetalButton } from '../components/LiquidMetalButton';
+import ConfirmModal from '../components/ConfirmModal';
+import { isLowStock } from '../utils/stockStatus';
 
 export default function StockManagement({ user }) {
   const showToast = useToast();
+  const [confirmState, setConfirmState] = useState(null);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -55,6 +58,20 @@ export default function StockManagement({ user }) {
 
   const handleAdjust = async (e) => {
     e.preventDefault();
+    // Removing stock is destructive and irreversible from this screen — confirm
+    // first, matching the confirm-before-destroy pattern used on Product
+    // Management / Machine Inventory deletes. Adding stock needs no confirm.
+    if (type === 'remove') {
+      setConfirmState({
+        message: `Remove ${quantity} ${displayUnit(selectedProduct)} from "${selectedProduct?.name}"? This adjusts live stock and writes a ledger entry.`,
+        onConfirm: () => { setConfirmState(null); doAdjust(); },
+      });
+      return;
+    }
+    doAdjust();
+  };
+
+  const doAdjust = async () => {
     setSubmitting(true);
 
     try {
@@ -128,7 +145,7 @@ export default function StockManagement({ user }) {
 
   const getStockStatus = (product) => {
     if (product.currentStock === 0) return { label: 'Out of Stock', class: 'red' };
-    if (product.currentStock < product.minStockLevel) return { label: 'Low Stock', class: 'yellow' };
+    if (isLowStock(product)) return { label: 'Low Stock', class: 'yellow' };
     return { label: 'Healthy', class: 'green' };
   };
 
@@ -511,6 +528,14 @@ export default function StockManagement({ user }) {
             </form>
           </div>
         </div>
+      )}
+
+      {confirmState && (
+        <ConfirmModal
+          message={confirmState.message}
+          onConfirm={confirmState.onConfirm}
+          onCancel={() => setConfirmState(null)}
+        />
       )}
     </div>
   );

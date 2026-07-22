@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useToast } from '../components/Toast';
+import { getStockStatus, isLowStock, isReorderSoon } from '../utils/stockStatus';
 
 export default function RawMaterials({ user }) {
   const showToast = useToast();
@@ -71,15 +72,19 @@ export default function RawMaterials({ user }) {
     }
   };
 
+  // Thresholds come from utils/stockStatus so this page can't drift from the
+  // rest of the app (it used to define its own `<=` rule, a third variant).
   const getStatusColor = (product) => {
-    if (product.currentStock <= product.minStockLevel) return '#ef4444';
-    if (product.currentStock <= product.minStockLevel * 1.5) return '#f59e0b';
+    const s = getStockStatus(product);
+    if (s.key === 'NEGATIVE' || s.key === 'OUT' || s.key === 'LOW') return '#ef4444';
+    if (isReorderSoon(product)) return '#f59e0b';
     return '#10b981';
   };
 
   const getStatusText = (product) => {
-    if (product.currentStock <= product.minStockLevel) return 'Low Stock';
-    if (product.currentStock <= product.minStockLevel * 1.5) return 'Reorder Soon';
+    const s = getStockStatus(product);
+    if (s.key !== 'HEALTHY') return s.label;
+    if (isReorderSoon(product)) return 'Reorder Soon';
     return 'Healthy';
   };
 
@@ -106,7 +111,7 @@ export default function RawMaterials({ user }) {
           <div className="stat-label">Total Components</div>
         </div>
         <div className="stat-card" style={{ background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)' }}>
-          <div className="stat-value">{products.filter(p => p.currentStock <= p.minStockLevel).length}</div>
+          <div className="stat-value">{products.filter(isLowStock).length}</div>
           <div className="stat-label">Low Stock Items</div>
         </div>
         <div className="stat-card" style={{ background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)' }}>

@@ -3,6 +3,7 @@ import { useSearch } from 'wouter';
 import { useToast } from '../components/Toast';
 import ConfirmModal from '../components/ConfirmModal';
 import { displayStock } from '../utils/unitConversion';
+import { getStockStatus as getSharedStockStatus } from '../utils/stockStatus';
 import { exportProductsToExcel } from '../utils/excelExport';
 import BinLocationInput from '../components/BinLocationInput';
 import { GlowingEffect } from '../components/GlowingEffect';
@@ -596,15 +597,9 @@ export default function ProductManagement({ user }) {
     return badges[category] || 'badge-gray';
   };
 
-  const getStockStatus = (product) => {
-    if (product.currentStock === 0) {
-      return { label: 'Out of Stock', color: 'red' };
-    }
-    if (product.currentStock < product.minStockLevel) {
-      return { label: 'Low Stock', color: 'yellow' };
-    }
-    return { label: 'Healthy', color: 'green' };
-  };
+  // Shared definition (utils/stockStatus) — this page previously had no
+  // negative-stock branch, so an overdrawn product showed as plain "Low Stock".
+  const getStockStatus = (product) => getSharedStockStatus(product);
 
   if (loading) {
     return (
