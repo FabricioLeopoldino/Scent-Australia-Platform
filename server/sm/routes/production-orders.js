@@ -247,9 +247,11 @@ router.get('/production-orders', auth, async (req, res) => {
     const result = await query(q, params)
     for (const order of result.rows) {
       const lines = await query(
-        `SELECT pol.*, p.name as fragrance_name, pfg.name as fg_product_name, pfg.volume_ml, pfg.default_oil_pct
+        `SELECT pol.*, p.name as fragrance_name, oil.name as oil_name,
+                pfg.name as fg_product_name, pfg.volume_ml, pfg.default_oil_pct
          FROM production_order_lines pol
          LEFT JOIN products p ON pol.fragrance_id = p.id
+         LEFT JOIN sa.products oil ON oil.id = pol.oil_id
          LEFT JOIN products pfg ON pfg.product_code = pol.product_type AND pfg.category = 'FINISHED_GOOD'
          WHERE pol.production_order_id = $1 ORDER BY pol.line_number`,
         [order.id]

@@ -4,6 +4,7 @@ import axios from 'axios'
 import { useToast } from '../SMModule.jsx'
 import SearchSelect from '../components/SearchSelect.jsx'
 import { fmt, fmtDate } from '../utils/date.js'
+import { LineFlags, lineScent } from '../components/LineMeta.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -492,7 +493,8 @@ export default function ManufacturingQueue() {
                               <span style={{ fontSize: 12, fontWeight: 700, color: '#e8eaf2' }}>
                                 {ptLabel(line)} × {line.quantity}
                               </span>
-                              {line.fragrance_name && <span style={{ fontSize: 12, color: '#a78bfa' }}>— {line.fragrance_name}</span>}
+                              {lineScent(line) && <span style={{ fontSize: 12, color: '#a78bfa' }}>— {lineScent(line)}</span>}
+                              <LineFlags line={line} />
                               {isDone && <span style={{ fontSize: 10, background: 'rgba(34,197,94,0.15)', color: '#4ade80', padding: '1px 8px', borderRadius: 20, fontWeight: 700 }}>✓ DONE</span>}
                             </div>
                             {/* Step pills */}
@@ -635,7 +637,7 @@ export default function ManufacturingQueue() {
             {(modal.order.lines || []).map((line, li) => {
               const ll = completeForm.line_leftovers[line.id] || {}
               const setLL = (field, val) => setCompleteForm(f => ({ ...f, line_leftovers: { ...f.line_leftovers, [line.id]: { ...f.line_leftovers[line.id], [field]: val } } }))
-              const fragName = line.fragrance_name
+              const fragName = lineScent(line)
               return (
                 <div key={line.id} style={{ marginBottom: 14, padding: '14px 16px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: '#e8eaf2', marginBottom: 10 }}>
@@ -741,7 +743,7 @@ export default function ManufacturingQueue() {
                 <div key={line.id} style={{ marginBottom: 14, padding: '14px 16px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: '#e8eaf2', marginBottom: 12 }}>
                     Line {line.line_number}: {ptLabel(line)} × {line.quantity}
-                    {line.fragrance_name && <span style={{ color: '#a78bfa', fontWeight: 400, marginLeft: 6 }}>— {line.fragrance_name}</span>}
+                    {lineScent(line) && <span style={{ color: '#a78bfa', fontWeight: 400, marginLeft: 6 }}>— {lineScent(line)}</span>}
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                     <F label="Boxes for this product">

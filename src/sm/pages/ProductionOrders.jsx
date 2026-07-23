@@ -6,6 +6,7 @@ import { useToast } from '../SMModule.jsx'
 import ConfirmModal from '../components/ConfirmModal.jsx'
 import SearchSelect from '../components/SearchSelect.jsx'
 import { fmtDate as fmt } from '../utils/date.js'
+import { LineFlags, lineScent } from '../components/LineMeta.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -154,7 +155,7 @@ export default function ProductionOrders() {
     const items = orderLines.length > 0
       ? orderLines.map(l => ({
           _lineId: l.id,
-          product_name: [l.fragrance_name, l.fg_product_name || productTypes.find(p => p.key === l.product_type)?.label || l.product_type].filter(Boolean).join(' — '),
+          product_name: [lineScent(l), l.fg_product_name || productTypes.find(p => p.key === l.product_type)?.label || l.product_type].filter(Boolean).join(' — '),
           processing_type: 'labels',
           qty_requested: l.quantity ? String(l.quantity) : '',
           qty_sent: '',
@@ -493,7 +494,7 @@ export default function ProductionOrders() {
                       </span>
                     </div>
                     <div style={{ fontSize: 10, color: 'rgba(232,234,242,0.6)' }}>
-                      {l.fragrance_name && <span>{l.fragrance_name}{l.oil_pct ? ` · ${l.oil_pct}%` : ''} · </span>}
+                      {lineScent(l) && <span>{lineScent(l)}{l.oil_pct ? ` · ${l.oil_pct}%` : ''} · </span>}
                       <strong style={{ color: '#e8eaf2' }}>{l.quantity} units</strong>
                     </div>
                     {flags.length > 0 && (
@@ -663,8 +664,9 @@ function OrderDetail({ order, onRefresh, productTypes = [] }) {
             <span style={{ fontSize: 10, fontWeight: 800, color: lc, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Line {line.line_number}</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: '#e8eaf2' }}>{productTypes.find(p => p.key === line.product_type)?.label || line.fg_product_name || line.product_type}</span>
             <span style={{ fontSize: 12, color: 'rgba(232,234,242,0.5)' }}>× {line.quantity}</span>
-            {line.fragrance_name && <span style={{ fontSize: 12, color: '#a78bfa' }}>— {line.fragrance_name}</span>}
+            {lineScent(line) && <span style={{ fontSize: 12, color: '#a78bfa' }}>— {lineScent(line)}</span>}
             {(() => { const pt = productTypes.find(p => p.key === line.product_type); return pt && !pt.is_candle && !pt.is_pure_oil && <span style={{ fontSize: 11, color: 'rgba(232,234,242,0.4)' }}>@ {line.oil_pct}% oil</span> })()}
+            <LineFlags line={line} style={{ marginLeft: 'auto' }} />
           </div>
           {line.components && line.components.length > 0 && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>

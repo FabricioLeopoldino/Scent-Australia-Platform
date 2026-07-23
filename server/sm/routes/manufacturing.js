@@ -40,13 +40,14 @@ router.get('/manufacturing/queue', auth, async (req, res) => {
 
     for (const order of result.rows) {
       const lines = await query(
-        `SELECT pol.*, pf.name as fragrance_name, cl.label_name, cl.artwork_version, cl.quantity as label_stock,
+        `SELECT pol.*, pf.name as fragrance_name, oil.name as oil_name, cl.label_name, cl.artwork_version, cl.quantity as label_stock,
                 pfg.name as fg_product_name,
                 ep.id as labels_ep_id, ep.status as labels_ep_status,
                 ep.supplier as labels_ep_supplier, ep.expected_return as labels_ep_eta,
                 ep.qty_requested as labels_ep_qty_requested, ep.qty_returned as labels_ep_qty_returned
          FROM production_order_lines pol
          LEFT JOIN products pf ON pol.fragrance_id = pf.id
+         LEFT JOIN sa.products oil ON oil.id = pol.oil_id
          LEFT JOIN client_labels cl ON cl.id = pol.label_client_label_id
          LEFT JOIN products pfg ON pfg.product_code = pol.product_type AND pfg.category = 'FINISHED_GOOD'
          LEFT JOIN LATERAL (
