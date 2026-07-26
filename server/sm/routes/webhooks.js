@@ -7,7 +7,7 @@ const { auth, auditLog } = require('../auth')
 const { enqueueDraftOrder, buildDraftOrderPayload } = require('../services/shopify-sync')
 const { adjustProductStock } = require('../services/stock-service')
 const { computeFinishedGoodBom } = require('../services/bom-builder')
-const { consumeFragranceOil, restoreFragranceOil } = require('../services/fragrance-library')
+const { consumeFragranceOil } = require('../services/fragrance-library')
 const { setOrderStatus } = require('../services/order-status')
 
 const processingOrders = new Set()
@@ -101,27 +101,39 @@ async function smFulfillmentHandler(req, res, topic, body) {
         // roll back the whole fulfillment — record it and allow negative.
         const opts = { skipShopifyPush: true, allowNegative: true };
 
-        // D16 — MUSE make-to-order: if the variant has an oil_id AND its master
-        // defines a BOM, the finished good was NOT pre-produced. Deduct its full
-        // BOM here instead of a finished-good stock row: oil from the shared
-        // Fragrance Library (MUSE bucket) + ethanol + packaging. On cancel, restore
-        // all. Variants without oil_id/BOM keep the legacy finished-good deduction.
+        // ── MUSE stock model (D16 + hybrid, owner 2026-07-24) ────────────────
+        // A finished-good variant can be sold two ways, and the choice is made
+        // PER SALE by whether pre-made stock exists:
+        //
+        //   SALE with finished stock on hand  → deduct the finished good.
+        //     Covers pre-produced batches and imports (e.g. 1000 units made in
+        //     China, entered via Add Stock / PO receive). The oil was consumed
+        //     THERE, not from our Library, so we must NOT debit the BOM.
+        //
+        //   SALE with no finished stock       → make-to-order: consume the BOM
+        //     (oil from the shared Fragrance Library + ethanol + packaging). This
+        //     is the default MUSE flow — produce on demand.
+        //
+        //   CANCELLATION (any)                → credit the finished good. A
+        //     cancelled fulfillment means a PHYSICAL finished unit came back (or
+        //     never shipped); it exists as stock now, whatever its origin. We do
+        //     NOT "un-produce" it back into oil — the next sale consumes it via
+        //     the rule above. This makes the two directions net out correctly:
+        //     produce-on-demand → cancel → one unit now sits in finished stock.
+        const finishedStock = parseFloat(p.current_stock) || 0;
         const bom = await computeFinishedGoodBom(tq, p.id, qty);
-        if (bom.makeToOrder) {
-          if (isCancel) {
-            await restoreFragranceOil(tq, bom.oil.oil_id, bom.oil.ml, 'MUSE', `${note} — oil restored`);
-          } else {
-            await consumeFragranceOil(tq, bom.oil.oil_id, bom.oil.ml, 'MUSE', `${note} — MUSE retail sale`);
-          }
+        const produceNow = isShip && bom.makeToOrder && finishedStock <= 0;
+
+        if (produceNow) {
+          await consumeFragranceOil(tq, bom.oil.oil_id, bom.oil.ml, 'MUSE', `${note} — MUSE retail sale (made to order)`);
           const matResults = [];
           for (const m of bom.materials) {
-            const u = await adjustProductStock(
-              m.product_id, isCancel ? m.qty : -m.qty, txType, note, null, null, null, tq, opts
-            );
+            const u = await adjustProductStock(m.product_id, -m.qty, txType, note, null, null, null, tq, opts);
             matResults.push({ code: m.product_code, qty: m.qty, unit: m.unit, stock_after: parseFloat(u.current_stock) });
           }
           results.push({ sku, name: p.name, qty, make_to_order: true, oil_ml: bom.oil.ml, materials: matResults });
         } else {
+          // Finished-good movement: sale deducts, cancellation credits.
           const delta = isCancel ? qty : -qty;
           const updated = await adjustProductStock(p.id, delta, txType, note, null, null, null, tq, opts);
           const stockAfter = parseFloat(updated.current_stock);
@@ -129,7 +141,7 @@ async function smFulfillmentHandler(req, res, topic, body) {
           if (oversold) {
             console.warn(`[muse-fulfil] ${sku} oversold — stock now ${stockAfter} (sale recorded; investigate physical count)`);
           }
-          results.push({ sku, name: p.name, qty, delta, stock_after: stockAfter, oversold });
+          results.push({ sku, name: p.name, qty, delta, from_finished_stock: true, stock_after: stockAfter, oversold });
         }
       }
 

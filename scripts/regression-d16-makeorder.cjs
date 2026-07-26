@@ -50,7 +50,18 @@ async function cleanup() {
   if (variantId) await sm.query(`DELETE FROM transactions WHERE product_id = $1`, [variantId]);
   await sm.query(`DELETE FROM transactions WHERE notes LIKE '%D16-PROBE%'`);
   await sm.query(`DELETE FROM sa.transactions WHERE notes LIKE '%D16-PROBE%'`);
-  if (OIL && orig.oil != null) await sm.query(`UPDATE sa.products SET "currentStock" = $1 WHERE id = $2`, [orig.oil, OIL]);
+  // Restoring the oil changes sa.products, which fires SA's log_direct_stock_change
+  // trigger — its INSERT targets an unqualified `direct_stock_changes`, so the
+  // write must run with search_path=sa (the SA app brackets this the same way).
+  if (OIL && orig.oil != null) {
+    const c = await sm.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL search_path TO sa, public');
+      await c.query(`UPDATE sa.products SET "currentStock" = $1 WHERE id = $2`, [orig.oil, OIL]);
+      await c.query('COMMIT');
+    } catch (e) { await c.query('ROLLBACK').catch(() => {}); } finally { c.release(); }
+  }
   for (const c of MATS) if (orig[c] != null) await sm.query(`UPDATE products SET current_stock = $1 WHERE product_code = $2`, [orig[c], c]);
   if (variantId) await sm.query(`DELETE FROM products WHERE id = $1`, [variantId]);
 }
@@ -63,6 +74,11 @@ async function cleanup() {
 
   orig.oil = await oilStock(OIL);
   for (const c of MATS) orig[c] = await smStock(c);
+
+  // Idempotent: drop any probe variant left by a previously-aborted run so the
+  // INSERT below can't collide on product_code.
+  await sm.query(`DELETE FROM transactions WHERE product_id IN (SELECT id FROM products WHERE product_code = '__D16_PROBE')`);
+  await sm.query(`DELETE FROM products WHERE product_code = '__D16_PROBE'`);
 
   variantId = (await sm.query(
     `INSERT INTO products (name, sku, category, segment, master_product_id, oil_id, current_stock, product_code)
@@ -88,14 +104,36 @@ async function cleanup() {
   const oilTx = await sm.query(`SELECT type FROM sa.transactions WHERE notes LIKE '%D16-PROBE%' AND type = 'muse_production'`);
   oilTx.rows.length >= 1 ? ok('oil consumption tagged muse_production (feeds SA demand + 4-bucket report)') : bad('no muse_production tx in sa', JSON.stringify(oilTx.rows));
 
-  // ── CANCEL → restore oil + ethanol + packaging exactly ──
-  await send('fulfillments/update', { id: FID, order_id: FID, status: 'cancelled', ...order, line_items: [{ sku: SKU, quantity: 2 }] });
-  await waitUntil(async () => near(await oilStock(OIL), orig.oil) && near(await smStock('RM-ETHANOL'), orig['RM-ETHANOL']));
+  const vStockOf = async () => parseFloat((await sm.query(`SELECT current_stock FROM products WHERE id = $1`, [variantId])).rows[0].current_stock);
 
-  const oilR = await oilStock(OIL), ethR = await smStock('RM-ETHANOL'), botR = await smStock('CMP-RB200'), lidR = await smStock('CMP-RLID');
-  (near(oilR, orig.oil) && near(ethR, orig['RM-ETHANOL']) && near(botR, orig['CMP-RB200']) && near(lidR, orig['CMP-RLID']))
-    ? ok('cancellation restores oil + ethanol + packaging exactly')
-    : bad('cancellation did not fully restore', `oil ${oilR}/${orig.oil} eth ${ethR}/${orig['RM-ETHANOL']} bot ${botR} lid ${lidR}`);
+  // ── CANCEL a made-to-order sale → the finished unit came back, so it becomes
+  //    FINISHED STOCK (+2). Oil/materials are NOT restored (we don't un-produce). ──
+  await send('fulfillments/update', { id: FID, order_id: FID, status: 'cancelled', ...order, line_items: [{ sku: SKU, quantity: 2 }] });
+  await waitUntil(async () => near(await vStockOf(), 2));
+
+  const vAfterCancel = await vStockOf();
+  const oilR = await oilStock(OIL), ethR = await smStock('RM-ETHANOL');
+  near(vAfterCancel, 2)
+    ? ok('cancel of a made-to-order sale credits FINISHED stock (unit came back ready, +2)', `variant 0 → ${vAfterCancel}`)
+    : bad('cancel did not credit finished stock', `variant=${vAfterCancel}`);
+  (near(oilR, orig.oil - 100) && near(ethR, orig['RM-ETHANOL'] - 300))
+    ? ok('cancel does NOT un-produce: oil/ethanol stay as the sale left them')
+    : bad('cancel wrongly restored oil/ethanol', `oil ${oilR} (want ${orig.oil - 100}) eth ${ethR} (want ${orig['RM-ETHANOL'] - 300})`);
+
+  // ── HYBRID / China: a variant WITH finished stock on hand sells FROM that
+  //    stock, not the BOM (the oil was consumed at the factory, not our Library). ──
+  await sm.query(`UPDATE products SET current_stock = 10 WHERE id = $1`, [variantId]); // 10 units imported ready
+  const oilBeforeHybrid = await oilStock(OIL), ethBeforeHybrid = await smStock('RM-ETHANOL');
+  await send('fulfillments/create', { id: FID + 1, order_id: FID + 1, status: 'success', name: '#D16-PROBE', line_items: [{ sku: SKU, quantity: 3 }] });
+  await waitUntil(async () => near(await vStockOf(), 7));
+
+  const vHybrid = await vStockOf(), oilHybrid = await oilStock(OIL), ethHybrid = await smStock('RM-ETHANOL');
+  near(vHybrid, 7)
+    ? ok('sale WITH finished stock deducts the finished good (10 → 7), not the BOM')
+    : bad('finished stock not deducted', `variant=${vHybrid}`);
+  (near(oilHybrid, oilBeforeHybrid) && near(ethHybrid, ethBeforeHybrid))
+    ? ok('sale from finished stock does NOT touch the Library oil / ethanol')
+    : bad('BOM was wrongly debited despite finished stock', `oil ${oilHybrid}/${oilBeforeHybrid} eth ${ethHybrid}/${ethBeforeHybrid}`);
 
   await cleanup();
   console.log(`\n══════ D16 MUSE MAKE-TO-ORDER: ${fail === 0 ? '✅ ALL PASS' : '❌ FAILURES'} (${pass} pass / ${fail} fail) ══════`);
