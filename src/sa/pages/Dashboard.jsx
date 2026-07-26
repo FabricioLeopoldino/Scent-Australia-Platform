@@ -223,8 +223,9 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* SA Scented Products Widget */}
-      {scentedDash && scentedDash.groups > 0 && (
+      {/* SA Scented Products Widget — hidden by owner 2026-07-24 ("not usable for
+          now"). Data/page kept intact; remove the `false &&` to restore. */}
+      {false && scentedDash && scentedDash.groups > 0 && (
         <div className="card" style={{ marginBottom: '28px', borderLeft: '3px solid #ec4899', position: 'relative', overflow: 'visible' }}>
           <GlowingEffect spread={40} glow={false} disabled={false} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
 

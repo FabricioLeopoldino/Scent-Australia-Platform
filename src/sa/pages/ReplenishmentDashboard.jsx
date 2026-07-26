@@ -545,21 +545,7 @@ export default function ReplenishmentDashboard({ user }) {
   const [importedBy, setImportedBy] = useState('');
   const [showSupplierModal, setShowSupplierModal] = useState(false);
   const fileInputRef = useRef();
-  const [pendingOrders, setPendingOrders] = useState([]);
-  const [pendingOrdersEnabled, setPendingOrdersEnabled] = useState(false);
-  const [pendingOrdersLoading, setPendingOrdersLoading] = useState(false);
-  const [showPendingOrders, setShowPendingOrders] = useState(false);
-
-  const fetchPendingOrders = async () => {
-    setPendingOrdersLoading(true);
-    try {
-      const res = await fetch('/api/shopify/pending-orders');
-      const json = await res.json();
-      setPendingOrdersEnabled(json.enabled);
-      setPendingOrders(json.orders || []);
-    } catch (e) { /* silent */ }
-    finally { setPendingOrdersLoading(false); }
-  };
+  // Live Shopify Pending Orders removed 2026-07-24 (owner: build-time only tool).
 
   const fetchData = async () => {
     setLoading(true); setError(null);
@@ -573,7 +559,6 @@ export default function ReplenishmentDashboard({ user }) {
 
   useEffect(() => {
     fetchData();
-    fetchPendingOrders();
     const saved = localStorage.getItem('replenishment_imported_by');
     if (saved) setImportedBy(saved);
   }, []);
@@ -967,92 +952,9 @@ export default function ReplenishmentDashboard({ user }) {
         Retail = last 30 days of Shopify/transaction history. B2B = Salesforce forecast ÷ 120. Status based on Conservative scenario. Click product name to see consumption detail.
       </p>
 
-      {/* Live Shopify Pending Orders */}
-      <div style={{ marginTop: 32 }}>
-        <div
-          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', padding: '14px 20px', background: 'rgba(37,99,235,0.08)', border: '1px solid rgba(37,99,235,0.25)', borderRadius: 12, marginBottom: showPendingOrders ? 0 : 0 }}
-          onClick={() => { setShowPendingOrders(p => !p); if (!showPendingOrders) fetchPendingOrders(); }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 18 }}>🛒</span>
-            <span style={{ fontWeight: 700, fontSize: 14, color: '#93c5fd' }}>Live Shopify Pending Orders</span>
-            {pendingOrders.length > 0 && (
-              <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)' }}>
-                {pendingOrders.length} unfulfilled
-              </span>
-            )}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {pendingOrdersLoading && <span style={{ fontSize: 11, color: '#93c5fd' }}>Loading...</span>}
-            <button
-              onClick={e => { e.stopPropagation(); fetchPendingOrders(); }}
-              style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, border: '1px solid rgba(37,99,235,0.4)', background: 'transparent', color: '#93c5fd', cursor: 'pointer' }}
-            >↻ Refresh</button>
-            <span style={{ color: '#93c5fd', fontSize: 18 }}>{showPendingOrders ? '▲' : '▼'}</span>
-          </div>
-        </div>
-
-        {showPendingOrders && (
-          <div style={{ border: '1px solid rgba(37,99,235,0.25)', borderTop: 'none', borderRadius: '0 0 12px 12px', overflow: 'hidden' }}>
-            {!pendingOrdersEnabled ? (
-              <div style={{ padding: 24, textAlign: 'center', color: 'rgba(232,234,242,0.4)', fontSize: 13 }}>
-                Shopify not connected. Set SHOPIFY_ACCESS_TOKEN and SHOPIFY_STORE_NAME in environment.
-              </div>
-            ) : pendingOrders.length === 0 ? (
-              <div style={{ padding: 24, textAlign: 'center', color: 'rgba(232,234,242,0.4)', fontSize: 13 }}>
-                No unfulfilled orders in Shopify right now.
-              </div>
-            ) : (
-              <div className="table-scroll" style={{ overflowX: 'auto' }}>
-                <table className="table" style={{ margin: 0 }}>
-                  <thead>
-                    <tr>
-                      <th style={{ fontSize: 11 }}>Order #</th>
-                      <th style={{ fontSize: 11 }}>Date</th>
-                      <th style={{ fontSize: 11 }}>Customer</th>
-                      <th style={{ fontSize: 11 }}>SKU</th>
-                      <th style={{ fontSize: 11 }}>Product</th>
-                      <th style={{ fontSize: 11, textAlign: 'right' }}>Qty</th>
-                      <th style={{ fontSize: 11 }}>Matched</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pendingOrders.flatMap(order =>
-                      order.lineItems.map((item, idx) => (
-                        <tr key={`${order.shopifyOrderId}_${idx}`}>
-                          {idx === 0 && (
-                            <>
-                              <td rowSpan={order.lineItems.length} style={{ fontWeight: 700, color: '#60a5fa', fontSize: 12 }}>
-                                #{order.orderNumber}
-                              </td>
-                              <td rowSpan={order.lineItems.length} style={{ fontSize: 11, color: 'rgba(232,234,242,0.45)' }}>
-                                {new Date(order.createdAt).toLocaleDateString('en-AU', { day: '2-digit', month: '2-digit', year: 'numeric' })}
-                              </td>
-                              <td rowSpan={order.lineItems.length} style={{ fontSize: 12 }}>{order.customer}</td>
-                            </>
-                          )}
-                          <td style={{ fontFamily: 'monospace', fontSize: 11, color: '#93c5fd' }}>{item.sku || '—'}</td>
-                          <td style={{ fontSize: 12 }}>{item.title}</td>
-                          <td style={{ textAlign: 'right', fontWeight: 700, fontSize: 12 }}>{item.quantity}</td>
-                          <td>
-                            {item.localProduct ? (
-                              <span style={{ fontSize: 11, color: '#10b981', fontWeight: 600 }}>
-                                ✓ {item.localProduct.productCode}
-                              </span>
-                            ) : (
-                              <span style={{ fontSize: 11, color: 'rgba(232,234,242,0.3)' }}>No match</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      {/* Live Shopify Pending Orders — removed by owner 2026-07-24 ("only used it
+          while building the app, no longer needed"). Backend route
+          GET /api/shopify/pending-orders is left intact and simply unused. */}
 
       {/* Product Detail Modal */}
       {selectedProduct && (

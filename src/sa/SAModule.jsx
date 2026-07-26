@@ -77,7 +77,7 @@ function SAContent({ user, onSwitchModule, onLogout }) {
                 <li><Link href="/replenishment" className={isActive('/replenishment') ? 'nav-active' : ''}>Demand Planning</Link></li>
               )}
               <li><Link href="/formulas" className={isActive('/formulas') ? 'nav-active' : ''}>Formulas</Link></li>
-              <li><Link href="/scented-products" className={isActive('/scented-products') ? 'nav-active' : ''}>Scented</Link></li>
+              {/* Scented nav hidden by owner 2026-07-24 ("not usable for now"). Route + page kept below; re-add this line to restore. */}
               {['admin', 'root'].includes(user.role) && (
                 <li><Link href="/sku-mapping" className={isActive('/sku-mapping') ? 'nav-active' : ''}>SKU Mapping</Link></li>
               )}

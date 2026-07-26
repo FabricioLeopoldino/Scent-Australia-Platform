@@ -216,6 +216,13 @@ html.dark .sm-scope aside[style*="background:var(--card-bg)"] {
 
 .sm-scope .modal-sm { max-width: 420px; }
 .sm-scope .modal-lg { max-width: 720px; }
+
+/* Inline drawers/modals that fill their panel with var(--card-bg) directly bleed
+   the page through — that token is 0.75-alpha (owner-reported 2026-07-22 on Muse
+   Catalog + Bill of Materials). This gives those panels the SAME solid fill the
+   .modal class already forces. Apply it and drop the inline background. */
+.sm-scope .sm-solid-panel { background: #101827; }
+html:not(.dark) .sm-scope .sm-solid-panel { background: #ffffff; }
 .sm-scope .modal-header {
   display: flex; justify-content: space-between; align-items: flex-start;
   padding: 24px 32px; border-bottom: 1px solid var(--border);

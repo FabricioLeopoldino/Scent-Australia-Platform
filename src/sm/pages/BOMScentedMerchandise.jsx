@@ -217,9 +217,9 @@ function BOMDrawer({ master, onClose }) {
   const accent = isMajor ? '#a78bfa' : '#60a5fa'
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9000, display: 'flex', justifyContent: 'flex-end' }}>
-      <div onClick={e => e.stopPropagation()} style={{
+      <div onClick={e => e.stopPropagation()} className="sm-solid-panel" style={{
         width: '100%', maxWidth: 720, height: '100vh',
-        background: 'var(--card-bg)', borderLeft: '1px solid var(--border-h)', boxShadow: 'var(--shadow-md)',
+        borderLeft: '1px solid var(--border-h)', boxShadow: 'var(--shadow-md)',
         overflowY: 'auto', padding: 28,
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18 }}>

@@ -322,7 +322,7 @@ export default function MuseProducts() {
       {/* Confirm delete */}
       {deleteTarget && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9500, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-h)', boxShadow: 'var(--shadow-md)', borderRadius: 14, padding: 28, width: 400 }}>
+          <div className="sm-solid-panel" style={{ border: '1px solid var(--border-h)', boxShadow: 'var(--shadow-md)', borderRadius: 14, padding: 28, width: 400 }}>
             <div style={{ fontSize: 16, fontWeight: 700, color: '#e8eaf2', marginBottom: 10 }}>Archive master?</div>
             <div style={{ fontSize: 13, color: 'rgba(232,234,242,0.6)', marginBottom: 20, lineHeight: 1.5 }}>
               "{deleteTarget.master.name}" will be archived (soft delete). Variants and stock history are preserved.
@@ -424,9 +424,9 @@ function MasterCard({ master, onClick, onEdit, onDelete, onZoom, highlight }) {
 function DetailDrawer({ master, detail, loading, fragrances, availableFragrances, addFragId, setAddFragId, onAddFragrance, addingFragrance, onRemoveFragrance, onClose, onDelete, onEditBOM }) {
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9000, display: 'flex', justifyContent: 'flex-end' }}>
-      <div onClick={e => e.stopPropagation()} style={{
+      <div onClick={e => e.stopPropagation()} className="sm-solid-panel" style={{
         width: '100%', maxWidth: 640, height: '100vh',
-        background: 'var(--card-bg)', borderLeft: '1px solid var(--border-h)', boxShadow: 'var(--shadow-md)',
+        borderLeft: '1px solid var(--border-h)', boxShadow: 'var(--shadow-md)',
         overflowY: 'auto', padding: 28,
       }}>
         {/* Header */}
