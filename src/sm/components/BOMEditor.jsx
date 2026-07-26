@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, X, Calculator, Beaker, BookOpen, ExternalLink } from 'lucide-react'
+import { Plus, Trash2, X, Calculator, Beaker, BookOpen, ExternalLink, History } from 'lucide-react'
 import axios from 'axios'
 import { useLocation } from 'wouter'
 import { useToast } from '../SMModule.jsx'
 import SearchSelect from './SearchSelect.jsx'
 import IconButton from './IconButton.jsx'
+import BomHistory from './BomHistory.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -36,6 +37,7 @@ export default function BOMEditor({ productCode, master = {}, clientId, onChange
   const [savingEdit, setSavingEdit] = useState(false)
   const [calcQty, setCalcQty] = useState(100)
   const [calcOilPct, setCalcOilPct] = useState(parseFloat(master.default_oil_pct) || 25)
+  const [showHistory, setShowHistory] = useState(false)
   const { addToast } = useToast()
 
   // MUSE BOMs draw from MUSE + Shared components; SM/Standard/Major draw from
@@ -166,18 +168,30 @@ export default function BOMEditor({ productCode, master = {}, clientId, onChange
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 800, color: 'rgba(232,234,242,0.6)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
           <BookOpen size={14} /> BOM Components
         </div>
-        {readOnly ? (
-          <button onClick={() => navigate(`${isMuse ? '/bom-muse' : '/bom-sm'}#m-${encodeURIComponent(productCode || '')}`)}
-            style={{ background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.3)', borderRadius: 6, padding: '5px 11px', cursor: 'pointer', color: '#60a5fa', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}>
-            <ExternalLink size={11} /> Edit in BOM page
-          </button>
-        ) : (
-          <button onClick={() => setShowAdd(s => !s)}
-            style={{ background: showAdd ? 'rgba(96,165,250,0.15)' : 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.3)', borderRadius: 6, padding: '5px 11px', cursor: 'pointer', color: '#60a5fa', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}>
-            <Plus size={11} /> {showAdd ? 'Cancel' : 'Add Component'}
-          </button>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {productCode && (
+            <button onClick={() => setShowHistory(true)} title="View & restore previous BOM versions"
+              style={{ background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.3)', borderRadius: 6, padding: '5px 11px', cursor: 'pointer', color: '#a78bfa', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <History size={11} /> History
+            </button>
+          )}
+          {readOnly ? (
+            <button onClick={() => navigate(`${isMuse ? '/bom-muse' : '/bom-sm'}#m-${encodeURIComponent(productCode || '')}`)}
+              style={{ background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.3)', borderRadius: 6, padding: '5px 11px', cursor: 'pointer', color: '#60a5fa', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <ExternalLink size={11} /> Edit in BOM page
+            </button>
+          ) : (
+            <button onClick={() => setShowAdd(s => !s)}
+              style={{ background: showAdd ? 'rgba(96,165,250,0.15)' : 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.3)', borderRadius: 6, padding: '5px 11px', cursor: 'pointer', color: '#60a5fa', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Plus size={11} /> {showAdd ? 'Cancel' : 'Add Component'}
+            </button>
+          )}
+        </div>
       </div>
+
+      {showHistory && (
+        <BomHistory productCode={productCode} onClose={() => setShowHistory(false)} onRestored={() => { load(); onChange?.() }} />
+      )}
 
       {/* Add component form */}
       {!readOnly && showAdd && (
