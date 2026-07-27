@@ -9,6 +9,7 @@ const MODULES = [
     title: 'Scent Stock Manager',
     subtitle: 'Oils · Machines · Demand Planning',
     icon: Package,
+    logo: '/logo-light.png',       // Scent Australia wordmark (SA & SM share it, owner 2026-07-24)
     accent: '#2563eb',
   },
   {
@@ -18,6 +19,7 @@ const MODULES = [
     title: 'Production & Operations',
     subtitle: 'Production orders · queue · warehouse',
     icon: Factory,
+    logo: '/logo-light.png',       // part of Scent Australia — same mark
     accent: '#f59e0b',
     viewOf: 'SM',
   },
@@ -26,6 +28,7 @@ const MODULES = [
     title: 'Scented Merchandise',
     subtitle: 'B2B clients · catalogs',
     icon: FlaskConical,
+    logo: '/logo-light.png',       // same mark as SA (owner decision)
     accent: '#b1545a',
   },
   {
@@ -36,6 +39,7 @@ const MODULES = [
     title: 'Fragrance Library',
     subtitle: 'Shared oils — SA · SM · MUSE',
     icon: Droplets,
+    logo: '/fragrance-library.png', // the dropper-bottle mark the owner supplied
     accent: '#0ea5e9',
     viewOf: 'SA',
   },
@@ -47,6 +51,7 @@ const MODULES = [
     title: 'MUSE',
     subtitle: 'Own brand — dashboard · catalog · stock',
     icon: Sparkles,
+    logo: '/logos/muse-logo-wine.svg', // MUSE's own wordmark (wine, reads on the light plate)
     accent: '#d4b574',
     viewOf: 'SM',
   },
@@ -100,12 +105,15 @@ export default function ModulePicker({ user, onPick, onLogout, onOpenUsers }) {
                   cursor: disabled ? 'not-allowed' : 'pointer',
                 }}
               >
-                <div
-                  className="module-tile-icon"
-                  style={{ background: `${m.accent}22`, color: m.accent }}
-                >
-                  <Icon size={30} />
-                </div>
+                {m.logo ? (
+                  <div className="module-tile-logo">
+                    <img src={m.logo} alt={m.title} />
+                  </div>
+                ) : (
+                  <div className="module-tile-icon" style={{ background: `${m.accent}22`, color: m.accent }}>
+                    <Icon size={30} />
+                  </div>
+                )}
                 <div style={{ fontSize: 16, fontWeight: 800 }}>{m.title}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{m.subtitle}</div>
                 {disabled && <span className="badge-soon">Coming soon</span>}

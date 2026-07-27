@@ -1255,6 +1255,29 @@ html:not(.dark) .sa-scope .form-group label { color: rgba(28, 20, 16, 0.65) !imp
   margin-bottom: 4px;
 }
 
+/* Company-logo plate on the module tiles (design phase 2). A light plate carries
+   every brand mark cleanly in both themes: the dropper-bottle art (white bg)
+   blends in, and the dark/wine wordmarks read against it. */
+.module-tile-logo {
+  height: 64px;
+  width: 172px;
+  border-radius: 14px;
+  margin-bottom: 4px;
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 14px;
+  overflow: hidden;
+}
+.module-tile-logo img {
+  max-height: 100%;
+  max-width: 100%;
+  width: auto;
+  object-fit: contain;
+}
+
 .badge-soon {
   position: absolute;
   top: 12px;
