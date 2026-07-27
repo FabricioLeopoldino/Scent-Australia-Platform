@@ -203,7 +203,6 @@ export default function MuseDashboard() {
 function StatCard({ label, value, subValue, color, icon, onClick }) {
   return (
     <div onClick={onClick} className="card" style={{ padding: '18px 20px', cursor: onClick ? 'pointer' : 'default' }}>
-      <GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
       <div style={{ marginBottom: 12 }}>
         <span className="eyebrow">{label}</span>
       </div>

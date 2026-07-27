@@ -42,6 +42,7 @@ function StatusBadge({ status }) {
 function Card({ children, style = {} }) {
   return (
     <div className="card" style={{ padding: 22, ...style }}>
+      <GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
       {children}
     </div>
   )
