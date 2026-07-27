@@ -432,7 +432,7 @@ export default function BOMViewer() {
           )}
 
           {/* Entry list */}
-          <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'hidden', position: 'relative' }}><GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
+          <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'visible', position: 'relative' }}><GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
             {/* Fragrance row — always present, read-only */}
             <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(167,139,250,0.06)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

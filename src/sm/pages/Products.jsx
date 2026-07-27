@@ -422,7 +422,7 @@ export default function Products() {
       {filter === 'CLIENT_STOCK' && (loading ? (
         <div style={{ color: 'rgba(232,234,242,0.4)', fontSize: 14 }}>Loading...</div>
       ) : (
-        <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'hidden', position: 'relative' }}>
+        <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'visible', position: 'relative' }}>
           <GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -462,7 +462,7 @@ export default function Products() {
       {filter !== 'CLIENT_STOCK' && (loading ? (
         <div style={{ color: 'rgba(232,234,242,0.4)', fontSize: 14 }}>Loading...</div>
       ) : (
-        <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'hidden', position: 'relative' }}>
+        <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'visible', position: 'relative' }}>
           <GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
