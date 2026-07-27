@@ -608,8 +608,8 @@ function TabBtn({ active, onClick, icon, label, count, color }) {
 function CreateReservedModal({ form, setForm, clients, saving, onClose, onSave }) {
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-      <div onClick={e => e.stopPropagation()} style={{
-        width: '100%', maxWidth: 520, background: 'var(--card-bg)', boxShadow: 'var(--shadow-md)',
+      <div onClick={e => e.stopPropagation()} className="sm-solid-panel" style={{
+        width: '100%', maxWidth: 520, boxShadow: 'var(--shadow-md)',
         border: '1px solid rgba(255,255,255,0.1)', borderRadius: 14, padding: 24,
         maxHeight: '90vh', overflowY: 'auto',
       }}>

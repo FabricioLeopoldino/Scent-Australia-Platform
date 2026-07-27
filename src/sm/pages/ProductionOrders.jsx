@@ -467,7 +467,7 @@ export default function ProductionOrders() {
         <div className="modal-overlay" style={{ alignItems: 'stretch', gap: 16 }}
           onClick={() => setEpModal(null)}>
           {/* Order summary side panel */}
-          <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-h)', boxShadow: 'var(--shadow-md)', borderRadius: 16, padding: 22, width: 320, maxHeight: '90vh', overflowY: 'auto', alignSelf: 'center' }}
+          <div className="sm-solid-panel" style={{ border: '1px solid var(--border-h)', boxShadow: 'var(--shadow-md)', borderRadius: 16, padding: 22, width: 320, maxHeight: '90vh', overflowY: 'auto', alignSelf: 'center' }}
             onClick={e => e.stopPropagation()}>
             <div style={{ fontSize: 10, fontWeight: 800, color: 'rgba(232,234,242,0.4)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Order Reference</div>
             <div style={{ fontFamily: 'Archivo Black, sans-serif', fontSize: 15, color: '#e8eaf2', marginBottom: 4 }}>{epModal.order.order_number}</div>

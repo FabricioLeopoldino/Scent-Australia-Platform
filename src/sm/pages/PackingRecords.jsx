@@ -152,7 +152,7 @@ function PackingDetail({ record, onClose }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9000 }}>
-      <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-h)', boxShadow: 'var(--shadow-md)', borderRadius: 14, padding: 32, width: '100%', maxWidth: 620, maxHeight: '92vh', overflowY: 'auto', overflowX: 'hidden' }}>
+      <div className="sm-solid-panel" style={{ border: '1px solid var(--border-h)', boxShadow: 'var(--shadow-md)', borderRadius: 14, padding: 32, width: '100%', maxWidth: 620, maxHeight: '92vh', overflowY: 'auto', overflowX: 'hidden' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
           <div>
             <h2 style={{ fontFamily: 'Archivo Black, sans-serif', fontSize: 17, color: '#e8eaf2' }}>Packing Record #{record.id}</h2>

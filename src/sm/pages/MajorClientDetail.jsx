@@ -247,7 +247,7 @@ export default function MajorClientDetail() {
 
       {deleteMaster && (
         <div onClick={() => setDeleteMaster(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', zIndex: 9200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--card-bg)', border: '1px solid rgba(220,38,38,0.3)', boxShadow: 'var(--shadow-md)', borderRadius: 14, padding: 24, width: '100%', maxWidth: 400 }}>
+          <div onClick={e => e.stopPropagation()} className="sm-solid-panel" style={{ border: '1px solid rgba(220,38,38,0.3)', boxShadow: 'var(--shadow-md)', borderRadius: 14, padding: 24, width: '100%', maxWidth: 400 }}>
             <h2 style={{ fontFamily: 'Archivo Black, sans-serif', fontSize: 15, color: '#f87171', marginBottom: 10 }}>Archive master?</h2>
             <p style={{ fontSize: 13, color: 'rgba(232,234,242,0.7)', marginBottom: 18 }}>
               <strong>{deleteMaster.name}</strong> will be archived. Existing production orders referencing it stay intact.
@@ -445,9 +445,9 @@ function CatalogTab({ masters, onSelectMaster, onNewMaster, onEditMaster, onDele
 function MajorMasterDrawer({ master, onClose }) {
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9000, display: 'flex', justifyContent: 'flex-end' }}>
-      <div onClick={e => e.stopPropagation()} style={{
+      <div onClick={e => e.stopPropagation()} className="sm-solid-panel" style={{
         width: '100%', maxWidth: 720, height: '100vh',
-        background: 'var(--card-bg)', borderLeft: '1px solid var(--border-h)', boxShadow: 'var(--shadow-md)',
+        borderLeft: '1px solid var(--border-h)', boxShadow: 'var(--shadow-md)',
         overflowY: 'auto', padding: 28,
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 22 }}>
