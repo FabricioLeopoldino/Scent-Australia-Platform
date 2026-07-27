@@ -7,6 +7,7 @@ import ConfirmModal from '../components/ConfirmModal.jsx'
 import { useToast } from '../SMModule.jsx'
 import SearchSelect from '../components/SearchSelect.jsx'
 import MlHint from '../components/MlHint.jsx'
+import GlowingEffect from '../components/GlowingEffect.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -385,8 +386,10 @@ export default function Clients() {
         </Button>
       </div>
 
-      {/* Filter tabs */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      {/* Controls — filter tabs + search in an SA glowing panel */}
+      <div className="card" style={{ padding: '12px 16px', marginBottom: 16 }}>
+        <GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
+      <div style={{ display: 'flex', gap: 8, marginBottom: 0 }}>
         {[['ALL','All'], ['STANDARD','Standard'], ['LARGE_CLIENT','Major Client']].map(([k, l]) => (
           <button key={k} onClick={() => setFilter(k)} style={{
             background: filter === k ? '#2563eb' : 'rgba(255,255,255,0.05)',
@@ -399,6 +402,7 @@ export default function Clients() {
           value={search} onChange={e => setSearch(e.target.value)} placeholder="Search customers..."
           style={{ marginLeft: 'auto', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, padding: '6px 12px', color: '#e8eaf2', fontSize: 13, outline: 'none', width: 240 }}
         />
+      </div>
       </div>
 
       {/* Client list */}

@@ -6,6 +6,7 @@ import { useLocation } from 'wouter'
 import { useToast } from '../SMModule.jsx'
 import ProductFormModal, { EMPTY_PRODUCT_FORM, ALL_PROD_CATEGORIES } from '../components/ProductFormModal.jsx'
 import StockTable from '../components/StockTable.jsx'
+import GlowingEffect from '../components/GlowingEffect.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -348,8 +349,10 @@ export default function StockScentedMerchandise() {
         )}
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid rgba(255,255,255,0.08)', flexWrap: 'wrap' }}>
+      {/* Controls — tabs + search in an SA glowing panel */}
+      <div className="card" style={{ padding: '12px 16px', marginBottom: 16 }}>
+        <GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
+      <div style={{ display: 'flex', gap: 4, marginBottom: 14, borderBottom: '1px solid rgba(255,255,255,0.08)', flexWrap: 'wrap' }}>
         <TabBtn active={tab === 'components'} onClick={() => setTab('components')} icon={<Package size={13} />} label="Components" count={componentsCount} color="#60a5fa" />
         <TabBtn active={tab === 'labels'} onClick={() => setTab('labels')} icon={<Tag size={13} />} label="Labels" count={labelsCount} color="#f472b6" />
         <TabBtn active={tab === 'client_labels'} onClick={() => setTab('client_labels')} icon={<Tag size={13} />} label="Client Labels" count={clientLabels.length} color="#e879f9" />
@@ -357,7 +360,7 @@ export default function StockScentedMerchandise() {
         <TabBtn active={tab === 'reserved'} onClick={() => setTab('reserved')} icon={<Briefcase size={13} />} label="Reserved Stock" count={reservedStock.length} color="#a78bfa" />
       </div>
 
-      <div style={{ position: 'relative', marginBottom: 18, maxWidth: 360 }}>
+      <div style={{ position: 'relative', marginBottom: 0, maxWidth: 360 }}>
         <Search size={14} color="rgba(232,234,242,0.4)" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }} />
         <input
           value={search}
@@ -368,6 +371,7 @@ export default function StockScentedMerchandise() {
             borderRadius: 8, padding: '8px 12px 8px 34px', color: '#e8eaf2', fontSize: 13, outline: 'none',
           }}
         />
+      </div>
       </div>
 
       {loading ? (

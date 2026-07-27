@@ -4,6 +4,7 @@ import axios from 'axios'
 import { useLocation } from 'wouter'
 import { useToast } from '../SMModule.jsx'
 import BOMEditor from '../components/BOMEditor.jsx'
+import GlowingEffect from '../components/GlowingEffect.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -103,14 +104,16 @@ export default function BOMScentedMerchandise() {
         Centralized BOM management for Scented Merchandise masters
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+      {/* Controls — tabs + search in an SA glowing panel */}
+      <div className="card" style={{ padding: '12px 16px', marginBottom: 16 }}>
+        <GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
+      <div style={{ display: 'flex', gap: 4, marginBottom: 14, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
         <TabBtn active={tab === 'standard'} onClick={() => setTab('standard')} icon={<Tag size={13} />} label="Standard" count={standardMasters.length} color="#60a5fa" />
         <TabBtn active={tab === 'major'} onClick={() => setTab('major')} icon={<Briefcase size={13} />} label="Major Client" count={majorMasters.length} color="#a78bfa" />
       </div>
 
       {/* Search */}
-      <div style={{ position: 'relative', marginBottom: 18, maxWidth: 360 }}>
+      <div style={{ position: 'relative', marginBottom: 0, maxWidth: 360 }}>
         <Search size={14} color="rgba(232,234,242,0.4)" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }} />
         <input
           value={search}
@@ -121,6 +124,7 @@ export default function BOMScentedMerchandise() {
             borderRadius: 8, padding: '8px 12px 8px 34px', color: '#e8eaf2', fontSize: 13, outline: 'none',
           }}
         />
+      </div>
       </div>
 
       {loading ? (
