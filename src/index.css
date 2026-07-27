@@ -691,6 +691,34 @@ h1, h2, h3, h4, h5, h6 {
   transform: translateY(-1px);
 }
 
+/* Login primary CTA — the SA-style premium action button */
+.login-cta {
+  width: 100%;
+  margin-top: 6px;
+  padding: 13px 18px;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  border-radius: 12px;
+  background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: box-shadow 0.2s ease, transform 0.2s ease, background 0.2s ease, opacity 0.2s ease;
+  box-shadow: 0 2px 10px rgba(34, 197, 94, 0.22);
+}
+.login-cta:hover:not(:disabled) {
+  background: linear-gradient(135deg, #15803d 0%, #1fb355 100%);
+  box-shadow: 0 6px 22px rgba(34, 197, 94, 0.4);
+  transform: translateY(-1px);
+}
+.login-cta:active:not(:disabled) { transform: translateY(0); }
+.login-cta:disabled { opacity: 0.65; cursor: not-allowed; }
+@media (prefers-reduced-motion: reduce) {
+  .login-cta { transition: none; }
+  .login-cta:hover:not(:disabled) { transform: none; }
+}
+
 .btn-danger {
   background: rgba(239, 68, 68, 0.12);
   color: #f87171;
