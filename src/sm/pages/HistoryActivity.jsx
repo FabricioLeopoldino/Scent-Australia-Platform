@@ -37,11 +37,18 @@ function SysBadge({ system }) {
   )
 }
 
+const SCOPE_BY_MODULE = { MUSE: 'MUSE', SM: 'Scented Merchandise', OPS: 'SM' }
+const SCOPE_LABEL = { MUSE: 'MUSE', 'Scented Merchandise': 'Scented Merchandise', SM: 'Scented Merchandise & MUSE' }
+
 export default function HistoryActivity({ kind = 'history' }) {
   const cfg = CONFIG[kind]
+  // Opened inside a module view (MUSE / Scented / P&O) → scope to that module's own
+  // data only; the top-level "History & Activity" tile (REPORTS view) shows all systems.
+  const activeModule = typeof localStorage !== 'undefined' ? localStorage.getItem('platform_active_module') : null
+  const scope = SCOPE_BY_MODULE[activeModule]  // undefined => full cross-system
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
-  const [system, setSystem] = useState('ALL')
+  const [system, setSystem] = useState(scope || 'ALL')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [search, setSearch] = useState('')
@@ -102,7 +109,7 @@ export default function HistoryActivity({ kind = 'history' }) {
           <Icon size={22} color="#60a5fa" />
           <div>
             <h1 style={{ fontFamily: 'Archivo Black, sans-serif', fontSize: 22, color: '#e8eaf2' }}>{cfg.title}</h1>
-            <p style={{ fontSize: 13, color: 'rgba(232,234,242,0.4)', marginTop: 2 }}>{cfg.sub}</p>
+            <p style={{ fontSize: 13, color: 'rgba(232,234,242,0.4)', marginTop: 2 }}>{scope ? `${SCOPE_LABEL[scope]} only` : cfg.sub}</p>
           </div>
         </div>
         <button onClick={exportCsv} disabled={exporting || rows.length === 0}
@@ -115,7 +122,9 @@ export default function HistoryActivity({ kind = 'history' }) {
       <div className="card" style={{ padding: '12px 16px', marginBottom: 18 }}>
         <GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          {SYSTEMS.map(s => (
+          {scope ? (
+            <span style={{ fontSize: 12, fontWeight: 700, color: 'rgba(232,234,242,0.55)' }}>Showing: {SCOPE_LABEL[scope]}</span>
+          ) : SYSTEMS.map(s => (
             <button key={s} onClick={() => setSystem(s)} style={chip(system === s)}>{s === 'ALL' ? 'All Systems' : s}</button>
           ))}
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginLeft: 'auto' }}>

@@ -50,12 +50,12 @@ const SM_TX = `
 async function fetchHistory({ system, from, to, type, search, limit }) {
   const lim = cap(limit, 2000, 10000);
   const wantSA = !system || system === 'ALL' || system === 'SA';
-  const wantSM = !system || system === 'ALL' || system === 'MUSE' || system === 'Scented Merchandise';
+  const wantSM = !system || system === 'ALL' || system === 'SM' || system === 'MUSE' || system === 'Scented Merchandise';
   const jobs = [];
   if (wantSA) { const p = []; jobs.push(saPool.query(txFilters(SA_TX, { from, to, type, search }, p) + ` ORDER BY t.created_at DESC LIMIT ${lim}`, p).then(r => r.rows)); }
   if (wantSM) { const p = []; jobs.push(smPool.query(txFilters(SM_TX, { from, to, type, search }, p) + ` ORDER BY t.created_at DESC LIMIT ${lim}`, p).then(r => r.rows)); }
   let rows = (await Promise.all(jobs)).flat();
-  if (system && system !== 'ALL') rows = rows.filter(r => r.system === system);  // MUSE/Scented split
+  if (system && system !== 'ALL' && system !== 'SM') rows = rows.filter(r => r.system === system);  // 'SM' keeps both Scented + MUSE  // MUSE/Scented split
   rows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   return rows.slice(0, lim);
 }
@@ -89,12 +89,12 @@ const SM_AUDIT = `
 async function fetchActivity({ system, from, to, action, search, limit }) {
   const lim = cap(limit, 2000, 10000);
   const wantSA = !system || system === 'ALL' || system === 'SA';
-  const wantSM = !system || system === 'ALL' || system === 'MUSE' || system === 'Scented Merchandise';
+  const wantSM = !system || system === 'ALL' || system === 'SM' || system === 'MUSE' || system === 'Scented Merchandise';
   const jobs = [];
   if (wantSA) { const p = []; jobs.push(saPool.query(auditFilters(SA_AUDIT, { from, to, action, search }, p) + ` ORDER BY al.created_at DESC LIMIT ${lim}`, p).then(r => r.rows)); }
   if (wantSM) { const p = []; jobs.push(smPool.query(auditFilters(SM_AUDIT, { from, to, action, search }, p) + ` ORDER BY al.created_at DESC LIMIT ${lim}`, p).then(r => r.rows)); }
   let rows = (await Promise.all(jobs)).flat();
-  if (system && system !== 'ALL') rows = rows.filter(r => r.system === system);
+  if (system && system !== 'ALL' && system !== 'SM') rows = rows.filter(r => r.system === system);  // 'SM' keeps both Scented + MUSE
   rows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   return rows.slice(0, lim);
 }
