@@ -9,6 +9,7 @@ import { fmtDate } from '../utils/date.js'
 import BOMEditor from '../components/BOMEditor.jsx'
 import MlHint from '../components/MlHint.jsx'
 import { suggestMasterCode, MASTER_PREFIXES } from '../utils/masterCode.js'
+import GlowingEffect from '../components/GlowingEffect.jsx'
 
 const EMPTY_MASTER_FORM = {
   name: '', product_code: '', volume_ml: '', volume_unit: 'ml',
@@ -509,7 +510,7 @@ function ClientStockTab({ items }) {
           <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(232,234,242,0.4)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
             {cat.replace(/_/g, ' ')} ({list.length})
           </div>
-          <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'hidden' }}>
+          <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'hidden', position: 'relative' }}><GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
@@ -546,7 +547,7 @@ function ClientStockTab({ items }) {
 function LabelsTab({ labels }) {
   if (labels.length === 0) return <EmptyState icon={<Tag size={36} />} title="No custom labels" hint="Client-specific labels (Clean Skin Black, etc.) appear here" />
   return (
-    <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'hidden' }}>
+    <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'hidden', position: 'relative' }}><GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>

@@ -4,6 +4,7 @@ import axios from 'axios'
 import { useToast } from '../SMModule.jsx'
 import MlHint from '../components/MlHint.jsx'
 import { splitVolume } from '../utils/volume.js'
+import GlowingEffect from '../components/GlowingEffect.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -150,7 +151,7 @@ export default function Fragrances() {
           {fragrances.length === 0 && <div style={{ fontSize: 12, marginTop: 6 }}>Click "New Fragrance" to add your first fragrance</div>}
         </div>
       ) : (
-        <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'hidden' }}>
+        <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'hidden', position: 'relative' }}><GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>

@@ -12,6 +12,7 @@ import { splitVolume } from '../utils/volume.js'
 import ProductFormModal, { EMPTY_PRODUCT_FORM, ALL_PROD_CATEGORIES, PRODUCT_SEGMENTS } from '../components/ProductFormModal.jsx'
 import StockTable from '../components/StockTable.jsx'
 import MuseHeader from '../components/MuseHeader.jsx'
+import GlowingEffect from '../components/GlowingEffect.jsx'
 
 const MUSE_COMP_CATEGORIES = ['COMPONENT', 'LABEL', 'RAW_MATERIAL', 'FRAGRANCE', 'DIFFUSER']
 
@@ -463,7 +464,7 @@ export default function MuseStock() {
           </div>
         </div>
       ) : (
-        <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'hidden' }}>
+        <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'hidden', position: 'relative' }}><GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>

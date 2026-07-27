@@ -4,6 +4,7 @@ import axios from 'axios'
 import { useToast } from '../SMModule.jsx'
 import SearchSelect from '../components/SearchSelect.jsx'
 import { fmt } from '../utils/date.js'
+import GlowingEffect from '../components/GlowingEffect.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -151,7 +152,7 @@ export default function ActivityLog() {
       {loading ? (
         <div style={{ color: 'rgba(232,234,242,0.4)', fontSize: 14 }}>Loading...</div>
       ) : (
-        <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'hidden' }}>
+        <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'hidden', position: 'relative' }}><GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
