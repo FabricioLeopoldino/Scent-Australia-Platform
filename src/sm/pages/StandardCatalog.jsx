@@ -7,6 +7,7 @@ import { useToast } from '../SMModule.jsx'
 import MlHint from '../components/MlHint.jsx'
 import BOMEditor from '../components/BOMEditor.jsx'
 import { suggestMasterCode, MASTER_PREFIXES } from '../utils/masterCode.js'
+import GlowingEffect from '../components/GlowingEffect.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -180,24 +181,25 @@ export default function StandardCatalog() {
         </Button>
       </div>
 
-      {/* Container filter */}
-      {containerOptions.length > 0 && (
-        <div style={{ display: 'flex', gap: 6, marginBottom: 14, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 11, color: 'rgba(232,234,242,0.4)', textTransform: 'uppercase', fontWeight: 700, marginRight: 4 }}>Container:</span>
-          <button onClick={() => setContainerFilter('ALL')} style={chip(containerFilter === 'ALL')}>All</button>
-          {containerOptions.map(name => (
-            <button key={name} onClick={() => setContainerFilter(name)} style={chip(containerFilter === name)}>{name}</button>
-          ))}
+      {/* Controls — filters + search in an SA glowing panel */}
+      <div className="card" style={{ padding: '14px 16px', marginBottom: 20 }}>
+        <GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
+        {containerOptions.length > 0 && (
+          <div style={{ display: 'flex', gap: 6, marginBottom: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: 'rgba(232,234,242,0.4)', textTransform: 'uppercase', fontWeight: 700, marginRight: 4 }}>Container:</span>
+            <button onClick={() => setContainerFilter('ALL')} style={chip(containerFilter === 'ALL')}>All</button>
+            {containerOptions.map(name => (
+              <button key={name} onClick={() => setContainerFilter(name)} style={chip(containerFilter === name)}>{name}</button>
+            ))}
+          </div>
+        )}
+        <div style={{ position: 'relative', maxWidth: 360 }}>
+          <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'rgba(232,234,242,0.4)' }} />
+          <input
+            value={search} onChange={e => setSearch(e.target.value)} placeholder="Search masters..."
+            style={{ width: '100%', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, padding: '8px 12px 8px 34px', color: '#e8eaf2', fontSize: 13, outline: 'none' }}
+          />
         </div>
-      )}
-
-      {/* Search */}
-      <div style={{ position: 'relative', marginBottom: 20, maxWidth: 360 }}>
-        <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'rgba(232,234,242,0.4)' }} />
-        <input
-          value={search} onChange={e => setSearch(e.target.value)} placeholder="Search masters..."
-          style={{ width: '100%', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, padding: '8px 12px 8px 34px', color: '#e8eaf2', fontSize: 13, outline: 'none' }}
-        />
       </div>
 
 
