@@ -6,6 +6,7 @@ import { useToast } from '../SMModule.jsx'
 import { splitVolume } from '../utils/volume.js'
 import { fmtDate } from '../utils/date.js'
 import MuseHeader from '../components/MuseHeader.jsx'
+import GlowingEffect from '../components/GlowingEffect.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -202,6 +203,7 @@ export default function MuseDashboard() {
 function StatCard({ label, value, subValue, color, icon, onClick }) {
   return (
     <div onClick={onClick} className="card" style={{ padding: '18px 20px', cursor: onClick ? 'pointer' : 'default' }}>
+      <GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
       <div style={{ marginBottom: 12 }}>
         <span className="eyebrow">{label}</span>
       </div>
@@ -214,6 +216,7 @@ function StatCard({ label, value, subValue, color, icon, onClick }) {
 function Card({ title, color, icon, action, children }) {
   return (
     <div className="card" style={{ padding: 20 }}>
+      <GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 16 }}>
         <h3 className="serif" style={{ fontSize: 17, fontWeight: 600, color: 'var(--text-primary)' }}>{title}</h3>
         {action && (
