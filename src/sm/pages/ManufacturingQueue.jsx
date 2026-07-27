@@ -5,6 +5,7 @@ import { useToast } from '../SMModule.jsx'
 import SearchSelect from '../components/SearchSelect.jsx'
 import { fmt, fmtDate } from '../utils/date.js'
 import { LineFlags, lineScent } from '../components/LineMeta.jsx'
+import GlowingEffect from '../components/GlowingEffect.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -285,8 +286,10 @@ export default function ManufacturingQueue() {
         <div className="ed-rule" />
       </div>
 
-      {/* Filters + Sort */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+      {/* Controls — filters + sort in an SA glowing panel */}
+      <div className="card" style={{ padding: '12px 16px', marginBottom: 20 }}>
+        <GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
+      <div style={{ display: 'flex', gap: 8, marginBottom: 0, flexWrap: 'wrap', alignItems: 'center' }}>
         {[['ALL','All'],['STANDARD','Standard'],['LARGE_CLIENT','Major Client'],['CANDLE','Candle']].map(([k,l]) => (
           <button key={k} onClick={() => setTypeFilter(k)} style={{
             background: typeFilter === k ? 'var(--accent)' : 'var(--surface-2)',
@@ -307,6 +310,7 @@ export default function ManufacturingQueue() {
           ))}
           <button onClick={loadQueue} title="Refresh" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 9px', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}><RotateCw size={14} /></button>
         </div>
+      </div>
       </div>
 
       {loading ? (

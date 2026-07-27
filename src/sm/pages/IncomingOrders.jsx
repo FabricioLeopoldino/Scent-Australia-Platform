@@ -8,6 +8,7 @@ import ConfirmModal from '../components/ConfirmModal.jsx'
 import MlHint from '../components/MlHint.jsx'
 import { fmt } from '../utils/date.js'
 import SearchSelect from '../components/SearchSelect.jsx'
+import GlowingEffect from '../components/GlowingEffect.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -244,7 +245,8 @@ export default function IncomingOrders() {
       ) : displayed.length === 0 ? (
         <div style={{ textAlign: 'center', padding: 48, color: 'rgba(232,234,242,0.3)', fontSize: 14 }}>No purchase orders</div>
       ) : (
-        <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'hidden' }}>
+        <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'hidden', position: 'relative' }}>
+          <GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>

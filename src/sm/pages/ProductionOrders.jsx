@@ -7,6 +7,7 @@ import ConfirmModal from '../components/ConfirmModal.jsx'
 import SearchSelect from '../components/SearchSelect.jsx'
 import { fmtDate as fmt } from '../utils/date.js'
 import { LineFlags, lineScent } from '../components/LineMeta.jsx'
+import GlowingEffect from '../components/GlowingEffect.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -248,8 +249,10 @@ export default function ProductionOrders() {
       </div>
       <div className="ed-rule" style={{ margin: '22px 0 24px' }} />
 
-      {/* Status filter */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+      {/* Controls — status filter in an SA glowing panel */}
+      <div className="card" style={{ padding: '12px 16px', marginBottom: 20 }}>
+        <GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
+      <div style={{ display: 'flex', gap: 6, marginBottom: 0, flexWrap: 'wrap', alignItems: 'center' }}>
         {STATUSES.map(s => {
           const m = STATUS_META[s]
           const active = statusFilter === s
@@ -269,6 +272,7 @@ export default function ProductionOrders() {
           borderRadius: 20, padding: '4px 14px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
           color: museOnly ? 'var(--accent-text)' : 'var(--text-secondary)'
         }}>MUSE only</button>
+      </div>
       </div>
 
       {/* Orders list */}

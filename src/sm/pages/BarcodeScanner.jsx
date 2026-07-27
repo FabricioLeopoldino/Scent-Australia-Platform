@@ -3,6 +3,7 @@ import { ScanBarcode, Package, RotateCcw, MapPin, Truck, ClipboardCheck } from '
 import axios from 'axios'
 import { useToast } from '../SMModule.jsx'
 import Tooltip from '../components/Tooltip.jsx'
+import GlowingEffect from '../components/GlowingEffect.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -194,7 +195,8 @@ export default function BarcodeScanner() {
       <div style={{ display: 'grid', gridTemplateColumns: lastActions.length > 0 ? '1fr 280px' : '1fr', gap: 20 }}>
         <div>
           {/* Scan input */}
-          <div style={{ background: 'rgba(255,255,255,0.04)', border: `1px solid ${wf.color}30`, borderRadius: 12, padding: 20, marginBottom: 16 }}>
+          <div style={{ background: 'rgba(255,255,255,0.04)', border: `1px solid ${wf.color}30`, borderRadius: 12, padding: 20, marginBottom: 16, position: 'relative' }}>
+            <GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
               <ScanBarcode size={16} color={wf.color} />
               <span style={{ fontSize: 13, fontWeight: 700, color: '#e8eaf2' }}>Scan Product</span>
@@ -222,7 +224,8 @@ export default function BarcodeScanner() {
 
           {/* Product card */}
           {found && (
-            <div style={{ background: 'rgba(255,255,255,0.04)', border: `1px solid ${wf.color}30`, borderRadius: 12, padding: 20 }}>
+            <div style={{ background: 'rgba(255,255,255,0.04)', border: `1px solid ${wf.color}30`, borderRadius: 12, padding: 20, position: 'relative' }}>
+              <GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18, padding: '12px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 8 }}>
                 <div>
                   <div style={{ fontSize: 15, fontWeight: 700, color: '#e8eaf2', marginBottom: 4 }}>{found.name}</div>
