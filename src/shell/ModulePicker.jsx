@@ -1,4 +1,4 @@
-import { Package, FlaskConical, Sparkles, Factory, Users, LogOut, Droplets } from 'lucide-react';
+import { Package, FlaskConical, Sparkles, Factory, Users, LogOut, Droplets, History } from 'lucide-react';
 
 // Module Picker — behavioral spec in PRD Appendix B.
 // Tiles: SA / SM enabled by user.modules; MUSE always "Coming soon" (B6).
@@ -55,11 +55,24 @@ const MODULES = [
     accent: '#d4b574',
     viewOf: 'SM',
   },
+  {
+    // Centralized cross-system History & Activity (owner 2026-07-28) — its own
+    // top-level tile because it spans SA + Scented + MUSE, not any single module.
+    // Admin/root only; opens the SM shell in a focused "Reports" view at /history.
+    key: 'REPORTS',
+    title: 'History & Activity',
+    subtitle: 'Cross-system — SA · Scented · MUSE',
+    icon: History,
+    accent: '#8b5cf6',
+    viewOf: 'SM',
+    roles: ['root', 'admin'],
+  },
 ];
 
 export default function ModulePicker({ user, onPick, onLogout, onOpenUsers }) {
   const canEnter = (m) => {
     const mods = user.modules || [];
+    if (m.roles && !m.roles.includes(user.role)) return false; // role-gated tiles (e.g. cross-system reports)
     if (mods.includes(m.key)) return true;
     if (m.viewOf && mods.includes(m.viewOf)) return true;
     return false;

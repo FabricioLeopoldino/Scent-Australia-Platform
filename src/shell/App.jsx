@@ -49,6 +49,7 @@ export default function App() {
     else if (moduleKey === 'FRAGLIB') navigate('/sa/products?filter=OILS');
     else if (moduleKey === 'MUSE') navigate('/sm/muse');
     else if (moduleKey === 'OPS') navigate('/sm'); // production dashboard
+    else if (moduleKey === 'REPORTS') navigate('/sm/history'); // centralized cross-system report (admin/root)
     else navigate('/sm/customers'); // SM tile = B2B world
   }
 
@@ -109,7 +110,7 @@ function SAWrapper({ user, onSwitchModule, onLogout }) {
 function SMWrapper({ user, onLogout }) {
   // Keep interceptors module-aware after deep reloads; preserve the MUSE (D7)
   // and OPS (D11) view choices when already set — both are views over SM.
-  if (!['MUSE', 'OPS'].includes(getActiveModule())) setActiveModule('SM');
+  if (!['MUSE', 'OPS', 'REPORTS'].includes(getActiveModule())) setActiveModule('SM');
   return <SMModule user={user} onLogout={onLogout} />;
 }
 

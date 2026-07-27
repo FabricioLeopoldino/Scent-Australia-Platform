@@ -52,7 +52,7 @@ const NAV_SECTIONS = [
     { path: '/bom-muse', label: 'Bill of Materials', icon: BookOpen, roles: ['root','admin','user'] },
     { path: '/muse-stock', label: 'Stock', icon: Package, roles: ['root','admin','user'] },
   ]},
-  { header: 'HISTORY & ACTIVITY', views: ['ops','sm','muse'], items: [
+  { header: 'HISTORY & ACTIVITY', views: ['ops','sm','muse','reports'], items: [
     // Centralized cross-system pages (SA + Scented + MUSE), admin/root only (owner 2026-07-28).
     { path: '/history', label: 'History', icon: History, roles: ['root','admin'] },
     { path: '/activity', label: 'Activity', icon: ScrollText, roles: ['root','admin'] },
@@ -72,7 +72,7 @@ export default function Layout({ children }) {
   //   MUSE tile → MU:SE mark + MUSE sections
   //   SM tile   → Scented Merchandise brand + B2B sections
   const activeModule = typeof localStorage !== 'undefined' ? localStorage.getItem('platform_active_module') : null
-  const activeView = activeModule === 'MUSE' ? 'muse' : activeModule === 'OPS' ? 'ops' : 'sm'
+  const activeView = activeModule === 'MUSE' ? 'muse' : activeModule === 'OPS' ? 'ops' : activeModule === 'REPORTS' ? 'reports' : 'sm'
 
   const sidebarWidth = collapsed ? 64 : 220
 
@@ -124,6 +124,19 @@ export default function Layout({ children }) {
                 </div>
                 <div style={{ fontSize: 8.5, fontWeight: 600, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-muted)', marginTop: 3 }}>
                   B2B Clients &amp; Catalog
+                </div>
+              </div>
+            </div>
+          )}
+          {!collapsed && activeView === 'reports' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {/* Reports view — focused cross-system History & Activity (owner 2026-07-28) */}
+              <div>
+                <div className="serif" style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.02em', lineHeight: 1.1 }}>
+                  History &amp; Activity
+                </div>
+                <div style={{ fontSize: 8.5, fontWeight: 600, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-muted)', marginTop: 3 }}>
+                  Cross-system
                 </div>
               </div>
             </div>
