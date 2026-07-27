@@ -52,9 +52,10 @@ const NAV_SECTIONS = [
     { path: '/bom-muse', label: 'Bill of Materials', icon: BookOpen, roles: ['root','admin','user'] },
     { path: '/muse-stock', label: 'Stock', icon: Package, roles: ['root','admin','user'] },
   ]},
-  { header: 'HISTORY', views: ['ops','sm','muse'], items: [
-    { path: '/transactions', label: 'Transaction History', icon: History, roles: ['root','admin','user'] },
-    { path: '/activity-log', label: 'Activity Log', icon: ScrollText, roles: ['root','admin'] },
+  { header: 'HISTORY & ACTIVITY', views: ['ops','sm','muse'], items: [
+    // Centralized cross-system pages (SA + Scented + MUSE), admin/root only (owner 2026-07-28).
+    { path: '/history', label: 'History', icon: History, roles: ['root','admin'] },
+    { path: '/activity', label: 'Activity', icon: ScrollText, roles: ['root','admin'] },
   ]},
   // SYSTEM section removed on the platform: user management is platform-level
   // (root reaches it from the Module Picker).

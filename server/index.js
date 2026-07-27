@@ -10,6 +10,7 @@ import { runPlatformMigrations, runCrossSchemaMigrations } from './platform/migr
 import { requireAuth, requireModule } from './platform/auth.js';
 import platformRouter from './platform/router.js';
 import transfersRouter from './platform/transfers.js';
+import reportsRouter from './platform/reports.js';
 import { router as saRouter, runSaStartupMigrations } from './sa/index.js';
 import { shopifyWebhookReceiver } from './platform/webhooks.js';
 // CJS interop (Appendix A 9b): default import = module.exports
@@ -143,6 +144,7 @@ app.use('/api', (req, res, next) => {
 // ── Module routers ────────────────────────────────────────────────────────
 app.use('/api/platform', platformRouter);
 app.use('/api/platform', transfersRouter);
+app.use('/api/platform', reportsRouter);  // centralized History & Activity (cross-system)
 
 // SA module — the production monolith mounted as a router (Phase 2b,
 // Appendix A conversion; SQL/business logic untouched, schema sa).

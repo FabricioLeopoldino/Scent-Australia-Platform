@@ -12,6 +12,7 @@ import ManufacturingQueue from './pages/ManufacturingQueue.jsx';
 import TransactionHistory from './pages/TransactionHistory.jsx';
 import IncomingOrders from './pages/IncomingOrders.jsx';
 import ActivityLog from './pages/ActivityLog.jsx';
+import HistoryActivity from './pages/HistoryActivity.jsx';
 import Returns from './pages/Returns.jsx';
 import BarcodeScanner from './pages/BarcodeScanner.jsx';
 import PackingRecords from './pages/PackingRecords.jsx';
@@ -133,6 +134,10 @@ export default function SMModule({ user, onLogout }) {
                 <Route path="/incoming-orders" component={IncomingOrders} />
                 <Route path="/external-processing" component={ExternalProcessing} />
                 <Route path="/returns" component={Returns} />
+                {/* Centralized cross-system report (owner 2026-07-28) */}
+                <Route path="/history" component={() => <HistoryActivity kind="history" />} />
+                <Route path="/activity" component={() => <HistoryActivity kind="activity" />} />
+                {/* Legacy per-module pages kept for deep links; superseded in nav by /history + /activity */}
                 <Route path="/transactions" component={TransactionHistory} />
                 <Route path="/activity-log" component={ActivityLog} />
                 <Route path="/packing-records" component={PackingRecords} />
