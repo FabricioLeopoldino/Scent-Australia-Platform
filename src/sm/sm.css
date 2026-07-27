@@ -396,6 +396,17 @@ html:not(.dark) .sm-scope [style*="background: rgb(232, 234, 242)"],
 html:not(.dark) .sm-scope [style*="background:rgb(232, 234, 242)"] {
   background-color: #ffffff !important;
 }
+/* SAFETY NET (fragility fix, 2026-07-27) — match ANY alpha of the light-text
+   base so a drifted/unlisted value (e.g. rgba(232, 234, 242, 0.42)) can no longer
+   render as invisible light-on-cream. This is the load-bearing part of this file:
+   ~670 inline sites use this colour and the tiers below only enumerate a few
+   alphas. Every text rule here shares the same specificity, so the specific tiers
+   BELOW (later in source order) still win for the alphas they list, preserving the
+   hierarchy — this only catches the ones they miss. Do NOT move it after the tiers.
+   Real fix = migrate components to var(--text)/var(--text-dim); that's the page work. */
+html:not(.dark) .sm-scope [style*="rgba(232, 234, 242"]:not([style*="background"]) {
+  color: rgba(28, 20, 16, 0.7) !important;
+}
 /* rgba(232, 234, 242, X) at various alphas — all dim/muted text. Map by alpha tier. */
 html:not(.dark) .sm-scope [style*="rgba(232, 234, 242, 0.4)"],
 html:not(.dark) .sm-scope [style*="rgba(232, 234, 242, 0.45)"],
