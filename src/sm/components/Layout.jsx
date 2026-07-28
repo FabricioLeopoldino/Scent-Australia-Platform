@@ -44,11 +44,13 @@ const NAV_SECTIONS = [
     { path: '/standard/catalog', label: 'Standard Catalog', icon: Tag, roles: ['root','admin','user'] },
     { path: '/major-clients', label: 'Major Clients', icon: Briefcase, roles: ['root','admin','user'] },
     { path: '/bom-sm', label: 'Bill of Materials', icon: BookOpen, roles: ['root','admin','user'] },
+    { path: '/fragrances', label: 'Fragrance Library', icon: FlaskConical, roles: ['root','admin','user'] },
     { path: '/sm-stock', label: 'Stock', icon: Package, roles: ['root','admin','user'] },
   ]},
   { header: 'MUSE', views: ['muse'], items: [
     { path: '/muse', label: 'Dashboard', icon: Star, roles: ['root','admin','user'] },
     { path: '/muse/products', label: 'Catalog', icon: Star, roles: ['root','admin','user'] },
+    { path: '/fragrances', label: 'Fragrances', icon: FlaskConical, roles: ['root','admin','user'] },
     { path: '/bom-muse', label: 'Bill of Materials', icon: BookOpen, roles: ['root','admin','user'] },
     { path: '/muse-stock', label: 'Stock', icon: Package, roles: ['root','admin','user'] },
   ]},

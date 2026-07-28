@@ -14,7 +14,10 @@ import StockTable from '../components/StockTable.jsx'
 import MuseHeader from '../components/MuseHeader.jsx'
 import GlowingEffect from '../components/GlowingEffect.jsx'
 
-const MUSE_COMP_CATEGORIES = ['COMPONENT', 'LABEL', 'RAW_MATERIAL', 'FRAGRANCE', 'DIFFUSER']
+// FRAGRANCE removed (Phase B, 2026-07-29): oil lives in the SA Fragrance Library
+// (the "Fragrances" nav item), not as an editable FRAG_* record here. This page
+// stocks MUSE packaging/components only; oil stock is read from sa.products OILS.
+const MUSE_COMP_CATEGORIES = ['COMPONENT', 'LABEL', 'RAW_MATERIAL', 'DIFFUSER']
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -368,7 +371,6 @@ export default function MuseStock() {
           { key: 'all',        label: 'All',           count: components.length + variants.length },
           { key: 'finished',   label: 'Finished Goods', count: variants.length },
           { key: 'components', label: 'Components',    count: components.filter(c => c.category === 'COMPONENT').length },
-          { key: 'fragrance',  label: 'Fragrances',    count: components.filter(c => c.category === 'FRAGRANCE').length },
           { key: 'raw',        label: 'Raw Materials', count: components.filter(c => c.category === 'RAW_MATERIAL').length },
           { key: 'labels',     label: 'Labels',        count: components.filter(c => c.category === 'LABEL').length },
           { key: 'diffusers',  label: 'Diffusers',     count: components.filter(c => c.category === 'DIFFUSER').length },
