@@ -17,7 +17,8 @@ function api() { return { headers: { Authorization: `Bearer ${localStorage.getIt
 
 const CATEGORIES = [
   { key: 'ALL', label: 'All' },
-  { key: 'FRAGRANCE', label: 'Fragrance' },
+  // FRAGRANCE removed (Phase B, 2026-07-29): oil is the SA Fragrance Library, not
+  // an SM stock item. The legacy FRAG_* records (0 stock) are being retired.
   { key: 'RAW_MATERIAL', label: 'Raw Material' },
   { key: 'COMPONENT', label: 'Component' },
   { key: 'LABEL', label: 'Label' },
@@ -189,6 +190,7 @@ export default function StockManagement() {
         // A FG product is a template if it has no master parent AND no fragrance link.
         let rows = res.data.filter(p => {
           if (p.is_master) return false
+          if (p.category === 'FRAGRANCE') return false  // Phase B: oil lives in the Fragrance Library, not here
           if (p.category === 'FINISHED_GOOD' && !p.master_product_id && !p.fragrance_id) return false
           return true
         })
