@@ -74,7 +74,7 @@ function ok(msg) { console.log('  ✓ ' + msg); }
     ok(`all ${codes.length} codes resolve to sa OILS`);
 
     const variants = (await client.query(
-      `SELECT id, sku, oil_id, current_stock FROM sm.products
+      `SELECT id, sku, oil_id, current_stock, master_product_id, fragrance_id FROM sm.products
        WHERE segment='MUSE' AND master_product_id IS NOT NULL AND archived=false`
     )).rows;
     const realVariants = variants.filter((v) => !TEST_SKUS.includes(v.sku));
@@ -104,8 +104,11 @@ function ok(msg) { console.log('  ✓ ' + msg); }
         [tv.id]
       )).rows[0];
       if (refs.tx > 0 || refs.pol > 0) { console.log(`  · KEPT ${tv.sku} (footprint: ${refs.tx} tx, ${refs.pol} order-lines) — not deleting`); continue; }
+      // Delete the variant's master↔fragrance link first, else it dangles (the
+      // (master, fragrance) pair is 1:1 with the variant via idx_variant_uniq).
+      if (tv.fragrance_id) await client.query(`DELETE FROM sm.muse_master_fragrances WHERE master_product_id = $1 AND fragrance_id = $2`, [tv.master_product_id, tv.fragrance_id]);
       await client.query(`DELETE FROM sm.products WHERE id = $1`, [tv.id]);
-      ok(`deleted ${tv.sku} (zero footprint)`);
+      ok(`deleted ${tv.sku} + its master link (zero footprint)`);
     }
 
     // Step 3 — set oil_id from the SKU→code→oil map (idempotent: only where NULL)
@@ -159,6 +162,15 @@ function ok(msg) { console.log('  ✓ ' + msg); }
     )).rows[0].n;
     if (dangling) fail(`${dangling} variants have oil_id not pointing at an sa OILS row`);
     ok('every set oil_id references a real sa OILS row');
+
+    // no orphaned master↔fragrance link (would fail integrity-sm) — guards the
+    // test-variant deletion above from leaving a dangling muse_master_fragrances row
+    const orphanLinks = (await client.query(
+      `SELECT count(*)::int n FROM sm.muse_master_fragrances mmf
+       WHERE NOT EXISTS (SELECT 1 FROM sm.products p WHERE p.master_product_id = mmf.master_product_id AND p.fragrance_id = mmf.fragrance_id)`
+    )).rows[0].n;
+    if (orphanLinks) fail(`${orphanLinks} muse_master_fragrances links have no variant`);
+    ok('every muse_master_fragrances link still has its variant');
 
     if (COMMIT) { await client.query('COMMIT'); applied = true; console.log('\n✅ COMMITTED.'); }
     else { await client.query('ROLLBACK'); console.log('\n↩️  DRY-RUN rolled back (pass --commit to apply).'); }
