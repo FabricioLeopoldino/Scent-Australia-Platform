@@ -72,7 +72,7 @@ router.get('/masters', auth, async (req, res) => {
                (SELECT SUM(v.current_stock) FROM products v WHERE v.master_product_id = p.id AND v.archived = false),
                0
              ) as total_variant_stock,
-             (SELECT COUNT(*) FROM muse_master_fragrances WHERE master_product_id = p.id) +
+             (SELECT COUNT(DISTINCT v.oil_id) FROM products v WHERE v.master_product_id = p.id AND v.oil_id IS NOT NULL AND v.archived = false) +
              (SELECT COUNT(*) FROM major_client_master_fragrances WHERE master_product_id = p.id) as fragrance_count,
              (SELECT COUNT(*) FROM product_bom WHERE product_type = p.product_code AND is_active = true) as bom_component_count
       FROM products p
@@ -116,27 +116,45 @@ router.get('/masters/:id', auth, async (req, res) => {
       [master.product_code]
     )
 
-    // Fragrances (from appropriate junction based on segment)
-    const fragTable = master.segment === 'MAJOR' ? 'major_client_master_fragrances' : 'muse_master_fragrances'
-    const fragRes = master.segment === 'STANDARD'
-      ? { rows: [] }  // Standard: fragrance picked per-order, no pre-defined list
-      : await query(
-          `SELECT mmf.fragrance_id, p.product_code, p.name
-           FROM ${fragTable} mmf
-           JOIN products p ON mmf.fragrance_id = p.id
-           WHERE mmf.master_product_id = $1
-           ORDER BY p.name`,
-          [master.id]
-        )
+    // Fragrances. Phase B (D14 oil model): a MUSE master's fragrances ARE the oils
+    // of its (non-archived) variants — the shared SA Fragrance Library, one universal
+    // code (e.g. FRAG_0083) + live stock. No legacy FRAG_* junction. MAJOR still uses
+    // its junction; STANDARD picks per-order.
+    let fragRes
+    if (master.segment === 'MUSE') {
+      fragRes = await query(
+        `SELECT DISTINCT o.id AS oil_id, o."productCode" AS product_code, o.name,
+                o."currentStock"::numeric AS current_stock, o.unit
+         FROM products v
+         JOIN sa.products o ON o.id = v.oil_id
+         WHERE v.master_product_id = $1 AND v.oil_id IS NOT NULL AND v.archived = false
+         ORDER BY o.name`,
+        [master.id]
+      )
+    } else if (master.segment === 'MAJOR') {
+      fragRes = await query(
+        `SELECT mmf.fragrance_id, p.product_code, p.name
+         FROM major_client_master_fragrances mmf
+         JOIN products p ON mmf.fragrance_id = p.id
+         WHERE mmf.master_product_id = $1
+         ORDER BY p.name`,
+        [master.id]
+      )
+    } else {
+      fragRes = { rows: [] }
+    }
 
-    // Variants (only MUSE has variants with stock; Major tracks via order status)
+    // Variants — carry the oil (Fragrance Library) name/code/stock; fragrance_name
+    // kept only as a fallback while the legacy FRAG_* records still exist.
     const variantsRes = await query(
-      `SELECT v.id, v.product_code, v.name, v.current_stock, v.fragrance_id,
-              v.archived, f.name as fragrance_name
+      `SELECT v.id, v.product_code, v.name, v.current_stock, v.oil_id, v.archived,
+              o.name AS oil_name, o."productCode" AS oil_code, o."currentStock"::numeric AS oil_stock, o.unit AS oil_unit,
+              v.fragrance_id, f.name AS fragrance_name
        FROM products v
+       LEFT JOIN sa.products o ON o.id = v.oil_id
        LEFT JOIN products f ON v.fragrance_id = f.id
        WHERE v.master_product_id = $1
-       ORDER BY f.name`,
+       ORDER BY COALESCE(o.name, f.name, v.name)`,
       [master.id]
     )
 
@@ -329,79 +347,78 @@ router.delete('/masters/:id', auth, requireRole('admin', 'root'), async (req, re
 // POST /api/masters/:id/fragrances — add fragrance, auto-create variant if MUSE
 router.post('/masters/:id/fragrances', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
-    const { fragrance_id } = req.body
-    if (!fragrance_id) return res.status(400).json({ error: 'fragrance_id required' })
-
+    const { fragrance_id, oil_id } = req.body
     const masterRes = await query(`SELECT * FROM products WHERE id = $1 AND is_master = true`, [req.params.id])
     if (!masterRes.rows[0]) return res.status(404).json({ error: 'Master not found' })
     const master = masterRes.rows[0]
     if (master.segment === 'STANDARD') return res.status(400).json({ error: 'Standard masters do not pre-define fragrances' })
 
-    const fragTable = master.segment === 'MAJOR' ? 'major_client_master_fragrances' : 'muse_master_fragrances'
+    // MUSE (Phase B / D14 oil model): adding an oil to a master creates its variant,
+    // linked by oil_id (the SA Fragrance Library, universal code). The variant IS the
+    // master↔oil link — no junction table.
+    if (master.segment === 'MUSE') {
+      if (!oil_id) return res.status(400).json({ error: 'oil_id required' })
+      const oilRes = await query(`SELECT id, "productCode" AS product_code, name FROM sa.products WHERE id = $1 AND category = 'OILS'`, [oil_id])
+      if (!oilRes.rows[0]) return res.status(400).json({ error: 'Oil not found in the Fragrance Library' })
+      const o = oilRes.rows[0]
+      const result = await withTransaction(async (client) => {
+        const tq = (text, params) => client.query(text, params)
+        const variantCode = `${master.product_code}-${slugify(o.product_code || o.name)}`
+        const variantName = `${master.name} — ${o.name}`
+        const v = await tq(
+          `INSERT INTO products
+            (name, product_code, category, segment, is_master, master_product_id, oil_id,
+             unit, current_stock, volume_ml, volume_unit, container_name, is_pure_oil, is_candle, client_id, price)
+           VALUES ($1, $2, 'FINISHED_GOOD', 'MUSE', false, $3, $4, 'units', 0, $5, $6, $7, $8, $9, NULL, $10)
+           ON CONFLICT (product_code) DO UPDATE SET name = EXCLUDED.name, oil_id = EXCLUDED.oil_id, archived = false
+           RETURNING id`,
+          [variantName, variantCode, master.id, o.id, master.volume_ml, master.volume_unit, master.container_name, master.is_pure_oil, master.is_candle, master.price]
+        )
+        const variantId = v.rows[0].id
+        await ensureMuseSku(tq, variantId)  // keeps existing SKU if the variant was re-added
+        return { variant_id: variantId }
+      })
+      await auditLog(req.user.id, 'master_oil_added', 'product', master.id, master.name, { oil_id, variant_created: result.variant_id })
+      return res.json({ success: true, ...result })
+    }
 
-    const result = await withTransaction(async (client) => {
+    // MAJOR: legacy fragrance junction (unchanged for now)
+    if (!fragrance_id) return res.status(400).json({ error: 'fragrance_id required' })
+    await withTransaction(async (client) => {
       const tq = (text, params) => client.query(text, params)
-
       await tq(
-        `INSERT INTO ${fragTable} (master_product_id, fragrance_id) VALUES ($1, $2)
+        `INSERT INTO major_client_master_fragrances (master_product_id, fragrance_id) VALUES ($1, $2)
          ON CONFLICT (master_product_id, fragrance_id) DO NOTHING`,
         [master.id, fragrance_id]
       )
-
-      let variantId = null
-      if (master.segment === 'MUSE') {
-        const frag = await tq(`SELECT product_code, name FROM products WHERE id = $1`, [fragrance_id])
-        if (frag.rows[0]) {
-          const variantCode = `${master.product_code}-${slugify(frag.rows[0].product_code || frag.rows[0].name)}`
-          const variantName = `${master.name} — ${frag.rows[0].name}`
-          const v = await tq(
-            `INSERT INTO products
-              (name, product_code, category, segment, is_master, master_product_id, fragrance_id,
-               unit, current_stock, volume_ml, volume_unit, container_name, is_pure_oil, is_candle, client_id, price)
-             VALUES ($1, $2, 'FINISHED_GOOD', 'MUSE', false, $3, $4, 'units', 0, $5, $6, $7, $8, $9, NULL, $10)
-             ON CONFLICT (product_code) DO UPDATE SET name = EXCLUDED.name, archived = false
-             RETURNING id`,
-            [variantName, variantCode, master.id, fragrance_id, master.volume_ml, master.volume_unit, master.container_name, master.is_pure_oil, master.is_candle, master.price]
-          )
-          variantId = v.rows[0].id
-          // Auto-assign MUSE SKU + barcode (keeps existing if variant was re-added)
-          await ensureMuseSku(tq, variantId)
-        }
-      }
-
-      return { variant_id: variantId }
     })
-
-    await auditLog(req.user.id, 'master_fragrance_added', 'product', master.id, master.name, { fragrance_id, variant_created: result.variant_id })
-    res.json({ success: true, ...result })
+    await auditLog(req.user.id, 'master_fragrance_added', 'product', master.id, master.name, { fragrance_id })
+    res.json({ success: true })
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-// DELETE /api/masters/:id/fragrances/:fragId — remove fragrance, archive variant (preserves stock history)
+// DELETE /api/masters/:id/fragrances/:fragId — remove, archiving the variant (keeps history).
+// MUSE: :fragId is the OIL id (D14 oil model) → archive the variant(s) for that oil.
+// MAJOR: :fragId is the legacy fragrance_id → drop the junction row.
 router.delete('/masters/:id/fragrances/:fragId', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const masterRes = await query(`SELECT * FROM products WHERE id = $1 AND is_master = true`, [req.params.id])
     if (!masterRes.rows[0]) return res.status(404).json({ error: 'Master not found' })
     const master = masterRes.rows[0]
+    const key = req.params.fragId
 
-    const fragTable = master.segment === 'MAJOR' ? 'major_client_master_fragrances' : 'muse_master_fragrances'
+    if (master.segment === 'MUSE') {
+      await query(`UPDATE products SET archived = true WHERE master_product_id = $1 AND oil_id = $2`, [master.id, key])
+      await auditLog(req.user.id, 'master_oil_removed', 'product', master.id, master.name, { oil_id: key })
+      return res.json({ success: true })
+    }
 
+    // MAJOR: legacy junction
     await withTransaction(async (client) => {
       const tq = (text, params) => client.query(text, params)
-
-      await tq(`DELETE FROM ${fragTable} WHERE master_product_id = $1 AND fragrance_id = $2`, [master.id, req.params.fragId])
-
-      // Archive variant (don't delete — preserves transaction history)
-      if (master.segment === 'MUSE') {
-        await tq(
-          `UPDATE products SET archived = true
-           WHERE master_product_id = $1 AND fragrance_id = $2`,
-          [master.id, req.params.fragId]
-        )
-      }
+      await tq(`DELETE FROM major_client_master_fragrances WHERE master_product_id = $1 AND fragrance_id = $2`, [master.id, parseInt(key)])
     })
-
-    await auditLog(req.user.id, 'master_fragrance_removed', 'product', master.id, master.name, { fragrance_id: parseInt(req.params.fragId) })
+    await auditLog(req.user.id, 'master_fragrance_removed', 'product', master.id, master.name, { fragrance_id: parseInt(key) })
     res.json({ success: true })
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })

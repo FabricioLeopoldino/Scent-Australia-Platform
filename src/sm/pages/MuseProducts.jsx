@@ -76,7 +76,7 @@ export default function MuseProducts() {
         // include_archived=1 so suggestMasterCode sees every existing code (archived rows
         // still hold the unique product_code). Display filters `!m.archived` below.
         axios.get('/api/masters', { ...api(), params: { segment: 'MUSE', include_archived: 1 } }),
-        axios.get('/api/products', { ...api(), params: { category: 'FRAGRANCE' } }),
+        axios.get('/api/fragrance-library', { ...api(), params: { segment: 'MUSE' } }),  // Phase B: oils, not legacy FRAG_*
       ])
       setMasters(m.data)
       setFragrances(f.data)
@@ -174,8 +174,8 @@ export default function MuseProducts() {
     if (!addFragId) return
     setAddingFragrance(true)
     try {
-      await axios.post(`/api/masters/${selectedMaster.id}/fragrances`, { fragrance_id: parseInt(addFragId) }, api())
-      addToast('Fragrance added — variant created')
+      await axios.post(`/api/masters/${selectedMaster.id}/fragrances`, { oil_id: addFragId }, api())
+      addToast('Oil added — variant created')
       setAddFragId('')
       // Reload detail + masters list
       const r = await axios.get(`/api/masters/${selectedMaster.id}`, api())
@@ -219,7 +219,9 @@ export default function MuseProducts() {
   })
 
   // Fragrance options for the add picker — exclude already-assigned
-  const assignedFragIds = new Set((masterDetail?.fragrances || []).map(f => f.fragrance_id))
+  // Phase B: a MUSE master's assigned "fragrances" are its variants' oils (by oil_id);
+  // the picklist is the SA Fragrance Library (fragrances[].id === the oil id).
+  const assignedFragIds = new Set((masterDetail?.fragrances || []).map(f => f.oil_id))
   const availableFragrances = fragrances.filter(f => !assignedFragIds.has(f.id))
 
   return (
@@ -466,22 +468,22 @@ function DetailDrawer({ master, detail, loading, fragrances, availableFragrances
               {detail?.fragrances?.length > 0 ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
                   {detail.fragrances.map(f => {
-                    const variant = detail.variants.find(v => v.fragrance_id === f.fragrance_id)
+                    const variant = detail.variants.find(v => v.oil_id === f.oil_id)
                     return (
-                      <div key={f.fragrance_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'rgba(167,139,250,0.06)', border: '1px solid rgba(167,139,250,0.15)', borderRadius: 8 }}>
+                      <div key={f.oil_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'rgba(167,139,250,0.06)', border: '1px solid rgba(167,139,250,0.15)', borderRadius: 8 }}>
                         <div style={{ flex: 1 }}>
                           <div style={{ fontSize: 13, fontWeight: 700, color: '#a78bfa' }}>{f.name}</div>
-                          {variant && (
-                            <div style={{ fontSize: 10, color: 'rgba(232,234,242,0.4)', marginTop: 2, fontFamily: 'monospace' }}>{variant.product_code}</div>
-                          )}
-                        </div>
-                        <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontSize: 9, color: 'rgba(232,234,242,0.4)', textTransform: 'uppercase', fontWeight: 700 }}>Stock</div>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: variant?.current_stock > 0 ? '#4ade80' : 'rgba(232,234,242,0.4)' }}>
-                            {Number(variant?.current_stock || 0).toLocaleString()}
+                          <div style={{ fontSize: 10, color: 'rgba(232,234,242,0.4)', marginTop: 2, fontFamily: 'monospace' }}>
+                            {f.product_code}{variant?.product_code ? ` · ${variant.product_code}` : ''}
                           </div>
                         </div>
-                        <IconButton variant="danger" onClick={() => onRemoveFragrance(f.fragrance_id)} title="Remove fragrance (archives variant)"><X size={13} /></IconButton>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontSize: 9, color: 'rgba(232,234,242,0.4)', textTransform: 'uppercase', fontWeight: 700 }}>Oil Stock (SA)</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: Number(f.current_stock) > 0 ? '#4ade80' : '#f87171' }}>
+                            {Number(f.current_stock || 0).toLocaleString()} <span style={{ fontSize: 10, color: 'rgba(232,234,242,0.4)' }}>{f.unit || 'mL'}</span>
+                          </div>
+                        </div>
+                        <IconButton variant="danger" onClick={() => onRemoveFragrance(f.oil_id)} title="Remove oil (archives its variant)"><X size={13} /></IconButton>
                       </div>
                     )
                   })}
@@ -497,8 +499,8 @@ function DetailDrawer({ master, detail, loading, fragrances, availableFragrances
                     <SearchSelect
                       value={addFragId}
                       onChange={setAddFragId}
-                      options={availableFragrances.map(f => ({ value: f.id, label: f.name, sub: f.product_code }))}
-                      placeholder="Select a fragrance to add..."
+                      options={availableFragrances.map(f => ({ value: f.id, label: f.name, sub: f.code }))}
+                      placeholder="Select an oil from the Fragrance Library..."
                       clearable={false}
                     />
                   </div>
