@@ -13,6 +13,7 @@ import TransactionHistory from './pages/TransactionHistory.jsx';
 import IncomingOrders from './pages/IncomingOrders.jsx';
 import ActivityLog from './pages/ActivityLog.jsx';
 import HistoryActivity from './pages/HistoryActivity.jsx';
+import Fragrances from './pages/Fragrances.jsx';
 import Returns from './pages/Returns.jsx';
 import BarcodeScanner from './pages/BarcodeScanner.jsx';
 import PackingRecords from './pages/PackingRecords.jsx';
@@ -146,7 +147,9 @@ export default function SMModule({ user, onLogout }) {
                 <Route path="/muse" component={MuseDashboard} />
                 <Route path="/muse/products" component={MuseProducts} />
                 <Route path="/container-types" component={ContainerTypes} />
-                <Route path="/fragrances" component={StockManagement} />
+                {/* Phase B: the Fragrance Library (read-only SA oils). This route pointed at
+                    StockManagement all along, which is why the page never showed. */}
+                <Route path="/fragrances" component={Fragrances} />
                 <Route path="/standard/catalog" component={StandardCatalog} />
                 <Route path="/major-clients" component={MajorClients} />
                 <Route path="/major-clients/:id" component={MajorClientDetail} />
