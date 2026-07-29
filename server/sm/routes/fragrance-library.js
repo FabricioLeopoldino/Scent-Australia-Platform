@@ -17,12 +17,21 @@ router.get('/fragrance-library', auth, async (req, res) => {
     const seg = SEGMENT_MAP[segment]
     if (!seg) return res.status(400).json({ error: 'segment query param required: MUSE, STANDARD or MAJOR' })
 
+    // Default: active oils only (safe for the order/BOM pickers — never show a
+    // discontinued oil there). The Fragrance Library display page opts in to see
+    // inactive ones too via ?include_inactive=1, behind its own toggle.
+    const params = [seg.exclusivityBucket]
+    let statusFilter = `AND status = 'active'`
+    if (req.query.include_inactive === '1') {
+      statusFilter = ''
+    }
+
     const r = await query(
-      `SELECT id, "productCode" AS code, name, "currentStock" AS current_stock, unit, exclusivity
-       FROM sa.products WHERE category = 'OILS' AND status = 'active'
+      `SELECT id, "productCode" AS code, name, "currentStock" AS current_stock, unit, exclusivity, status
+       FROM sa.products WHERE category = 'OILS' ${statusFilter}
          AND (exclusivity IS NULL OR exclusivity = $1)
-       ORDER BY name`,
-      [seg.exclusivityBucket]
+       ORDER BY "productCode"`,
+      params
     )
     res.json(r.rows)
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }

@@ -17,17 +17,19 @@ const SEGMENT_BY_MODULE = { MUSE: 'MUSE' } // anything else (SM/OPS) → STANDAR
 export default function Fragrances() {
   const activeModule = typeof localStorage !== 'undefined' ? localStorage.getItem('platform_active_module') : null
   const segment = SEGMENT_BY_MODULE[activeModule] || 'STANDARD'
-  const [oils, setOils]       = useState([])
-  const [loading, setLoading] = useState(true)
-  const [search, setSearch]   = useState('')
+  const [oils, setOils]               = useState([])
+  const [loading, setLoading]         = useState(true)
+  const [search, setSearch]           = useState('')
+  const [showInactive, setShowInactive] = useState(false)
   const { addToast } = useToast()
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [showInactive])
 
   async function load() {
     setLoading(true)
     try {
-      const r = await axios.get('/api/fragrance-library', { ...api(), params: { segment } })
+      const params = { segment, ...(showInactive ? { include_inactive: 1 } : {}) }
+      const r = await axios.get('/api/fragrance-library', { ...api(), params })
       setOils(Array.isArray(r.data) ? r.data : [])
     } catch { addToast('Failed to load the Fragrance Library', 'error') }
     finally { setLoading(false) }
@@ -64,13 +66,23 @@ export default function Fragrances() {
         <Stat label="Out of Stock" value={emptyCount} color={emptyCount > 0 ? '#f87171' : '#4ade80'} />
       </div>
 
-      {/* Search */}
-      <div style={{ position: 'relative', maxWidth: 360, marginBottom: 20 }}>
-        <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'rgba(232,234,242,0.4)' }} />
-        <input
-          value={search} onChange={e => setSearch(e.target.value)} placeholder="Search oils..."
-          style={{ width: '100%', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, padding: '8px 12px 8px 34px', color: '#e8eaf2', fontSize: 13, outline: 'none' }}
-        />
+      {/* Search + Show Inactive */}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 20, flexWrap: 'wrap' }}>
+        <div style={{ position: 'relative', flex: 1, maxWidth: 360 }}>
+          <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'rgba(232,234,242,0.4)' }} />
+          <input
+            value={search} onChange={e => setSearch(e.target.value)} placeholder="Search oils..."
+            style={{ width: '100%', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, padding: '8px 12px 8px 34px', color: '#e8eaf2', fontSize: 13, outline: 'none' }}
+          />
+        </div>
+        <button onClick={() => setShowInactive(v => !v)} style={{
+          background: showInactive ? 'rgba(251,191,36,0.15)' : 'rgba(255,255,255,0.05)',
+          border: showInactive ? '1px solid rgba(251,191,36,0.4)' : '1px solid rgba(255,255,255,0.1)',
+          color: showInactive ? '#fbbf24' : 'rgba(232,234,242,0.6)',
+          borderRadius: 20, padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+        }}>
+          Show Inactive
+        </button>
       </div>
 
       {loading ? (
@@ -116,7 +128,9 @@ export default function Fragrances() {
                         : <span style={{ fontSize: 11, color: 'rgba(232,234,242,0.4)' }}>Shared</span>}
                     </td>
                     <td style={{ padding: '10px 16px' }}>
-                      {isEmpty
+                      {o.status !== 'active'
+                        ? <span style={{ background: 'rgba(148,163,184,0.12)', color: '#94a3b8', padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700 }}>INACTIVE</span>
+                        : isEmpty
                         ? <span style={{ background: 'rgba(239,68,68,0.1)', color: '#f87171', padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700 }}>OUT</span>
                         : <span style={{ background: 'rgba(34,197,94,0.1)', color: '#4ade80', padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700 }}>OK</span>}
                     </td>
