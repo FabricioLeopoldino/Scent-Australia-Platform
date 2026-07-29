@@ -10,13 +10,18 @@ import { GlowingEffect } from '../components/GlowingEffect';
 import MlHelper from '../components/MlHelper';
 import { LiquidMetalButton } from '../components/LiquidMetalButton';
 
-export default function ProductManagement({ user }) {
+// libraryMode (D15 follow-up, 2026-07-30): renders this exact same page — same
+// engine, same product-code sequence, same endpoints — as a locked-down,
+// oils-only "Fragrance Library" experience instead of the generic Products
+// screen. No new data path: it only hides/renames UI so oil registration has a
+// single, dedicated-feeling door that can't wander into other categories.
+export default function ProductManagement({ user, libraryMode = false }) {
   const showToast = useToast();
   const [confirmState, setConfirmState] = useState(null);
   const [products, setProducts] = useState([]);
   const [filteredProducts, setFilteredProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [categoryFilter, setCategoryFilter] = useState('ALL');
+  const [categoryFilter, setCategoryFilter] = useState(libraryMode ? 'OILS' : 'ALL');
   const [showInactive, setShowInactive]     = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [showIncomingOnly, setShowIncomingOnly] = useState(false);
@@ -83,14 +88,15 @@ export default function ProductManagement({ user }) {
     exclusivity: 'SHARED'
   });
 
-  // D15: entering via the "Fragrance Library" tile lands here with
-  // ?filter=OILS — a pure UI convenience, no new data path.
+  // Legacy deep-link (pre-libraryMode): /products?filter=OILS — a pure UI
+  // convenience, no new data path. Ignored in libraryMode, which is always OILS.
   const search = useSearch();
   useEffect(() => {
+    if (libraryMode) return;
     const params = new URLSearchParams(search);
     const requestedFilter = params.get('filter');
     if (requestedFilter) setCategoryFilter(requestedFilter);
-  }, [search]);
+  }, [search, libraryMode]);
 
   useEffect(() => {
     fetchProducts();
@@ -614,8 +620,10 @@ export default function ProductManagement({ user }) {
   return (
     <div className="container" style={{ paddingTop: '40px' }}>
       <div className="page-header">
-        <h2 className="page-title">Product Management</h2>
-        <p style={{ color: 'rgba(232,234,242,0.45)', marginTop: '8px' }}>Manage all products across categories</p>
+        <h2 className="page-title">{libraryMode ? 'Fragrance Library' : 'Product Management'}</h2>
+        <p style={{ color: 'rgba(232,234,242,0.45)', marginTop: '8px' }}>
+          {libraryMode ? 'The single source of truth for oil — shared by SA, Scented Merchandise and MUSE' : 'Manage all products across categories'}
+        </p>
       </div>
 
       {/* Action Buttons */}
@@ -657,9 +665,9 @@ export default function ProductManagement({ user }) {
           </>
         )}
 
-        {/* Right-side group: BOM + Add Product */}
+        {/* Right-side group: BOM (irrelevant to raw oils, hidden in libraryMode) + Add */}
         <div style={{ display: 'flex', gap: 12, marginLeft: 'auto', alignItems: 'center' }}>
-          <LiquidMetalButton label="🧩 BOM" width={108} onClick={() => window.location.href = '/sa/bom'} />
+          {!libraryMode && <LiquidMetalButton label="🧩 BOM" width={108} onClick={() => window.location.href = '/sa/bom'} />}
           {['admin', 'root'].includes(user.role) && (
             <button
               className="btn btn-primary"
@@ -669,7 +677,7 @@ export default function ProductManagement({ user }) {
                 setShowAddModal(true);
               }}
             >
-              + Add Product
+              {libraryMode ? '+ Add Oil' : '+ Add Product'}
             </button>
           )}
         </div>
@@ -763,7 +771,9 @@ export default function ProductManagement({ user }) {
           </div>
 
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            {[
+            {/* Category chips hidden in libraryMode — this page is oils-only by design,
+                nothing to switch between. */}
+            {!libraryMode && [
               { value: 'ALL', label: 'All' },
               { value: 'OILS', label: 'Oils' },
               { value: 'SA_SCENTED_PRODUCTS', label: 'Scented' },
@@ -1074,7 +1084,7 @@ export default function ProductManagement({ user }) {
         <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }}>
             <div className="modal-header">
-              <h2>{editingProduct ? 'Edit Product' : 'Add New Product'}</h2>
+              <h2>{libraryMode ? (editingProduct ? 'Edit Oil' : 'Add New Oil') : (editingProduct ? 'Edit Product' : 'Add New Product')}</h2>
               <button className="modal-close" onClick={() => setShowAddModal(false)}>×</button>
             </div>
 
@@ -1091,20 +1101,30 @@ export default function ProductManagement({ user }) {
                   />
                 </div>
 
-                <div className="form-group">
-                  <label>Category *</label>
-                  <select
-                    className="input"
-                    value={formData.category}
-                    onChange={(e) => setFormData({...formData, category: e.target.value, productCode: '', tag: ''})}
-                    required
-                  >
-                    <option value="OILS">Oils</option>
-                    <option value="SCENT_MACHINES">Diffuser Machines</option>
-                    <option value="MACHINES_SPARES">Spares</option>
-                    <option value="RAW_MATERIALS">Raw Materials</option>
-                  </select>
-                </div>
+                {libraryMode ? (
+                  // Locked, not just defaulted — the Fragrance Library is oils-only by
+                  // design (one door, one engine, one sequence — never let this drift
+                  // into another category by accident).
+                  <div className="form-group">
+                    <label>Category</label>
+                    <input className="input" value="Oils" disabled style={{ opacity: 0.65, cursor: 'not-allowed' }} />
+                  </div>
+                ) : (
+                  <div className="form-group">
+                    <label>Category *</label>
+                    <select
+                      className="input"
+                      value={formData.category}
+                      onChange={(e) => setFormData({...formData, category: e.target.value, productCode: '', tag: ''})}
+                      required
+                    >
+                      <option value="OILS">Oils</option>
+                      <option value="SCENT_MACHINES">Diffuser Machines</option>
+                      <option value="MACHINES_SPARES">Spares</option>
+                      <option value="RAW_MATERIALS">Raw Materials</option>
+                    </select>
+                  </div>
+                )}
 
                 <div className="form-group">
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>

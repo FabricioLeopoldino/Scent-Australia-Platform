@@ -66,6 +66,7 @@ function SAContent({ user, onSwitchModule, onLogout }) {
           <ul className="nav-links" style={{ flex: 1, justifyContent: 'center' }}>
             <li><Link href="/" className={isActive('/') ? 'nav-active' : ''}>Dashboard</Link></li>
             <li><Link href="/products" className={isActive('/products') ? 'nav-active' : ''}>Products</Link></li>
+            <li><Link href="/fragrance-library" className={isActive('/fragrance-library') ? 'nav-active' : ''}>Fragrance Library</Link></li>
             <li><Link href="/machines" className={isActive('/machines') ? 'nav-active' : ''}>Diffusers</Link></li>
             <li><Link href="/returns" className={isActive('/returns') ? 'nav-active' : ''}>Returns</Link></li>
             {user.role !== 'technician' && (
@@ -133,6 +134,7 @@ function SAContent({ user, onSwitchModule, onLogout }) {
         <Switch>
           <Route path="/"><Dashboard /></Route>
           <Route path="/products"><ProductManagement user={user} /></Route>
+          <Route path="/fragrance-library"><ProductManagement user={user} libraryMode /></Route>
           <Route path="/machines"><MachineInventory user={user} /></Route>
           <Route path="/returns"><ProductReturns user={user} /></Route>
           <Route path="/cold-room-map"><ColdRoomMap user={user} /></Route>

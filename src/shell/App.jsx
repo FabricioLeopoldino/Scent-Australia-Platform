@@ -44,9 +44,10 @@ export default function App() {
     // MUSE (D7) and OPS (D11) are views over the SM module: same routes/backend,
     // the Layout renders view-specific navigation based on the active module.
     if (moduleKey === 'SA') navigate('/sa');
-    // D15: Fragrance Library tile — same SA module, landing straight on the
-    // oils list (pre-filtered) instead of the dashboard.
-    else if (moduleKey === 'FRAGLIB') navigate('/sa/products?filter=OILS');
+    // D15 + follow-up (2026-07-30): Fragrance Library tile — same SA module,
+    // now its own dedicated, oils-locked route (libraryMode) instead of a
+    // filtered view of the generic Products page.
+    else if (moduleKey === 'FRAGLIB') navigate('/sa/fragrance-library');
     else if (moduleKey === 'MUSE') navigate('/sm/muse');
     else if (moduleKey === 'OPS') navigate('/sm'); // production dashboard
     else if (moduleKey === 'REPORTS') navigate('/sm/history'); // centralized cross-system report (admin/root)
