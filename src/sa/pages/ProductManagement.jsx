@@ -150,7 +150,14 @@ export default function ProductManagement({ user, libraryMode = false }) {
   const filterProducts = () => {
     let filtered = products;
 
-    if (categoryFilter !== 'ALL') {
+    // Oils are managed ONLY in the Fragrance Library (libraryMode) now — the
+    // generic Products page never lists, filters to, or lets you create them,
+    // so there is exactly one door for oil CRUD (create/edit/archive).
+    filtered = libraryMode
+      ? filtered.filter(p => p.category === 'OILS')
+      : filtered.filter(p => p.category !== 'OILS');
+
+    if (!libraryMode && categoryFilter !== 'ALL') {
       filtered = filtered.filter(p => p.category === categoryFilter);
     }
 
@@ -565,7 +572,9 @@ export default function ProductManagement({ user, libraryMode = false }) {
   const resetForm = () => {
     setFormData({
       name: '',
-      category: 'OILS',
+      // Oils only ever get created in libraryMode (the "Oils" category was removed
+      // from the generic dropdown); default the generic page to Raw Materials instead.
+      category: libraryMode ? 'OILS' : 'RAW_MATERIALS',
       productCode: '',
       tag: '',
       unit: 'mL',
@@ -772,10 +781,10 @@ export default function ProductManagement({ user, libraryMode = false }) {
 
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             {/* Category chips hidden in libraryMode — this page is oils-only by design,
-                nothing to switch between. */}
+                nothing to switch between. "Oils" removed from the generic page's chips —
+                oils are excluded here unconditionally; manage them in the Fragrance Library. */}
             {!libraryMode && [
               { value: 'ALL', label: 'All' },
-              { value: 'OILS', label: 'Oils' },
               { value: 'SA_SCENTED_PRODUCTS', label: 'Scented' },
               { value: 'SCENT_MACHINES', label: 'Diffuser Machines' },
               { value: 'MACHINES_SPARES', label: 'Spares' },
@@ -1118,7 +1127,7 @@ export default function ProductManagement({ user, libraryMode = false }) {
                       onChange={(e) => setFormData({...formData, category: e.target.value, productCode: '', tag: ''})}
                       required
                     >
-                      <option value="OILS">Oils</option>
+                      {/* Oils removed — created only in the Fragrance Library (libraryMode) now. */}
                       <option value="SCENT_MACHINES">Diffuser Machines</option>
                       <option value="MACHINES_SPARES">Spares</option>
                       <option value="RAW_MATERIALS">Raw Materials</option>
