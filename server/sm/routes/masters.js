@@ -175,8 +175,7 @@ router.post('/masters', auth, requireRole('admin', 'root'), async (req, res) => 
       volume_ml, volume_unit, default_oil_pct,
       container_name, is_pure_oil, is_candle,
       bom_components,  // [{ component_product_id, quantity_formula, quantity_per_unit, component_group, sort_order }]
-      fragrance_ids,   // [101, 102, ...] (only for MUSE/MAJOR)
-      generate_variants,  // default true for MUSE
+      fragrance_ids,   // [101, 102, ...] (MAJOR only — see the MUSE guard above)
       notes, image_data,
     } = req.body
 
@@ -184,6 +183,15 @@ router.post('/masters', auth, requireRole('admin', 'root'), async (req, res) => 
     if (!['MUSE', 'STANDARD', 'MAJOR'].includes(segment)) return res.status(400).json({ error: 'segment must be MUSE, STANDARD, or MAJOR' })
     if (segment === 'MAJOR' && !client_id) return res.status(400).json({ error: 'client_id required for MAJOR segment' })
     if (segment !== 'MAJOR' && client_id) return res.status(400).json({ error: 'client_id only valid for MAJOR segment' })
+    // Phase B (D14 oil model, 2026-07-29): MUSE masters no longer accept fragrance_ids
+    // at creation — that path used to auto-create a variant linked by the legacy
+    // fragrance_id (sm.products), bypassing the oil model entirely. Fail loudly instead
+    // of silently accepting it: create the master, then attach oils via
+    // POST /masters/:id/fragrances (oil_id) — the only path that links to the shared
+    // SA Fragrance Library and keeps SKU/stock correct.
+    if (segment === 'MUSE' && Array.isArray(fragrance_ids) && fragrance_ids.length > 0) {
+      return res.status(400).json({ error: 'MUSE masters do not accept fragrance_ids at creation. Create the master, then add oils via POST /masters/:id/fragrances.' })
+    }
 
     const result = await withTransaction(async (client) => {
       const tq = (text, params) => client.query(text, params)
@@ -255,43 +263,23 @@ router.post('/masters', auth, requireRole('admin', 'root'), async (req, res) => 
         }
       }
 
-      // 3. Link fragrances + (for MUSE) create variants
-      const variantsCreated = []
-      if (Array.isArray(fragrance_ids) && fragrance_ids.length > 0 && segment !== 'STANDARD') {
-        const fragTable = segment === 'MAJOR' ? 'major_client_master_fragrances' : 'muse_master_fragrances'
+      // 3. MAJOR only: link legacy fragrances (unchanged — out of Phase B scope).
+      // MUSE masters are created empty; oils are attached afterward via
+      // POST /masters/:id/fragrances (the guard above rejects MUSE + fragrance_ids here).
+      if (segment === 'MAJOR' && Array.isArray(fragrance_ids) && fragrance_ids.length > 0) {
         for (const fragId of fragrance_ids) {
           await tq(
-            `INSERT INTO ${fragTable} (master_product_id, fragrance_id) VALUES ($1, $2)
+            `INSERT INTO major_client_master_fragrances (master_product_id, fragrance_id) VALUES ($1, $2)
              ON CONFLICT (master_product_id, fragrance_id) DO NOTHING`,
             [master.id, fragId]
           )
-
-          // MUSE: auto-create variant for each fragrance (if requested)
-          if (segment === 'MUSE' && generate_variants !== false) {
-            const frag = await tq(`SELECT product_code, name FROM products WHERE id = $1`, [fragId])
-            if (frag.rows[0]) {
-              const variantCode = `${master.product_code}-${slugify(frag.rows[0].product_code || frag.rows[0].name)}`
-              const variantName = `${master.name} — ${frag.rows[0].name}`
-              const variantRes = await tq(
-                `INSERT INTO products
-                  (name, product_code, category, segment, is_master, master_product_id, fragrance_id,
-                   unit, current_stock, volume_ml, volume_unit, container_name, is_pure_oil, is_candle, client_id, price)
-                 VALUES ($1, $2, 'FINISHED_GOOD', 'MUSE', false, $3, $4, 'units', 0, $5, $6, $7, $8, $9, NULL, $10)
-                 ON CONFLICT (product_code) DO UPDATE SET name = EXCLUDED.name
-                 RETURNING id`,
-                [variantName, variantCode, master.id, fragId, master.volume_ml, master.volume_unit, master.container_name, master.is_pure_oil, master.is_candle, master.price]
-              )
-              variantsCreated.push(variantRes.rows[0].id)
-              await ensureMuseSku(tq, variantRes.rows[0].id)
-            }
-          }
         }
       }
 
-      return { master, variants_created: variantsCreated.length, bom_entries_created: (bom_components || []).length, fragrances_linked: (fragrance_ids || []).length, bom_copied_from: bomCopiedFrom }
+      return { master, bom_entries_created: (bom_components || []).length, bom_copied_from: bomCopiedFrom }
     })
 
-    await auditLog(req.user.id, 'master_created', 'product', result.master.id, name, { segment, product_code, variants_created: result.variants_created })
+    await auditLog(req.user.id, 'master_created', 'product', result.master.id, name, { segment, product_code })
     res.status(201).json(result)
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ error: 'Product code already exists' })
