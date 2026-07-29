@@ -8,6 +8,7 @@ import { useToast } from '../SMModule.jsx'
 import SearchSelect from '../components/SearchSelect.jsx'
 import BOMEditor from '../components/BOMEditor.jsx'
 import { suggestMasterCode, MASTER_PREFIXES } from '../utils/masterCode.js'
+import { splitVolume } from '../utils/volume.js'
 import MuseHeader from '../components/MuseHeader.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
@@ -479,9 +480,11 @@ function DetailDrawer({ master, detail, loading, fragrances, availableFragrances
                         </div>
                         <div style={{ textAlign: 'right' }}>
                           <div style={{ fontSize: 9, color: 'rgba(232,234,242,0.4)', textTransform: 'uppercase', fontWeight: 700 }}>Oil Stock (SA)</div>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: Number(f.current_stock) > 0 ? '#4ade80' : '#f87171' }}>
-                            {Number(f.current_stock || 0).toLocaleString()} <span style={{ fontSize: 10, color: 'rgba(232,234,242,0.4)' }}>{f.unit || 'mL'}</span>
-                          </div>
+                          {(() => { const s = splitVolume(f.current_stock, 'ml'); return (
+                            <div style={{ fontSize: 13, fontWeight: 700, color: Number(f.current_stock) > 0 ? '#4ade80' : '#f87171' }}>
+                              {s.value} <span style={{ fontSize: 10, color: 'rgba(232,234,242,0.4)' }}>{s.unit}</span>
+                            </div>
+                          )})()}
                         </div>
                         <IconButton variant="danger" onClick={() => onRemoveFragrance(f.oil_id)} title="Remove oil (archives its variant)"><X size={13} /></IconButton>
                       </div>

@@ -96,7 +96,9 @@ export default function Fragrances() {
               {displayed.map(o => {
                 const stock = parseFloat(o.current_stock || 0)
                 const isEmpty = stock <= 0
-                const s = splitVolume(stock, o.unit || 'ml')
+                // Oils are always mL (SA convention); force 'ml' regardless of the
+                // DB's literal case ('mL') so splitVolume converts to L like the SA page.
+                const s = splitVolume(stock, 'ml')
                 return (
                   <tr key={o.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
                     onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}
