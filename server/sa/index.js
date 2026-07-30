@@ -21,6 +21,7 @@ import { dirname, join } from 'path';
 // resolve to schema sa with zero SQL changes. UTC type parser lives in db.js.
 import { saPool as pool } from '../db.js';
 import { SA_SKU_VARIANTS, SA_SKU_KEYS } from '../../shared/sa-sku-variants.js';
+import { withinWarehouseHours } from '../../shared/warehouse-hours.js';
 
 // The five sale SKUs as Shopify sees them. Volumes come from the shared module
 // (single source of truth, QA #16); suffix/price are commercial data and live
@@ -5861,18 +5862,22 @@ router.put('/tech-stock/:productId/config', async (req, res) => {
   }
 });
 
-// ── Keep Neon alive during business hours (6am–5pm Melbourne time) ──────────
-// Window widened 7–16 → 6–17 to match the live SA system (owner, 2026-07-16):
-// the platform's copy still carried the older window, so the first request of
-// the early shift paid a Neon cold start. One ping is enough for the whole
-// platform — the platform/sa/sm pools all point at the SAME Neon compute, so
-// keeping it warm here keeps it warm for every module.
+// ── Keep Neon alive during warehouse hours ─────────────────────────────────
+// Melbourne warehouse (2/600 Lorimer St) works 07:30–16:00, Mon–Fri. The
+// window below is 06:30–17:00 Mon–Fri — a safety margin the owner set
+// (2026-07-31) because the person entering orders sometimes starts early and
+// leaves late. WEEKENDS ARE DELIBERATELY EXCLUDED: nobody works them, and this
+// ping is billed Neon compute (it is what keeps the DB from auto-suspending).
+// Every hour added here is ~0.25+ CU-hr/day on the bill — do not widen it
+// without a real business reason.
+//
+// One ping is enough for the whole platform — the platform/sa/sm pools all
+// point at the SAME Neon compute, so keeping it warm here warms every module.
+// The window itself lives in shared/warehouse-hours.js (single definition,
+// unit-tested by scripts/regression-warehouse-hours.js).
 setInterval(async () => {
   try {
-    const hour = parseInt(new Date().toLocaleString('en-AU', { timeZone: 'Australia/Melbourne', hour: 'numeric', hour12: false }));
-    if (hour >= 6 && hour < 17) {
-      await pool.query('SELECT 1');
-    }
+    if (withinWarehouseHours()) await pool.query('SELECT 1');
   } catch (e) { /* silencioso */ }
 }, 4 * 60 * 1000);
 

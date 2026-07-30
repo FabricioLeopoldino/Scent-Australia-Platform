@@ -115,15 +115,36 @@ app.use(
 );
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// ── Health check ──────────────────────────────────────────────────────────
-app.get('/api/health', async (_req, res) => {
+// ── Health check — LIVENESS ONLY, never touches the DB ────────────────────
+// This is Render's healthCheckPath, so it is hit continuously for as long as
+// the service is up. It used to run `SELECT NOW()`, which meant every probe
+// woke the Neon compute and kept it from auto-suspending — the bill is Neon
+// CU-hrs, so an always-on Render instance would have held the DB awake 24/7.
+// Answering from memory keeps that cost at zero and is also more stable: a
+// transient Neon blip no longer makes Render mark the service unhealthy and
+// restart it. For the DB check see GET /api/health/db below.
+app.get('/api/health', (_req, res) => {
+  res.json({
+    status: 'ok',
+    dbConfigured: isDbConfigured(),
+    ts: new Date().toISOString(),
+  });
+});
+
+// ── Auth gate (FR-AUTH-5): all /api/* except login, webhooks, health ─────
+const PUBLIC_API_PATHS = ['/platform/auth/login', '/health'];
+app.use('/api', (req, res, next) => {
+  if (PUBLIC_API_PATHS.includes(req.path) || req.path.startsWith('/webhook/')) return next();
+  requireAuth(req, res, next);
+});
+
+// ── Health check — READINESS (does hit the DB) ────────────────────────────
+// Declared AFTER the auth gate on purpose: it wakes the Neon compute, so it
+// must not be an anonymous endpoint anyone (or a bot) can hammer. Use this to
+// diagnose connectivity by hand; Render must keep probing /api/health.
+app.get('/api/health/db', async (_req, res) => {
   if (!isDbConfigured()) {
-    return res.json({
-      status: 'ok',
-      message: 'Service active (database not configured yet)',
-      db: false,
-      ts: new Date().toISOString(),
-    });
+    return res.json({ status: 'ok', db: false, message: 'Database not configured' });
   }
   try {
     const r = await platformPool.query('SELECT NOW() AS now, current_database() AS db');
@@ -132,13 +153,6 @@ app.get('/api/health', async (_req, res) => {
     console.error('[health] DB check failed:', e.message);
     res.status(503).json({ status: 'error', error: 'Database unreachable' });
   }
-});
-
-// ── Auth gate (FR-AUTH-5): all /api/* except login, webhooks, health ─────
-const PUBLIC_API_PATHS = ['/platform/auth/login', '/health'];
-app.use('/api', (req, res, next) => {
-  if (PUBLIC_API_PATHS.includes(req.path) || req.path.startsWith('/webhook/')) return next();
-  requireAuth(req, res, next);
 });
 
 // ── Module routers ────────────────────────────────────────────────────────
