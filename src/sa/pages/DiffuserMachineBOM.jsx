@@ -292,9 +292,10 @@ export default function DiffuserMachineBOM({ user }) {
                 {currentBOM.map((item) => {
                   const product = getProductByCode(item.componentCode);
                   const currentStock = product ? parseFloat(product.currentStock) : 0;
-                  const minStock = product ? parseFloat(product.minStockLevel) : 0;
+                  // Shared rule (QA #17) — this line still used the old `<=` while
+                  // line ~400 of this same file already called isLowStock() (`<`).
                   const isOut = product && currentStock <= 0;
-                  const isLow = product && !isOut && currentStock <= minStock;
+                  const isLow = product && !isOut && isLowStock(product);
 
                   return (
                     <tr key={item.id}>

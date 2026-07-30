@@ -20,7 +20,7 @@ import { dirname, join } from 'path';
 // Platform DB with search_path=sa,public (PRD §7.3) — unqualified SA queries
 // resolve to schema sa with zero SQL changes. UTC type parser lives in db.js.
 import { saPool as pool } from '../db.js';
-import { SA_SKU_VARIANTS } from '../../shared/sa-sku-variants.js';
+import { SA_SKU_VARIANTS, SA_SKU_KEYS } from '../../shared/sa-sku-variants.js';
 
 // The five sale SKUs as Shopify sees them. Volumes come from the shared module
 // (single source of truth, QA #16); suffix/price are commercial data and live
@@ -828,7 +828,10 @@ router.put('/products/:id', async (req, res) => {
       }
       // Key validation only applies to OILS — their keys map to Shopify variant configs.
       // For machines/spares/raw materials the webhook matches by VALUE, not key, so any key is valid.
-      const VALID_SKU_KEYS = ['SA_CA', 'SA_HF', 'SA_CDIFF', 'SA_1L', 'SA_PRO', 'SA_DM', 'SA_MAC', 'SA_RM', 'SA_FORM'];
+      // The 5 oil sale-SKU keys come from the shared module (QA #16) so adding a
+      // variant there can't leave this validation behind; the rest are the
+      // single-SKU keys for machines / spares / raw materials / formulas.
+      const VALID_SKU_KEYS = [...SA_SKU_KEYS, 'SA_DM', 'SA_MAC', 'SA_RM', 'SA_FORM'];
       for (const key of Object.keys(shopifySkus)) {
         if (category === 'OILS' && !VALID_SKU_KEYS.includes(key)) {
           return res.status(400).json({ error: `Invalid shopifySkus key: ${key}. Allowed: ${VALID_SKU_KEYS.join(', ')}` });

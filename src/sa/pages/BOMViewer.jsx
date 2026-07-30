@@ -371,9 +371,13 @@ export default function BOMViewer({ user }) {
                 {currentBOM.map((item, index) => {
                   const product = getProductByCode(item.componentCode);
                   const currentStock = product ? parseFloat(product.currentStock) : 0;
-                  const minStock = product ? parseFloat(product.minStockLevel) : 0;
+                  // Use the shared rule (QA #17) instead of re-deriving it: this line
+                  // still used the old `<=` while line ~460 of THIS SAME FILE already
+                  // called isLowStock() (`<`), so one product could be counted two ways
+                  // on one screen. `isLowStock` is false for stock <= 0, which `isOut`
+                  // already covers, so the combination is equivalent to "0 < stock < min".
                   const isOut = currentStock <= 0;
-                  const isLow = !isOut && currentStock <= minStock;
+                  const isLow = !isOut && !!product && isLowStock(product);
                   const isOk = !isOut && !isLow;
 
                   return (
