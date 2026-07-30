@@ -301,7 +301,20 @@ router.post('/shopify/draft-order', auth, async (req, res) => {
         WHERE id = $3`,
       [data.draft_order.id, data.draft_order.name, production_order_id]
     )
-    res.json({ draft_order_id: data.draft_order.id, draft_order_number: data.draft_order.name, draft_order_url: data.draft_order.invoice_url })
+    // Report whether the Shopify customer got attached. The team is expected to
+    // name clients exactly as they are in Shopify so the auto-link resolves; when
+    // it doesn't (typo, or several customers match), the draft order still goes
+    // through but carries NO contact/shipping address — the user has to know that
+    // immediately instead of discovering it in Shopify later.
+    const customerLinked = !!draftOrder.draft_order.customer
+    res.json({
+      draft_order_id: data.draft_order.id,
+      draft_order_number: data.draft_order.name,
+      draft_order_url: data.draft_order.invoice_url,
+      customer_linked: customerLinked,
+      customer_warning: customerLinked ? null
+        : 'No matching Shopify customer — the draft order has no contact or shipping address. Check the client name matches Shopify exactly, or link it manually in Shopify.',
+    })
   } catch (e) {
     // Network error — queue for retry
     await enqueueDraftOrder(production_order_id).catch(() => {})

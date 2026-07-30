@@ -11,6 +11,62 @@ async function enqueueDraftOrder(productionOrderId) {
   )
 }
 
+// ── Shopify customer lookup ─────────────────────────────────────────────────
+// Linking a client to a Shopify customer is what makes the draft order carry the
+// real contact + shipping/billing address (Shopify fills them from the customer
+// record). Without it the draft order has no customer at all.
+//
+// SAFETY — why this never guesses: Shopify's customer search matches addresses,
+// tags, company names and notes as well as the name, so a bare term can return
+// unrelated people (Shopify's own API docs warn about exactly this). Auto-linking
+// the wrong customer would send an order to the wrong address, so the rule is:
+// link automatically ONLY when the search returns exactly one candidate. Zero or
+// several → leave it unlinked and let a human pick.
+//
+// (Matching is case-insensitive on Shopify's side, and because company is one of
+// the searched fields, a client saved as "Oz Candles" can still resolve to the
+// customer whose contact name is "Attn: Eric".)
+async function searchShopifyCustomers(term) {
+  if (!process.env.SM_SHOPIFY_SHOP_DOMAIN || !process.env.SM_SHOPIFY_ACCESS_TOKEN) {
+    throw new Error('Shopify not configured')
+  }
+  const q = String(term || '').trim()
+  if (!q) return []
+  const res = await fetch(
+    `https://${process.env.SM_SHOPIFY_SHOP_DOMAIN}/admin/api/2025-01/customers/search.json?query=${encodeURIComponent(q)}&limit=10`,
+    { headers: { 'X-Shopify-Access-Token': process.env.SM_SHOPIFY_ACCESS_TOKEN } }
+  )
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.errors ? JSON.stringify(data.errors) : 'Shopify customer search failed')
+  return (data.customers || []).map(c => {
+    const a = c.default_address || {}
+    return {
+      id: c.id,
+      name: [c.first_name, c.last_name].filter(Boolean).join(' ') || a.name || '(no name)',
+      email: c.email || null,
+      phone: c.phone || a.phone || null,
+      company: a.company || null,
+      address: [a.address1, a.city, a.province_code || a.province, a.zip, a.country].filter(Boolean).join(', ') || null,
+    }
+  })
+}
+
+// Resolve (and remember) the Shopify customer for a client that has no link yet.
+// Returns the customer id when it could link unambiguously, otherwise null.
+// Persisting the id means the lookup happens once, not on every publish.
+async function resolveShopifyCustomerForClient(clientId, clientName) {
+  try {
+    const matches = await searchShopifyCustomers(clientName)
+    if (matches.length !== 1) return null          // 0 = not found, >1 = ambiguous → never guess
+    await query(`UPDATE clients SET shopify_customer_id = $1 WHERE id = $2 AND shopify_customer_id IS NULL`, [matches[0].id, clientId])
+    console.log(`[shopify] auto-linked client "${clientName}" -> Shopify customer ${matches[0].id} (${matches[0].name})`)
+    return matches[0].id
+  } catch (e) {
+    console.warn(`[shopify] customer auto-link skipped for "${clientName}": ${e.message}`)
+    return null                                     // never block publishing on lookup failure
+  }
+}
+
 // Builds the Shopify draft-order payload for a production order.
 //
 // SHARED ON PURPOSE: two paths create draft orders — the direct publish route
@@ -20,7 +76,7 @@ async function enqueueDraftOrder(productionOrderId) {
 // for every Fragrance Library line. One builder, so they cannot drift again.
 async function buildDraftOrderPayload(productionOrderId) {
   const order = await query(
-    `SELECT po.*, c.shopify_customer_id FROM production_orders po LEFT JOIN clients c ON po.client_id = c.id WHERE po.id = $1`,
+    `SELECT po.*, c.shopify_customer_id, c.name AS client_name FROM production_orders po LEFT JOIN clients c ON po.client_id = c.id WHERE po.id = $1`,
     [productionOrderId]
   )
   if (!order.rows[0]) throw new Error('Order not found')
@@ -60,7 +116,15 @@ async function buildDraftOrderPayload(productionOrderId) {
   const draftOrder = {
     draft_order: { send_receipt: false, send_invoice: false, line_items: lineItems, note, tags: 'SA Custom Orders' }
   }
-  if (o.shopify_customer_id) draftOrder.draft_order.customer = { id: o.shopify_customer_id }
+  // Attach the customer so Shopify fills in contact + shipping/billing address.
+  // If the client was never linked, try to resolve it by name now (and remember it).
+  // send_receipt/send_invoice stay false above, so attaching a customer still never
+  // emails them — the order just carries the right address.
+  let customerId = o.shopify_customer_id
+  if (!customerId && o.client_id && o.client_name) {
+    customerId = await resolveShopifyCustomerForClient(o.client_id, o.client_name)
+  }
+  if (customerId) draftOrder.draft_order.customer = { id: customerId }
   return draftOrder
 }
 

@@ -131,8 +131,12 @@ export default function ProductionOrders() {
       const { data } = await axios.post('/api/shopify/draft-order', { production_order_id: order.id }, api())
       if (data.queued) {
         addToast('Shopify unavailable — order queued for retry', 'error')
+      } else if (data.customer_warning) {
+        // Published, but with no customer attached → no contact/shipping address on
+        // the Shopify order. Surfaced as a warning so it's caught now, not later.
+        addToast(data.customer_warning, 'error')
       } else {
-        addToast('Draft order sent to Shopify')
+        addToast('Draft order sent to Shopify — customer and address attached')
       }
       loadOrders()
     } catch (e) { addToast(e.response?.data?.error || 'Shopify error', 'error') }
