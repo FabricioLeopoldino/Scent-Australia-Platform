@@ -9,8 +9,13 @@ function isOverdue(d) { return d && new Date(d) < new Date() }
 
 // Dedicated page for items out at external suppliers (filling / labels / candle work).
 // Same data + actions as the Dashboard "External Processing" widget, with room to breathe.
+// Friendly labels for the processing_type values that actually occur.
+const TYPE_LABELS = { labels: 'Labels', candle_filling: 'Candle Filling', filling: 'Filling' }
+const typeLabel = (t) => TYPE_LABELS[t] || String(t || '').replace(/_/g, ' ')
+
 export default function ExternalProcessing() {
   const [items, setItems]         = useState([])
+  const [typeFilter, setTypeFilter] = useState('ALL')
   const [loading, setLoading]     = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [epMarkSentModal, setEpMarkSentModal]   = useState(null)
@@ -48,6 +53,33 @@ export default function ExternalProcessing() {
       </div>
       <div className="ed-rule" style={{ margin: '22px 0 28px' }} />
 
+      {/* Type filter — this is the "labels pending" / "candles at the filler" view:
+          labels sent to the print shop are processing_type='labels', candles out for
+          filling are 'candle_filling'. One page, filtered, instead of separate screens. */}
+      {!loading && items.length > 0 && (() => {
+        const types = [...new Set(items.map(i => i.processing_type).filter(Boolean))].sort()
+        if (types.length < 2) return null
+        const chips = ['ALL', ...types]
+        return (
+          <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+            {chips.map(t => {
+              const active = typeFilter === t
+              const count = t === 'ALL' ? items.length : items.filter(i => i.processing_type === t).length
+              return (
+                <button key={t} onClick={() => setTypeFilter(t)} style={{
+                  background: active ? 'var(--accent-soft)' : 'var(--surface-2)',
+                  border: active ? '1px solid var(--border-h)' : '1px solid var(--border)',
+                  color: active ? 'var(--accent-text)' : 'var(--text-secondary)',
+                  borderRadius: 20, padding: '5px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                }}>
+                  {t === 'ALL' ? 'All' : typeLabel(t)} ({count})
+                </button>
+              )
+            })}
+          </div>
+        )
+      })()}
+
       {loading ? (
         <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Loading...</div>
       ) : items.length === 0 ? (
@@ -56,9 +88,13 @@ export default function ExternalProcessing() {
           <div style={{ fontSize: 14 }}>No items currently at external suppliers</div>
           <div style={{ fontSize: 12, marginTop: 6 }}>Records appear here when you send an order for external processing.</div>
         </div>
+      ) : items.filter(i => typeFilter === 'ALL' || i.processing_type === typeFilter).length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '48px 0', color: 'var(--text-muted)', fontSize: 14 }}>
+          Nothing out at suppliers for “{typeLabel(typeFilter)}” right now.
+        </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14 }}>
-          {items.map(item => {
+          {items.filter(i => typeFilter === 'ALL' || i.processing_type === typeFilter).map(item => {
             const overdue = isOverdue(item.expected_return)
             const daysAway = item.expected_return ? Math.ceil((new Date(item.expected_return) - new Date()) / 86400000) : null
             return (
@@ -70,7 +106,7 @@ export default function ExternalProcessing() {
                   </div>
                   <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                     {item.status === 'requested' && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Requested</span>}
-                    <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{item.processing_type}</span>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{typeLabel(item.processing_type)}</span>
                   </div>
                 </div>
                 {item.status === 'partial' && (() => {

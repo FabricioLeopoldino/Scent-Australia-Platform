@@ -35,34 +35,19 @@ router.get('/dashboard/active-orders', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.get('/dashboard/candles-in-progress', auth, async (req, res) => {
-  try {
-    const result = await query(`
-      SELECT po.*, c.name as client_name, pol.candle_status, pol.filling_supplier, pol.sent_for_filling_at
-      FROM production_orders po
-      LEFT JOIN clients c ON po.client_id = c.id
-      JOIN production_order_lines pol ON pol.production_order_id = po.id AND pol.is_candle = true
-      WHERE po.status NOT IN ('fulfilled','cancelled')
-      ORDER BY po.created_at DESC
-    `)
-    res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
-})
-
-router.get('/dashboard/labels-pending', auth, async (req, res) => {
-  try {
-    const result = await query(`
-      SELECT po.order_number, c.name as client_name, pol.labels_supplier, pol.labels_eta, pol.labels_received
-      FROM production_order_lines pol
-      JOIN production_orders po ON pol.production_order_id = po.id
-      LEFT JOIN clients c ON po.client_id = c.id
-      WHERE pol.labels_required = true AND pol.labels_received = false
-        AND po.status NOT IN ('fulfilled','cancelled')
-      ORDER BY pol.labels_eta ASC NULLS LAST
-    `)
-    res.json(result.rows)
-  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
-})
+// REMOVED 2026-07-30: /dashboard/candles-in-progress and /dashboard/labels-pending.
+// Both were orphans (no frontend ever called them) and both were superseded by the
+// External Processing page, which is the real mechanism for work sent to suppliers:
+//   · labels at the print shop  -> external_processing, processing_type = 'labels'
+//   · candles at the filler     -> external_processing, processing_type = 'candle_filling'
+//     (creating that EP also advances production_order_lines.candle_status)
+// `labels-pending` was additionally BROKEN: it filtered on
+// production_order_lines.labels_required/labels_received, and a repo-wide search showed
+// `labels_received` and `labels_ordered_at` are never written by any code — so it would
+// have listed every label line as "pending" forever, even after it came back. Building a
+// page on it would have shown permanently wrong data.
+// The equivalent (correct) views now live on the External Processing page via its type
+// filter, fed by /dashboard/external-processing below.
 
 router.get('/dashboard/stats', auth, async (req, res) => {
   try {
