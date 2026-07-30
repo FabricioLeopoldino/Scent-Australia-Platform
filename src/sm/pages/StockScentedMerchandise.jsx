@@ -331,15 +331,24 @@ export default function StockScentedMerchandise() {
             Components, labels and reserved stock for Scented Merchandise
           </div>
         </div>
-        {/* Single fixed "+ New Product" button across all product tabs (parity with /stock).
-            client_labels tab doesn't show it (those are created from the Clients page). */}
-        {tab !== 'client_labels' && (
+        {/* "+ New Product" across the general product tabs (parity with /stock).
+            client_labels doesn't show it (those are created from the Clients page).
+            RESERVED STOCK is different: it is not a general product but a client-owned
+            batch (client_stock) — e.g. a Coco Republic container unloaded and separated
+            into lids/bottles for that client only. It gets its own button opening
+            CreateReservedModal, which posts to /clients/:id/stock/receive. Before
+            2026-07-30 this tab wrongly opened the general product modal, so reserved
+            stock could not be created at all (the modal existed but nothing opened it). */}
+        {tab === 'reserved' ? (
+          <Button onClick={() => { setReservedForm(EMPTY_RESERVED_FORM); setShowReservedCreate(true) }}>
+            <Plus size={15} /> Receive Reserved Stock
+          </Button>
+        ) : tab !== 'client_labels' && (
           <Button onClick={() => {
             setEditingProd(null)
             const defaults = { ...EMPTY_PRODUCT_FORM }
             if (tab === 'labels') defaults.category = 'LABEL'
             else if (tab === 'raw') defaults.category = 'RAW_MATERIAL'
-            else if (tab === 'reserved') { defaults.category = 'COMPONENT'; defaults.segment = 'MAJOR' }
             else defaults.category = 'COMPONENT'
             setCreateForm(defaults)
             setShowCreate(true)
