@@ -367,7 +367,18 @@ html:not(.dark) .sm-scope [style*="rgb(7, 7, 13)"] {
   background-color: #f4f2ef !important;     /* Parchment for page-level bgs */
 }
 
-/* ── White-alpha surfaces (cards, hover states, dividers) ─────────────────── */
+/* ── White-alpha surfaces (cards, hover states, dividers) ─────────────────────
+   Coverage audit 2026-07-30: the alphas actually used in src/sm/*.jsx were compared
+   against the ones handled here. Four were in use with NO rule — they stayed white on
+   cream in light mode. Each was classified by how it is really used before being added:
+     0.02 (12 uses) + 0.03 (28 uses) → always `background`  → background tier below
+     0.15 (18 uses) + 0.2  (6 uses)  → always `border`      → border tier below
+   Text colours are NOT affected by this gap (they have their own catch-all further
+   down), so nothing was ever unreadable — these were washed-out surfaces only. */
+html:not(.dark) .sm-scope [style*="rgba(255,255,255,0.02)"],
+html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.02)"],
+html:not(.dark) .sm-scope [style*="rgba(255,255,255,0.03)"],
+html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.03)"],
 html:not(.dark) .sm-scope [style*="rgba(255,255,255,0.04)"],
 html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.04)"],
 html:not(.dark) .sm-scope [style*="rgba(255,255,255,0.05)"],
@@ -382,7 +393,11 @@ html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.08)"],
 html:not(.dark) .sm-scope [style*="rgba(255,255,255,0.1)"],
 html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.1)"],
 html:not(.dark) .sm-scope [style*="rgba(255,255,255,0.12)"],
-html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.12)"] {
+html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.12)"],
+html:not(.dark) .sm-scope [style*="rgba(255,255,255,0.15)"],
+html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.15)"],
+html:not(.dark) .sm-scope [style*="rgba(255,255,255,0.2)"],
+html:not(.dark) .sm-scope [style*="rgba(255, 255, 255, 0.2)"] {
   border-color: rgba(28, 20, 16, 0.22) !important;
 }
 
