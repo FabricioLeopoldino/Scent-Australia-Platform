@@ -211,8 +211,9 @@ router.delete('/client-products/:id/bom/:entryId', auth, requireRole('admin', 'r
 })
 
 // External SKU Mapping feature removed 2026-05-28 — was unused dead weight.
-// Table customer_sku_mappings preserved in DB (no destructive migration); routes/reset still
-// reference it for /api/reset cleanup. To fully drop, also remove from reset.js + db.js.
+// Table customer_sku_mappings preserved in DB (no destructive migration); nothing reads
+// it now that routes/reset.js is gone (deleted 2026-07-30). To fully drop it, remove the
+// CREATE from db.js and drop the table.
 
 router.get('/clients/:id/stock', auth, async (req, res) => {
   try {

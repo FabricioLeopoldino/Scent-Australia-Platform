@@ -28,22 +28,12 @@ async function saveBomSnapshot(productType, action, userId) {
   return newVersion
 }
 
-router.get('/bom-rules', auth, async (req, res) => {
-  try {
-    res.json((await query(`SELECT * FROM bom_rules ORDER BY product_type, component_type`)).rows)
-  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
-})
-
-router.put('/bom-rules/:id', auth, requireRole('admin', 'root'), async (req, res) => {
-  try {
-    const { quantity_per_unit } = req.body
-    if (quantity_per_unit == null || isNaN(parseFloat(quantity_per_unit))) return res.status(400).json({ error: 'Invalid quantity' })
-    const result = await query(`UPDATE bom_rules SET quantity_per_unit = $1 WHERE id = $2 RETURNING *`, [parseFloat(quantity_per_unit), req.params.id])
-    if (!result.rows[0]) return res.status(404).json({ error: 'Rule not found' })
-    await auditLog(req.user.id, 'bom_rule_updated', 'bom_rule', parseInt(req.params.id), null, { quantity_per_unit })
-    res.json(result.rows[0])
-  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
-})
+// REMOVED 2026-07-30: GET/PUT /bom-rules. The `bom_rules` table was the pre-D9
+// mechanism (a flat product_type × component_type quantity list); it was superseded
+// by `product_bom` (per-master components, with history + rollback) and left behind
+// empty — 0 rows in production vs 9 in product_bom. No frontend ever called these two
+// routes. The table itself is left in place (empty, referenced by nothing) rather than
+// dropped, since dropping is irreversible and gains nothing.
 
 router.post('/bom-preview', auth, async (req, res) => {
   try {

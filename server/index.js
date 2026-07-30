@@ -154,8 +154,10 @@ app.use('/api/sa', requireModule('SA'), saRouter);
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // SM module — original CJS routers behind platform auth (Phase 3a).
-// routes/auth.js, routes/reset.js and the OAuth flow are deliberately
-// NOT mounted (superseded / dangerous / Phase 5).
+// routes/auth.js and the OAuth flow are deliberately NOT mounted
+// (superseded / Phase 5). routes/reset.js was deleted 2026-07-30 — it was a
+// destructive TRUNCATE endpoint kept permanently unmounted; the safer,
+// asserted scripts/cleanup-sm-test-data.cjs replaces that need.
 app.use('/api/sm', requireModule('SM'), smRouter);
 
 // Webhook receiver (PRD §10) — public, HMAC-authed; raw body preserved by

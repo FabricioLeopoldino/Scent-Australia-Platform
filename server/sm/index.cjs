@@ -7,8 +7,9 @@
 //
 // NOT mounted (deliberate):
 //   - routes/auth.js       → login/users superseded by the platform (FR-SM-2)
-//   - routes/reset.js      → destructive; stays unmounted (FR-SM-5)
 //   - routes/shopify-oauth.js → token comes from env; OAuth flow is Phase 5
+// (routes/reset.js — a destructive TRUNCATE endpoint that was never mounted (FR-SM-5) —
+//  was deleted 2026-07-30; scripts/cleanup-sm-test-data.cjs covers that need safely.)
 // Not started here: shopify-sync cron + webhook auto-registration (Phase 5).
 // ═══════════════════════════════════════════════════════════════════════
 
