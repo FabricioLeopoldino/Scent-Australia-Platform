@@ -2035,7 +2035,24 @@ router.post('/shopify/add-missing-variants/:productId', async (req, res) => {
 // (/api/webhook/shopify/:store) verifies HMAC context and dispatches
 // fulfillments/* topics here. Body must arrive parsed with req.rawBody set.
 export async function saWebhookHandler(req, res) {
-  const client = await pool.connect();
+  // LAZY CONNECTION (2026-08-06) — this used to be `await pool.connect()` right
+  // here, on every webhook. Opening a connection WAKES the Neon compute, and
+  // Neon bills by CU-hour and auto-suspends after 5 idle minutes. Shopify sends
+  // `fulfillments/update` constantly (carrier tracking updates arrive around the
+  // clock, weekends included) and almost all of them are no-ops that never touch
+  // a table — yet each one woke the database and reset the 5-minute timer. The
+  // compute was measured awake 118 h of 128 h while the keep-alive window only
+  // accounted for 34 h.
+  //
+  // Only two paths below need a transaction: `fulfillments/create` and a
+  // CANCELLED `fulfillments/update`. Each acquires the client itself. Everything
+  // else — HMAC failures, the orders/fulfilled skip, missing line_items, non-
+  // cancellation updates, unknown topics — now returns without a connection.
+  // `orders/create` uses `pool.query` and is unaffected.
+  //
+  // Safe by construction: `catch` and `finally` below already guard with
+  // `if (client)`, and every early return that releases is guarded too.
+  let client = null;
   // Declare outside try so catch block can access for lock cleanup
   let orderNumber = null;
   let clientReleased = false; // Guard against double-release in finally
@@ -2046,7 +2063,7 @@ export async function saWebhookHandler(req, res) {
     if (webhookSecret) {
       const shopifyHmac = req.headers['x-shopify-hmac-sha256'];
       if (!shopifyHmac || !req.rawBody) {
-        clientReleased = true; client.release();
+        if (client) { clientReleased = true; client.release(); }
         return res.status(401).json({ error: 'Missing webhook signature' });
       }
       const digest = crypto.createHmac('sha256', webhookSecret).update(req.rawBody).digest('base64');
@@ -2056,12 +2073,12 @@ export async function saWebhookHandler(req, res) {
         crypto.timingSafeEqual(trusted, received);
       if (!signaturesMatch) {
         console.warn('⛔ Webhook rejected — invalid HMAC signature');
-        clientReleased = true; client.release();
+        if (client) { clientReleased = true; client.release(); }
         return res.status(401).json({ error: 'Invalid webhook signature' });
       }
       console.log('✅ Webhook HMAC verified');
     } else if (process.env.NODE_ENV === 'production') {
-      clientReleased = true; client.release();
+      if (client) { clientReleased = true; client.release(); }
       console.error('❌ SHOPIFY_WEBHOOK_SECRET not set in production — rejecting webhook');
       return res.status(500).json({ error: 'Webhook secret not configured' });
     } else {
@@ -2103,6 +2120,7 @@ export async function saWebhookHandler(req, res) {
     // OPTION 1: ORDER FULFILLMENT - Auto debit stock + BOM components
     // ========================================================================
     if (webhookTopic === 'fulfillments/create') {
+      client = await pool.connect(); // real work starts here — see the note at the top
       console.log('🚚 Order Fulfillment - Auto debiting stock + BOM...');
 
       // ════════════════════════════════════════════════════════════════════
@@ -2520,10 +2538,13 @@ export async function saWebhookHandler(req, res) {
     if (webhookTopic === 'fulfillments/update' && req.body.status !== 'cancelled') {
       // Non-cancellation update (e.g. tracking added, status change) — acknowledge and skip
       console.log(`ℹ️  fulfillments/update status=${req.body.status} — no action needed`);
-      clientReleased = true; client.release();
+      // THE hot path: carrier tracking updates land here around the clock. It must
+      // return WITHOUT ever having touched the database (see the note at the top).
+      if (client) { clientReleased = true; client.release(); }
       return res.status(200).json({ received: true, skipped: 'fulfillment_update_not_cancelled' });
     }
     if (webhookTopic === 'fulfillments/update' && req.body.status === 'cancelled') {
+      client = await pool.connect(); // a real reversal — this one needs a transaction
       console.log('↩️  Fulfillment cancelled — checking if reversal needed...');
 
       const fulfillmentId = orderId; // body.id = fulfillment numeric ID
