@@ -73,12 +73,24 @@ async function smFulfillmentHandler(req, res, topic, body) {
     }
 
     const results = [];
+    // Lines we could NOT act on. A shipped sale that moves no stock is the most
+    // expensive kind of silence, so these are collected and raised at the end
+    // instead of being dropped (see the alarm after the transaction).
+    const unmatched = [];
     await withTransaction(async (client) => {
       const tq = (t, p) => client.query(t, p);
       for (const li of lines) {
         const sku = (li.sku || '').trim();
         const qty = parseInt(li.quantity, 10) || 0;
-        if (!sku || qty <= 0) continue;
+        if (qty <= 0) continue; // nothing shipped on this line — genuinely nothing to do
+        if (!sku) {
+          // The SKU is the ONLY join to our catalogue. Without it the goods have
+          // left the building and no stock moved. This used to `continue`
+          // silently; MUSE went retail on 2026-08-10 with a catalogue marketing
+          // rebuilt by hand, so a variant created without a SKU is a real risk.
+          unmatched.push({ reason: 'no_sku', title: li.title || li.name || '(untitled)', qty });
+          continue;
+        }
 
         // MUSE variants carry the STORE sku (Muse_RD00001) — that is the join.
         const prod = await tq(
@@ -87,8 +99,9 @@ async function smFulfillmentHandler(req, res, topic, body) {
         );
         if (!prod.rows[0]) {
           // Not one of ours (e.g. an SA product sold on another store) — skip,
-          // never guess. Logged so a mismatch is visible, not silent.
-          console.warn(`[muse-fulfil] SKU ${sku} not found in SM — skipped`);
+          // never guess. Collected for the alarm below so a mismatch surfaces
+          // in Activity, not only in a log line nobody reads.
+          unmatched.push({ reason: 'sku_not_found', sku, title: li.title || li.name || '(untitled)', qty });
           continue;
         }
         const p = prod.rows[0];
@@ -159,6 +172,33 @@ async function smFulfillmentHandler(req, res, topic, body) {
         { fulfillment_id: fulfillmentId, order_id: orderId, lines: results });
     } else {
       console.log(`[muse-fulfil] ${key} matched no SM products — nothing deducted`);
+    }
+
+    // ── ALARM: goods shipped that moved no stock ──────────────────────────
+    // Raised OUTSIDE the transaction on purpose: a reporting failure must never
+    // roll back a stock movement that did succeed. Every line here means
+    // product physically left and the system does not know, so it is logged as
+    // an error and written to Activity where the office can see it — not left
+    // as a console line nobody greps.
+    if (unmatched.length > 0) {
+      const orderRef = body.name || String(orderId);
+      console.error(
+        `🚨 [muse-fulfil] STOCK NOT DEDUCTED — order ${orderRef}, fulfillment ${fulfillmentId}: ` +
+        unmatched.map((u) => u.reason === 'no_sku'
+          ? `"${u.title}" ×${u.qty} HAS NO SKU`
+          : `"${u.title}" ×${u.qty} sku=${u.sku} not in catalogue`).join(' | ') +
+        ' — link the product and adjust stock by hand.'
+      );
+      try {
+        await auditLog(0, 'muse_fulfillment_unmatched', 'product', null, orderRef, {
+          fulfillment_id: fulfillmentId, order_id: orderId,
+          shopify_order: orderRef, unmatched,
+        });
+      } catch (e) {
+        // Never let the alarm itself break the webhook — Shopify would retry a
+        // fulfillment whose stock has already moved.
+        console.error(`[muse-fulfil] could not record the unmatched-line alarm: ${e.message}`);
+      }
     }
   } finally {
     processingFulfillments.delete(key);
