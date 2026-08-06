@@ -11,9 +11,18 @@ router.get('/products', auth, async (req, res) => {
       SELECT p.*, s.name as supplier_name,
         COALESCE(r.reserved_qty, 0) as reserved_qty,
         COALESCE(r.reservation_detail, '[]'::json) as reservation_detail,
-        COALESCE(att.attachment_count, 0) as attachment_count
+        COALESCE(att.attachment_count, 0) as attachment_count,
+        -- D14 Fragrance Library: the scent a variant actually consumes. Phase B
+        -- moved that link from the legacy products.fragrance_id to oil_id ->
+        -- sa.products, but the stock screens kept reading the dead column, so
+        -- the Fragrance column has rendered "—" for every variant since
+        -- 2026-07-29. Resolving it here fixes every consumer at once.
+        oil.name AS oil_name,
+        oil."productCode" AS oil_code,
+        oil."currentStock"::numeric AS oil_stock
       FROM products p
       LEFT JOIN suppliers s ON p.supplier_id = s.id
+      LEFT JOIN sa.products oil ON oil.id = p.oil_id
       LEFT JOIN (SELECT product_id, COUNT(*) as attachment_count FROM product_attachments GROUP BY product_id) att ON att.product_id = p.id
       LEFT JOIN (
         SELECT product_id,

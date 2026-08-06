@@ -314,7 +314,8 @@ export default function MuseStock() {
   // Enhance variants with master/fragrance names from masters list
   const masterById = {}
   masters.forEach(m => { masterById[m.id] = m })
-  // Fragrance lookup (for supplier code) — derived from the full products list
+  // Legacy fragrance lookup, kept ONLY for rows that predate Phase B and still
+  // carry a fragrance_id. Anything current resolves through oil_name below.
   const fragById = {}
   allProducts.forEach(p => { if (p.category === 'FRAGRANCE') fragById[p.id] = p })
   const enriched = variants.map(v => {
@@ -330,7 +331,10 @@ export default function MuseStock() {
       oil_pct: master?.default_oil_pct,
       is_pure_oil: v.is_pure_oil ?? master?.is_pure_oil,
       is_candle: v.is_candle ?? master?.is_candle,
-      frag_name: frag?.name || null,           // real fragrance name from the products table
+      // D14/Phase B: the oil from the SA Fragrance Library is the real scent.
+      // Fall back to the legacy fragrance record only if a row still has one.
+      frag_name: v.oil_name || frag?.name || null,
+      frag_code: v.oil_code || null,
       frag_supplier_code: frag?.supplier_code || null,
     }
   })
@@ -521,9 +525,14 @@ export default function MuseStock() {
                     <td style={{ padding: '10px 16px' }}>
                       {v.frag_name
                         ? <div style={{ fontSize: 13, fontWeight: 600, color: '#a78bfa' }}>{v.frag_name}</div>
-                        : <span style={{ fontSize: 11, color: 'rgba(232,234,242,0.3)', fontStyle: 'italic' }}>—</span>}
-                      {v.frag_supplier_code && (
-                        <div style={{ fontSize: 10, color: 'rgba(232,234,242,0.4)', fontFamily: 'monospace', marginTop: 2 }}>{v.frag_supplier_code}</div>
+                        : <span style={{ fontSize: 11, color: '#f87171', fontStyle: 'italic' }}>— not linked —</span>}
+                      {/* The library code disambiguates near-identical scent names
+                          (e.g. "Santal 33" vs "Santal 33 Candle"), which is exactly
+                          how the Tokyo and Avocado & Mint mislinks stayed hidden. */}
+                      {(v.frag_code || v.frag_supplier_code) && (
+                        <div style={{ fontSize: 10, color: 'rgba(232,234,242,0.4)', fontFamily: 'monospace', marginTop: 2 }}>
+                          {v.frag_code || v.frag_supplier_code}
+                        </div>
                       )}
                     </td>
                     <td style={{ padding: '10px 16px' }}>
