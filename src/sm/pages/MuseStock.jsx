@@ -68,7 +68,10 @@ export default function MuseStock() {
   const [prodForm, setProdForm] = useState(EMPTY_PRODUCT_FORM)
   const [prodSaving, setProdSaving] = useState(false)
   const [editVariantModal, setEditVariantModal] = useState(null) // { variant }
-  const [editVariantForm, setEditVariantForm] = useState({ name: '', min_stock_level: '', notes: '' })
+  const [editVariantForm, setEditVariantForm] = useState({ name: '', min_stock_level: '', notes: '', oil_id: '' })
+  // Fragrance Library oils, for re-pointing a variant. Loaded on demand — the
+  // list is only needed once the edit modal opens.
+  const [oils, setOils] = useState([])
   const [editVariantSaving, setEditVariantSaving] = useState(false)
   const [shopifyModal, setShopifyModal] = useState(null) // variant
   const [publishing, setPublishing] = useState(false)
@@ -178,6 +181,20 @@ export default function MuseStock() {
     } catch (e) { addToast(e.response?.data?.error || 'Failed', 'error') }
   }
 
+  function openEditVariant(v) {
+    setEditVariantModal({ variant: v })
+    setEditVariantForm({
+      name: v.name || '',
+      min_stock_level: String(v.min_stock_level ?? 0),
+      notes: v.notes || '',
+      oil_id: v.oil_id || '',
+    })
+    // Load the library lazily; a stale list would be worse than a brief spinner.
+    axios.get('/api/fragrance-library', { ...api(), params: { segment: 'MUSE' } })
+      .then(r => setOils(r.data || []))
+      .catch(() => addToast('Could not load the Fragrance Library', 'error'))
+  }
+
   async function handleEditVariant() {
     if (!editVariantForm.name.trim()) { addToast('Name is required', 'error'); return }
     setEditVariantSaving(true)
@@ -187,6 +204,13 @@ export default function MuseStock() {
         min_stock_level: parseFloat(editVariantForm.min_stock_level) || 0,
         notes: editVariantForm.notes?.trim() || null,
       }, api())
+      // The oil goes through its own endpoint: it decides which stock a sale
+      // debits, so it is guarded and audited separately from a rename.
+      const newOil = editVariantForm.oil_id || ''
+      if (newOil && newOil !== (editVariantModal.variant.oil_id || '')) {
+        await axios.patch(`/api/products/${editVariantModal.variant.id}/oil`, { oil_id: newOil }, api())
+        addToast('Linked oil changed')
+      }
       addToast('Variant updated')
       setEditVariantModal(null)
       load()
@@ -580,7 +604,7 @@ export default function MuseStock() {
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                         <IconButton className="icon-btn-text" onClick={() => { setAdjModal({ variant: v, mode: 'add' }); setAdjQty(''); setAdjNotes('') }} title="Add stock"><Plus size={13} /> Add</IconButton>
                         <IconButton variant="danger" className="icon-btn-text" onClick={() => { setAdjModal({ variant: v, mode: 'remove' }); setAdjQty(''); setAdjNotes('') }} title="Remove stock"><Minus size={13} /> Remove</IconButton>
-                        <IconButton onClick={() => { setEditVariantModal({ variant: v }); setEditVariantForm({ name: v.name || '', min_stock_level: String(v.min_stock_level ?? 0), notes: v.notes || '' }) }} title="Edit variant name / min stock"><Edit2 size={13} /></IconButton>
+                        <IconButton onClick={() => { openEditVariant(v) }} title="Edit variant — name, min stock, linked oil"><Edit2 size={13} /></IconButton>
                         <IconButton onClick={() => setShopifyModal(v)} title="Publish to Shopify"><ExternalLink size={13} /></IconButton>
                         <IconButton onClick={() => setImageUploadVariant(v)} title={v.image_data ? 'Change image' : 'Upload image'}><ImageIcon size={13} /></IconButton>
                         <button onClick={() => setAttachModal(v)} title={`Attachments${v.attachment_count > 0 ? ` (${v.attachment_count})` : ''}`}
@@ -626,6 +650,32 @@ export default function MuseStock() {
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="label">Min Stock Level ({editVariantModal.variant.unit})</label>
                 <input type="number" min={0} step="any" value={editVariantForm.min_stock_level} onChange={e => setEditVariantForm(f => ({ ...f, min_stock_level: e.target.value }))} className="input" />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="label">Linked oil (Fragrance Library)</label>
+                <select
+                  value={editVariantForm.oil_id}
+                  onChange={e => setEditVariantForm(f => ({ ...f, oil_id: e.target.value }))}
+                  className="input"
+                >
+                  <option value="">— not linked —</option>
+                  {oils.map(o => (
+                    <option key={o.id} value={o.id}>
+                      {o.code} · {o.name}{o.current_stock != null ? `  (${o.current_stock} ${o.unit || 'mL'})` : ''}
+                    </option>
+                  ))}
+                </select>
+                {/* The code is shown, not just the name: "Santal 33" and
+                    "Santal 33 Candle" read almost identically, and picking the
+                    wrong one moves stock in the wrong place with no error. */}
+                <div style={{ fontSize: 11, color: 'rgba(232,234,242,0.45)', marginTop: 4 }}>
+                  {editVariantModal.variant.oil_code
+                    ? <>Currently <strong style={{ fontFamily: 'monospace' }}>{editVariantModal.variant.oil_code}</strong> — {editVariantModal.variant.oil_name}</>
+                    : <span style={{ color: '#f87171' }}>Not linked — a sale of this variant will not consume any oil.</span>}
+                </div>
+                <div style={{ fontSize: 11, color: 'rgba(251,191,36,0.75)', marginTop: 4 }}>
+                  Changing this changes which oil a sale debits. SKU and stock are kept; the change is audited.
+                </div>
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="label">Notes</label>

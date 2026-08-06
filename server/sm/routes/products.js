@@ -90,6 +90,57 @@ router.put('/products/:id', auth, requireRole('admin', 'root'), async (req, res)
   }
 })
 
+// ── Re-point a variant at a different Fragrance Library oil ────────────────
+// Deliberately its own endpoint rather than a field on PUT /products/:id.
+// Changing which oil a variant consumes is not the same kind of act as renaming
+// it: it decides which stock a SALE will debit, so it gets its own guard and its
+// own audit entry.
+//
+// WHY THIS EXISTS (2026-08-06): until today the only way to change the link was
+// through the master — remove the wrong oil, add the right one — which ARCHIVES
+// the variants and creates new ones with new SKUs. Since those SKUs are now live
+// on the Muse Shopify store, that route would break the join between the store
+// and the platform. Two mislinks (Tokyo, Avocado & Mint) had to be repaired by
+// script for exactly this reason. This changes oil_id in place: SKU, stock and
+// history are untouched.
+router.patch('/products/:id/oil', auth, requireRole('admin', 'root'), async (req, res) => {
+  try {
+    const { oil_id } = req.body
+    if (!oil_id) return res.status(400).json({ error: 'oil_id is required' })
+
+    const cur = await query(
+      `SELECT p.id, p.name, p.sku, p.master_product_id, p.oil_id,
+              o."productCode" AS from_code, o.name AS from_name
+         FROM products p LEFT JOIN sa.products o ON o.id = p.oil_id
+        WHERE p.id = $1`, [req.params.id])
+    if (!cur.rows[0]) return res.status(404).json({ error: 'Not found' })
+    const p = cur.rows[0]
+    // Only variants consume oil. Refusing here stops a master or a raw component
+    // being given a link that nothing would ever read.
+    if (!p.master_product_id) {
+      return res.status(400).json({ error: 'Only a variant (a product under a master) can be linked to an oil' })
+    }
+
+    const oil = await query(
+      `SELECT id, "productCode" AS code, name, status FROM sa.products WHERE id = $1 AND category = 'OILS'`,
+      [oil_id])
+    if (!oil.rows[0]) return res.status(400).json({ error: 'That oil does not exist in the Fragrance Library' })
+    if (oil.rows[0].status === 'inactive') {
+      return res.status(400).json({ error: `${oil.rows[0].code} is inactive — reactivate it in the Fragrance Library first` })
+    }
+    if (p.oil_id === oil_id) return res.json({ unchanged: true, ...p })
+
+    const updated = await query(
+      `UPDATE products SET oil_id = $1 WHERE id = $2 RETURNING *`, [oil_id, p.id])
+    await auditLog(req.user.id, 'variant_oil_relinked', 'product', p.id, p.name, {
+      sku: p.sku,
+      from: { oil_id: p.oil_id, code: p.from_code, name: p.from_name },
+      to: { oil_id, code: oil.rows[0].code, name: oil.rows[0].name },
+    })
+    res.json(updated.rows[0])
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
+})
+
 router.patch('/products/:id/bin-location', auth, async (req, res) => {
   try {
     const result = await query(`UPDATE products SET bin_location = $1 WHERE id = $2 RETURNING *`, [req.body.bin_location || null, req.params.id])
