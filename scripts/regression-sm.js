@@ -76,6 +76,20 @@ async function ensureTestOil(suffix, name) {
   return id;
 }
 async function dropTestOils() {
+  // Attaching an oil to a master CREATES a variant named after the oil
+  // (`${master_code}-${slug(oil_code)}`). Dropping only the oils leaves those
+  // variants behind with oil_id nulled — dangling MUSE variants that
+  // integrity-sm flags forever (caught on 2026-08-07, after the first run of
+  // this rewrite left three). Take the variants first, then the oils.
+  const orphans = await db.query(
+    `SELECT id FROM products WHERE product_code LIKE $1`, [`%${TEST_OIL_PREFIX}%`]);
+  const ids = orphans.rows.map((r) => r.id);
+  if (ids.length) {
+    await db.query(`DELETE FROM transactions WHERE product_id = ANY($1::int[])`, [ids]).catch(() => {});
+    await db.query(`DELETE FROM stock_reservations WHERE product_id = ANY($1::int[])`, [ids]).catch(() => {});
+    await db.query(`DELETE FROM production_order_components WHERE product_id = ANY($1::int[])`, [ids]).catch(() => {});
+    await db.query(`DELETE FROM products WHERE id = ANY($1::int[])`, [ids]);
+  }
   await db.query(`DELETE FROM sa.transactions WHERE product_id LIKE $1`, [`${TEST_OIL_PREFIX}%`]);
   await db.query(`DELETE FROM sa.products WHERE id LIKE $1`, [`${TEST_OIL_PREFIX}%`]);
 }
