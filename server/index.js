@@ -123,10 +123,27 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Answering from memory keeps that cost at zero and is also more stable: a
 // transient Neon blip no longer makes Render mark the service unhealthy and
 // restart it. For the DB check see GET /api/health/db below.
+//
+// `commit` and `uptime` are answered from memory too, and each earns its place:
+//
+//   commit — until 2026-08-07 there was no way to tell from outside WHICH build
+//     was serving. Confirming a deploy meant asking someone to open the Render
+//     dashboard, twice in one day. Render sets RENDER_GIT_COMMIT on every build.
+//
+//   uptime — seconds since this process started. The open Neon question is
+//     whether the compute is held awake by the service restarting (each boot
+//     runs migrations, which wakes it) or by something on Neon's side. A number
+//     that keeps resetting answers it one way, a number that climbs answers it
+//     the other. Ruling that out needed a deploy we kept not making.
+//
+// Both are non-secret build/process facts, so they are safe on the public
+// liveness endpoint. Do NOT add anything here that reads the database.
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
     dbConfigured: isDbConfigured(),
+    commit: (process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || 'local',
+    uptime: Math.round(process.uptime()),
     ts: new Date().toISOString(),
   });
 });
