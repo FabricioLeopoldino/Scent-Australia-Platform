@@ -825,3 +825,9 @@ router.put('/external-processing/:id/close', auth, async (req, res) => {
 })
 
 module.exports = router
+// Shared with the Shopify order-ingestion path (routes/webhooks.js) so both
+// writers draw from ONE sequence. Do not reimplement it there: the generator
+// parses the previous number back out of the string, so a second numbering
+// scheme would feed it something it cannot parse and every later order would
+// come out as SM-NaN.
+module.exports.getNextOrderNumber = getNextOrderNumber

@@ -6,7 +6,7 @@ const { query, withTransaction } = require('../db')
 const { auth, auditLog } = require('../auth')
 const { enqueueDraftOrder, buildDraftOrderPayload } = require('../services/shopify-sync')
 const { adjustProductStock } = require('../services/stock-service')
-const { computeFinishedGoodBom } = require('../services/bom-builder')
+const { computeFinishedGoodBom, buildLineComponents } = require('../services/bom-builder')
 const { consumeFragranceOil } = require('../services/fragrance-library')
 const { setOrderStatus } = require('../services/order-status')
 
@@ -36,6 +36,148 @@ const processingFulfillments = new Set()
 // back would deduct it twice (skipShopifyPush).
 // ═══════════════════════════════════════════════════════════════════════════
 const FULFILLMENT_TOPICS = ['fulfillments/create', 'fulfillments/update'];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MAKE-TO-ORDER INGESTION (owner-designed 2026-08-06, built 2026-08-07)
+// ═══════════════════════════════════════════════════════════════════════════
+// SM stays manual: the coordinator creates the order here and it becomes a
+// Shopify draft order. MUSE is inverting — with "The Atelier" the customer
+// configures on the site and the order lands in Shopify already assembled.
+//
+// Such an order was INVISIBLE to the platform. The orders/paid handler below
+// only ever LOOKED for a production order (by draft_order_id, or by an
+// "SM Order: SM-###" note we wrote ourselves) and, finding none, logged
+// NOT FOUND and did nothing. Nobody learned there was something to make.
+//
+// The STOCK half already works and is deliberately untouched here:
+// smFulfillmentHandler consumes the BOM at fulfilment when no finished stock
+// exists (D16). What was missing is the WORK QUEUE.
+//
+// The rule that removes the need for a per-product make-to-order flag:
+//
+//     need = quantity ordered − finished stock on hand
+//       need <= 0  → ships from the shelf, produce nothing
+//       need >  0  → one production line for the difference
+//
+// Right for make-to-order (nothing on hand), make-to-stock (enough on hand)
+// and the partial case, with no mode anyone has to keep in sync — and it
+// mirrors what the warehouse already does when it produces on availability.
+//
+// Born as 'draft' on purpose (owner: "a pessoa que cuida da Muse meio que
+// lança a order para manufacturing queue"). The office reviews, then pushes
+// it to 'queued' — the transition where createReservations already runs, so
+// reservations are NOT taken here and the manual and automatic paths converge.
+//
+// Numbering stays on the shared SM-### sequence. A 'MUSE-' prefix was the
+// original plan and is wrong: getNextOrderNumber parses the previous number
+// back out with replace('SM-',''), so one MUSE-numbered row would make every
+// later order SM-NaN. The Shopify identity lives in shopify_order_number.
+async function planLinesFromShopifyOrder(tq, body) {
+  const toProduce = [];
+  const unmatched = [];
+  for (const li of (Array.isArray(body.line_items) ? body.line_items : [])) {
+    const sku = (li.sku || '').trim();
+    const qty = parseInt(li.quantity, 10) || 0;
+    const title = li.title || li.name || '(untitled)';
+    if (qty <= 0) continue;
+    if (!sku) { unmatched.push({ reason: 'no_sku', title, qty }); continue; }
+
+    const r = await tq(
+      `SELECT p.id, p.name, p.current_stock, p.oil_id, p.fragrance_id,
+              m.product_code AS master_code, m.default_oil_pct
+         FROM products p
+         LEFT JOIN products m ON m.id = p.master_product_id
+        WHERE p.sku = $1`,
+      [sku]
+    );
+    const v = r.rows[0];
+    if (!v) { unmatched.push({ reason: 'sku_not_found', sku, title, qty }); continue; }
+    // No master means no BOM. Creating the line anyway would produce an order
+    // that can be started while debiting nothing — the exact dangling state
+    // validateProductTypes exists to prevent on the manual path.
+    if (!v.master_code) { unmatched.push({ reason: 'no_master', sku, title, qty }); continue; }
+
+    const need = qty - (parseFloat(v.current_stock) || 0);
+    if (need <= 0) continue; // covered by finished stock already on the shelf
+
+    toProduce.push({
+      product_type: v.master_code,
+      oil_id: v.oil_id || null,
+      fragrance_id: v.fragrance_id || null,
+      oil_pct: parseFloat(v.default_oil_pct) || 25,
+      quantity: Math.ceil(need),
+      variant_name: v.name,
+    });
+  }
+  return { toProduce, unmatched };
+}
+
+async function createProductionOrderFromShopify(body, shopifyOrderId) {
+  const orderRef = body.name || String(shopifyOrderId);
+  const { getNextOrderNumber } = require('./production-orders');
+
+  const plan = await withTransaction(async (client) => {
+    const tq = (text, params) => client.query(text, params);
+    const { toProduce, unmatched } = await planLinesFromShopifyOrder(tq, body);
+    if (toProduce.length === 0) return { toProduce, unmatched, order: null };
+
+    const orderNumber = await getNextOrderNumber();
+    const ord = (await tq(
+      // created_by stays NULL — no person created this one, and the column has
+      // an FK to users so a sentinel id would not insert. NULL is also how the
+      // UI already distinguishes a system-born order from a typed one.
+      `INSERT INTO production_orders
+         (order_number, client_id, order_type, notes, status, created_by,
+          shopify_order_id, shopify_order_number)
+       VALUES ($1, NULL, 'STANDARD', $2, 'draft', NULL, $3, $4) RETURNING *`,
+      [orderNumber, `Auto-created from Shopify order ${orderRef}`, shopifyOrderId, body.name || null]
+    )).rows[0];
+
+    for (let i = 0; i < toProduce.length; i++) {
+      const line = toProduce[i];
+      const dbLine = (await tq(
+        `INSERT INTO production_order_lines
+           (production_order_id, line_number, product_type, fragrance_id, oil_id,
+            variant_name, oil_pct, quantity, unit_price, is_candle)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,$9) RETURNING *`,
+        [ord.id, i + 1, line.product_type, line.fragrance_id, line.oil_id,
+         line.variant_name, line.oil_pct, line.quantity,
+         ['CANDLE_240G', 'CANDLE_400G'].includes(line.product_type)]
+      )).rows[0];
+      // Same BOM builder the manual path uses — without it the order would
+      // start and debit nothing.
+      await buildLineComponents(ord.id, dbLine, line, null, tq);
+    }
+    return { toProduce, unmatched, order: ord };
+  });
+
+  if (plan.order) {
+    console.log(`[muse-order] ${orderRef} → ${plan.order.order_number} (draft, ${plan.toProduce.length} line(s) to produce)`);
+    await auditLog(0, 'shopify_order_ingested', 'production_order', plan.order.id, plan.order.order_number, {
+      shopify_order: orderRef, shopify_order_id: shopifyOrderId,
+      lines: plan.toProduce.map((l) => ({ product_type: l.product_type, qty: l.quantity, variant: l.variant_name })),
+    });
+  } else {
+    console.log(`[muse-order] ${orderRef} — every line is covered by finished stock, no production order created`);
+  }
+
+  // Lines we could not plan. Unlike the fulfilment alarm nothing has shipped
+  // yet, so this is a warning, not a loss — but it means the production order
+  // is short and somebody has to add the missing work by hand.
+  if (plan.unmatched.length > 0) {
+    console.error(
+      `⚠️  [muse-order] INCOMPLETE — order ${orderRef}: ` +
+      plan.unmatched.map((u) => `"${u.title}" ×${u.qty} (${u.reason}${u.sku ? ` ${u.sku}` : ''})`).join(' | ')
+    );
+    try {
+      await auditLog(0, 'shopify_order_unmatched', 'production_order', plan.order?.id || null, orderRef, {
+        shopify_order: orderRef, shopify_order_id: shopifyOrderId, unmatched: plan.unmatched,
+      });
+    } catch (e) {
+      console.error(`[muse-order] could not record the incomplete-order alarm: ${e.message}`);
+    }
+  }
+}
 
 async function smFulfillmentHandler(req, res, topic, body) {
   const fulfillmentId = body.id;
@@ -285,6 +427,11 @@ async function smWebhookHandler(req, res) {
           console.log(`[webhook] updated ${order.order_number} → Shopify ${body.name}`)
           await auditLog(0, 'shopify_payment_confirmed', 'production_order', order.id, order.order_number, { shopify_order_id: shopifyOrderId, shopify_order_number: body.name })
         }
+      } else if (topic === 'orders/paid') {
+        // Nothing of ours matched — this order was born on the Muse site, not
+        // here. Turn it into production work. (A cancellation with no match is
+        // genuinely nothing to do: we never had the order.)
+        await createProductionOrderFromShopify(body, shopifyOrderId)
       }
 
       await query(`INSERT INTO webhook_processed (shopify_order_id, webhook_type) VALUES ($1,$2)`, [shopifyOrderId, topic])
