@@ -9,6 +9,7 @@ async function enqueueDraftOrder(productionOrderId) {
      VALUES ('draft_order', $1::jsonb, NOW())`,
     [JSON.stringify({ production_order_id: productionOrderId })]
   )
+  kickDrain() // don't wait for the next window — see startSyncCron
 }
 
 // ── Shopify customer lookup ─────────────────────────────────────────────────
@@ -176,6 +177,7 @@ async function enqueueInventoryAdjust(productId, delta) {
     `INSERT INTO pending_shopify_sync (action_type, payload, next_retry_at) VALUES ('inventory_adjust', $1::jsonb, NOW())`,
     [JSON.stringify({ product_id: productId, delta })]
   )
+  kickDrain() // don't wait for the next window — see startSyncCron
 }
 
 async function processInventoryAdjust(payload) {
@@ -209,8 +211,17 @@ function outboundEnabled() {
   return String(process.env.SM_SHOPIFY_SYNC_ENABLED || '').toLowerCase() === 'true'
 }
 
+// One drain at a time. Two overlapping runs would SELECT the same pending row
+// and push it to Shopify twice — a duplicate draft order for a real client.
+// Needed since enqueue* now kicks a drain immediately (2026-08-10); it also
+// closes a pre-existing hole where a drain slower than the 60s tick overlapped
+// with the next one.
+let draining = false
+
 async function runRetryQueue() {
   if (!outboundEnabled()) return // queue drains only after cutover
+  if (draining) return
+  draining = true
   try {
     const pending = await query(
       `SELECT * FROM pending_shopify_sync WHERE status = 'pending' AND next_retry_at <= NOW() ORDER BY next_retry_at ASC LIMIT 10`
@@ -238,15 +249,47 @@ async function runRetryQueue() {
     }
   } catch (e) {
     console.error('[shopify-sync] Queue error:', e.message)
+  } finally {
+    draining = false
   }
 }
 
-function startSyncCron() {
-  setInterval(runRetryQueue, 60_000)
+// Kick a drain without making the caller wait for Shopify. The common case —
+// Shopify is up — then completes in a second or two at ANY hour, so gating the
+// cron below to warehouse hours costs no responsiveness. If it fails, the row
+// stays 'pending' and the cron retries it in the next window.
+function kickDrain() {
+  if (!outboundEnabled()) return
+  setImmediate(() => { runRetryQueue().catch(() => {}) })
+}
+
+// COST (2026-08-10): this cron was the reason the Neon compute never reached
+// its 5-minute autosuspend. With SM_SHOPIFY_SYNC_ENABLED=true in production,
+// runRetryQueue queries pending_shopify_sync every 60 seconds forever — 1,440
+// queries a day against a table that is almost always EMPTY, because the only
+// things that feed it are the office creating draft orders and stock changes on
+// published products. MUSE retail sales skip it entirely (skipShopifyPush —
+// Shopify already moved its own count). Nobody fills this queue overnight.
+//
+// So the cron now runs only inside the warehouse window, reusing the single
+// definition in shared/warehouse-hours.js (unit-tested by
+// scripts/regression-warehouse-hours.js). That window is ALREADY held awake by
+// the keep-alive in server/sa/index.js, so polling inside it costs nothing
+// extra, and outside it the polling simply stops.
+//
+// Nothing is lost when it is closed: a failure near 17:00 waiting on its 6h
+// backoff just retries at 06:30 instead of 23:00. The row stays 'pending'.
+//
+// The helper is ESM and this module is CommonJS, hence the dynamic import.
+// startSyncCron is called without await (server/index.js:226), so the extra
+// tick before the timer exists is harmless.
+async function startSyncCron() {
+  const { withinWarehouseHours } = await import('../../../shared/warehouse-hours.js')
+  setInterval(() => { if (withinWarehouseHours()) runRetryQueue() }, 60_000)
   console.log(
     outboundEnabled()
-      ? '[shopify-sync] Retry cron started (60s interval) — OUTBOUND LIVE'
-      : '[shopify-sync] Retry cron started (60s) — outbound DISABLED (set SM_SHOPIFY_SYNC_ENABLED=true at cutover)'
+      ? '[shopify-sync] Retry cron started (60s, warehouse hours only) — OUTBOUND LIVE'
+      : '[shopify-sync] Retry cron started (60s, warehouse hours only) — outbound DISABLED (set SM_SHOPIFY_SYNC_ENABLED=true at cutover)'
   )
 }
 
