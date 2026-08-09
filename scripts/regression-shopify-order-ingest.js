@@ -283,12 +283,21 @@ try {
   // Order matters: components and lines reference the orders.
   const ids = (await pool.query(`SELECT id FROM production_orders WHERE notes LIKE $1`, [`%#ZZ-%`])).rows.map((r) => r.id);
   if (ids.length) {
+    // Audit rows FIRST, keyed on entity_id, while the orders still exist to be
+    // matched against. Filtering them by entity_name was wrong and left 33 rows
+    // in production on 2026-08-10: auditLog stores the ORDER NUMBER there
+    // (SM-010), not the '#ZZ-' Shopify reference this test recognises its own
+    // data by. Keying on the ids we are about to delete cannot miss, whatever
+    // action or name a future handler decides to write.
+    await pool.query(`DELETE FROM audit_log WHERE entity_type = 'production_order' AND entity_id = ANY($1::int[])`, [ids]).catch(() => {});
     await pool.query(`DELETE FROM production_order_components WHERE production_order_id = ANY($1::int[])`, [ids]).catch(() => {});
     await pool.query(`DELETE FROM stock_reservations WHERE production_order_id = ANY($1::int[])`, [ids]).catch(() => {});
     await pool.query(`DELETE FROM production_order_lines WHERE production_order_id = ANY($1::int[])`, [ids]).catch(() => {});
     await pool.query(`DELETE FROM production_orders WHERE id = ANY($1::int[])`, [ids]).catch(() => {});
   }
-  await pool.query(`DELETE FROM audit_log WHERE action IN ('shopify_order_ingested','shopify_order_unmatched','shopify_order_cancelled') AND entity_name LIKE '#ZZ-%'`).catch(() => {});
+  // The unmatched alarm can fire with no order behind it (nothing was
+  // plannable), so those rows have no entity_id — they DO carry the reference.
+  await pool.query(`DELETE FROM audit_log WHERE entity_name LIKE '#ZZ-%'`).catch(() => {});
   await pool.query(`DELETE FROM webhook_processed WHERE shopify_order_id BETWEEN 810001 AND 810007`).catch(() => {});
   await pool.query(`DELETE FROM product_bom WHERE product_type = $1`, [`${TAG}_M`]).catch(() => {});
   await pool.query(`DELETE FROM products WHERE product_code LIKE $1`, [`${TAG}%`]).catch(() => {});
