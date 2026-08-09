@@ -400,6 +400,17 @@ async function smWebhookHandler(req, res) {
           console.log(`[webhook] matched by note: ${match[1]}`)
         }
       }
+      // Orders WE created from a Shopify order (the Atelier / make-to-order path
+      // below) carry neither a draft_order_id nor an "SM Order:" note — they are
+      // stamped with shopify_order_id. Without this lookup they could never be
+      // found again, so a CANCELLATION would sail past and the production order
+      // would sit in draft as if nothing had happened: the warehouse could make
+      // an order the customer already cancelled. Payment releases production
+      // (owner, 2026-08-10), so the reverse signal has to land too.
+      if (!prodOrder.rows[0]) {
+        prodOrder = await query(`SELECT * FROM production_orders WHERE shopify_order_id = $1`, [shopifyOrderId])
+        if (prodOrder.rows[0]) console.log(`[webhook] matched by shopify_order_id: ${prodOrder.rows[0].order_number}`)
+      }
       console.log(`[webhook] production order match: ${prodOrder.rows[0]?.order_number || 'NOT FOUND'}`)
 
       if (prodOrder.rows[0]) {

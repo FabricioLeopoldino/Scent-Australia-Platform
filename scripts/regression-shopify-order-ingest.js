@@ -215,7 +215,47 @@ try {
       'the alarm names both reasons', JSON.stringify(reasons));
   }
 
-  // ── 6. A cancellation for an order we never had is a no-op ───────────────
+  // ── 6. Cancelling an order WE created must reach its production order ────
+  // Payment releases production (owner, 2026-08-10), so the reverse signal has
+  // to land too — otherwise the warehouse makes something already cancelled.
+  // These orders carry no draft_order_id and no "SM Order:" note, so the
+  // matcher has to find them by shopify_order_id or the cancellation is lost.
+  {
+    const ref = `#ZZ-CXL-${Date.now()}`;
+    const id = 810007;
+    await post('orders/paid', {
+      id, name: ref, line_items: [{ title: 'Reed Diffuser', quantity: 4, sku: skuOf(1) }],
+    });
+    const rows = await waitFor(() => ordersFor(ref), (x) => x.length > 0);
+    check(rows.length === 1 && rows[0].status === 'draft', 'the order is created and in draft', JSON.stringify(rows));
+
+    // The production order row appears mid-handler; the handler is only DONE
+    // once it has written webhook_processed. Posting the cancellation before
+    // that hits the in-flight guard (processingOrders) and it is dropped with
+    // no log — which is exactly how this test failed once and passed on the
+    // retry. Wait for the real finish line, not the first visible side effect.
+    await waitFor(
+      async () => (await pool.query(
+        `SELECT 1 FROM webhook_processed WHERE shopify_order_id = $1 AND webhook_type = 'orders/paid'`, [id])).rows,
+      (x) => x.length > 0);
+
+    const r = await post('orders/cancelled', { id, name: ref });
+    check(r.status === 200, 'the cancellation answers 200', `got ${r.status}`);
+    const after = await waitFor(
+      async () => (await pool.query(`SELECT status FROM production_orders WHERE id = $1`, [rows[0].id])).rows,
+      (x) => x[0]?.status === 'cancelled');
+    check(after[0]?.status === 'cancelled', 'the production order is cancelled, not left in draft', `status=${after[0]?.status}`);
+
+    const resv = await pool.query(
+      `SELECT COUNT(*) n FROM stock_reservations WHERE production_order_id = $1 AND status = 'reserved'`, [rows[0].id]);
+    check(Number(resv.rows[0].n) === 0, 'no reservation is left held by a cancelled order', `${resv.rows[0].n}`);
+
+    const audit = await pool.query(
+      `SELECT COUNT(*) n FROM audit_log WHERE action = 'shopify_order_cancelled' AND entity_id = $1`, [rows[0].id]);
+    check(Number(audit.rows[0].n) === 1, 'the cancellation is audited', `${audit.rows[0].n} rows`);
+  }
+
+  // ── 7. A cancellation for an order we never had is a no-op ───────────────
   {
     const ref = `#ZZ-CANCEL-${Date.now()}`;
     const r = await post('orders/cancelled', {
@@ -236,7 +276,7 @@ try {
   // The receiver acks before it works, so a failure's cause only ever shows up
   // in the server log — print it rather than making the next person reproduce.
   if (failed > 0) {
-    const lines = log.split('\n').filter((l) => /muse-order|webhook|rror/i.test(l)).slice(-25);
+    const lines = log.split('\n').filter((l) => /muse-order|webhook|rror/i.test(l)).slice(-40);
     console.log(`\n─── server log (tail) ───\n${lines.join('\n') || '(nothing matched)'}`);
   }
   if (server) server.kill();
@@ -248,8 +288,8 @@ try {
     await pool.query(`DELETE FROM production_order_lines WHERE production_order_id = ANY($1::int[])`, [ids]).catch(() => {});
     await pool.query(`DELETE FROM production_orders WHERE id = ANY($1::int[])`, [ids]).catch(() => {});
   }
-  await pool.query(`DELETE FROM audit_log WHERE action IN ('shopify_order_ingested','shopify_order_unmatched') AND entity_name LIKE '#ZZ-%'`).catch(() => {});
-  await pool.query(`DELETE FROM webhook_processed WHERE shopify_order_id BETWEEN 810001 AND 810006`).catch(() => {});
+  await pool.query(`DELETE FROM audit_log WHERE action IN ('shopify_order_ingested','shopify_order_unmatched','shopify_order_cancelled') AND entity_name LIKE '#ZZ-%'`).catch(() => {});
+  await pool.query(`DELETE FROM webhook_processed WHERE shopify_order_id BETWEEN 810001 AND 810007`).catch(() => {});
   await pool.query(`DELETE FROM product_bom WHERE product_type = $1`, [`${TAG}_M`]).catch(() => {});
   await pool.query(`DELETE FROM products WHERE product_code LIKE $1`, [`${TAG}%`]).catch(() => {});
   await pool.query(`DELETE FROM sa.transactions WHERE product_id = $1`, [OIL_ID]).catch(() => {});
