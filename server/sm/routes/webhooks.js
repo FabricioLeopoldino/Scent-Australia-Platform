@@ -116,7 +116,14 @@ async function createProductionOrderFromShopify(body, shopifyOrderId) {
   const orderRef = body.name || String(shopifyOrderId);
   const { getNextOrderNumber } = require('./production-orders');
 
-  const plan = await withTransaction(async (client) => {
+  // getNextOrderNumber reads the highest existing number and adds one — there is
+  // no sequence behind it. Two MUSE orders paid seconds apart therefore compute
+  // the SAME number, the second INSERT violates UNIQUE(order_number), the
+  // transaction rolls back and the exception is swallowed by the handler's
+  // catch. That paid order would produce nothing and say nothing, and Shopify
+  // will not redeliver because the 200 was already sent. Retrying on exactly
+  // that collision is the fix; anything else rethrows.
+  const attempt = async () => await withTransaction(async (client) => {
     const tq = (text, params) => client.query(text, params);
     const { toProduce, unmatched } = await planLinesFromShopifyOrder(tq, body);
     if (toProduce.length === 0) return { toProduce, unmatched, order: null };
@@ -135,11 +142,18 @@ async function createProductionOrderFromShopify(body, shopifyOrderId) {
 
     for (let i = 0; i < toProduce.length; i++) {
       const line = toProduce[i];
+      // needs_packing = true (owner, 2026-08-10: a MUSE order from the site
+      // always ships packed). Without it buildLineComponents skips every
+      // component_group='packing' row, so the production order would omit the
+      // packaging — and the sticks on a reed diffuser — while a make-to-order
+      // shipment of the SAME product consumes them: two material bills for one
+      // product. Each master only carries its own packing rows, so this stays
+      // correct per format (sticks exist on RD200 alone).
       const dbLine = (await tq(
         `INSERT INTO production_order_lines
            (production_order_id, line_number, product_type, fragrance_id, oil_id,
-            variant_name, oil_pct, quantity, unit_price, is_candle)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,$9) RETURNING *`,
+            variant_name, oil_pct, quantity, unit_price, is_candle, needs_packing)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,$9,true) RETURNING *`,
         [ord.id, i + 1, line.product_type, line.fragrance_id, line.oil_id,
          line.variant_name, line.oil_pct, line.quantity,
          ['CANDLE_240G', 'CANDLE_400G'].includes(line.product_type)]
@@ -150,6 +164,17 @@ async function createProductionOrderFromShopify(body, shopifyOrderId) {
     }
     return { toProduce, unmatched, order: ord };
   });
+
+  let plan;
+  for (let tries = 0; ; tries++) {
+    try { plan = await attempt(); break; }
+    catch (e) {
+      const collision = e.code === '23505' && String(e.constraint || e.detail || '').includes('order_number');
+      if (!collision || tries >= 4) throw e;
+      console.warn(`[muse-order] order number collision on ${orderRef}, retrying (${tries + 1})`);
+      await new Promise((r) => setTimeout(r, 150 * (tries + 1)));
+    }
+  }
 
   if (plan.order) {
     console.log(`[muse-order] ${orderRef} → ${plan.order.order_number} (draft, ${plan.toProduce.length} line(s) to produce)`);
@@ -219,21 +244,52 @@ async function smFulfillmentHandler(req, res, topic, body) {
     // expensive kind of silence, so these are collected and raised at the end
     // instead of being dropped (see the alarm after the transaction).
     const unmatched = [];
+    // A production order for this same Shopify order changes what the shipment
+    // is allowed to do (2026-08-10). Read it ONCE, before the lines.
+    //   already debited  — start production has run, so the oil and materials
+    //                      are accounted for. Consuming again here is the
+    //                      double-count proven on 2026-08-10: 1000 mL taken for
+    //                      a 500 mL batch.
+    //   still open       — nothing has been made through it, so this shipment
+    //                      IS the production. The order must not stay behind to
+    //                      be run a second time.
+    const poRows = isShip && orderId ? (await query(
+      `SELECT id, order_number, status FROM production_orders WHERE shopify_order_id = $1`,
+      [orderId])).rows : [];
+    const DEBITED = ['in_production', 'waiting_external', 'completed', 'fulfilled'];
+    const poDebited = poRows.find((r) => DEBITED.includes(r.status));
+    const poOpen = poRows.find((r) => ['draft', 'queued'].includes(r.status));
+    const staleOrders = [];
+
     await withTransaction(async (client) => {
       const tq = (t, p) => client.query(t, p);
-      for (const li of lines) {
+      for (let i = 0; i < lines.length; i++) {
+        const li = lines[i];
         const sku = (li.sku || '').trim();
         const qty = parseInt(li.quantity, 10) || 0;
+        const title = li.title || li.name || '(untitled)';
         if (qty <= 0) continue; // nothing shipped on this line — genuinely nothing to do
         if (!sku) {
           // The SKU is the ONLY join to our catalogue. Without it the goods have
           // left the building and no stock moved. This used to `continue`
           // silently; MUSE went retail on 2026-08-10 with a catalogue marketing
           // rebuilt by hand, so a variant created without a SKU is a real risk.
-          unmatched.push({ reason: 'no_sku', title: li.title || li.name || '(untitled)', qty });
+          unmatched.push({ reason: 'no_sku', title, qty });
           continue;
         }
 
+        // ── Each line is isolated by a savepoint ─────────────────────────────
+        // Everything below runs in ONE transaction so the stock movements and
+        // the webhook_processed marker commit together. But before this, a throw
+        // on any single line — lockOil rejecting a missing or exclusivity-locked
+        // oil is the live case — aborted the whole transaction, so a three-line
+        // shipment moved NO stock at all. Worse, the 200 has already been sent,
+        // so Shopify never retries, and the alarm below was skipped too: goods
+        // gone, nothing recorded, nothing said. A savepoint undoes only the line
+        // that failed and lets the rest of the shipment stand.
+        const sp = `muse_line_${i}`;
+        await tq(`SAVEPOINT ${sp}`);
+        try {
         // MUSE variants carry the STORE sku (Muse_RD00001) — that is the join.
         const prod = await tq(
           `SELECT id, name, current_stock FROM products WHERE sku = $1 FOR UPDATE`,
@@ -243,7 +299,8 @@ async function smFulfillmentHandler(req, res, topic, body) {
           // Not one of ours (e.g. an SA product sold on another store) — skip,
           // never guess. Collected for the alarm below so a mismatch surfaces
           // in Activity, not only in a log line nobody reads.
-          unmatched.push({ reason: 'sku_not_found', sku, title: li.title || li.name || '(untitled)', qty });
+          await tq(`RELEASE SAVEPOINT ${sp}`);
+          unmatched.push({ reason: 'sku_not_found', sku, title, qty });
           continue;
         }
         const p = prod.rows[0];
@@ -276,28 +333,82 @@ async function smFulfillmentHandler(req, res, topic, body) {
         //     the rule above. This makes the two directions net out correctly:
         //     produce-on-demand → cancel → one unit now sits in finished stock.
         const finishedStock = parseFloat(p.current_stock) || 0;
-        const bom = await computeFinishedGoodBom(tq, p.id, qty);
-        const produceNow = isShip && bom.makeToOrder && finishedStock <= 0;
 
-        if (produceNow) {
-          await consumeFragranceOil(tq, bom.oil.oil_id, bom.oil.ml, 'MUSE', `${note} — MUSE retail sale (made to order)`);
-          const matResults = [];
-          for (const m of bom.materials) {
-            const u = await adjustProductStock(m.product_id, -m.qty, txType, note, null, null, null, tq, opts);
-            matResults.push({ code: m.product_code, qty: m.qty, unit: m.unit, stock_after: parseFloat(u.current_stock) });
-          }
-          results.push({ sku, name: p.name, qty, make_to_order: true, oil_ml: bom.oil.ml, materials: matResults });
-        } else {
-          // Finished-good movement: sale deducts, cancellation credits.
-          const delta = isCancel ? qty : -qty;
-          const updated = await adjustProductStock(p.id, delta, txType, note, null, null, null, tq, opts);
-          const stockAfter = parseFloat(updated.current_stock);
-          const oversold = isShip && stockAfter < 0;
-          if (oversold) {
-            console.warn(`[muse-fulfil] ${sku} oversold — stock now ${stockAfter} (sale recorded; investigate physical count)`);
-          }
-          results.push({ sku, name: p.name, qty, delta, from_finished_stock: true, stock_after: stockAfter, oversold });
+        if (isCancel) {
+          // Unchanged: a returned unit exists as finished stock whatever made it.
+          const updated = await adjustProductStock(p.id, qty, txType, note, null, null, null, tq, opts);
+          results.push({ sku, name: p.name, qty, delta: qty, from_finished_stock: true, stock_after: parseFloat(updated.current_stock) });
+          await tq(`RELEASE SAVEPOINT ${sp}`);
+          continue;
         }
+
+        // ── Split the line: shelf first, make the remainder ──────────────────
+        // This used to be all-or-nothing on `finishedStock <= 0`, so ANY stock
+        // on the shelf sent the WHOLE quantity down the shelf branch. Two on the
+        // shelf and five sold drove stock to −3 while the three units actually
+        // made consumed no oil, no ethanol and no packaging — invisible until
+        // someone noticed the negative balance.
+        const fromShelf = Math.min(qty, Math.max(0, finishedStock));
+        const toMake = qty - fromShelf;
+        const line = { sku, name: p.name, qty, from_shelf: fromShelf, made: toMake };
+
+        if (fromShelf > 0) {
+          const u = await adjustProductStock(p.id, -fromShelf, txType, `${note} — ${fromShelf} from stock`, null, null, null, tq, opts);
+          line.stock_after = parseFloat(u.current_stock);
+        }
+
+        if (toMake > 0) {
+          if (poDebited) {
+            // Production already took the materials for these units; it simply
+            // has not been marked complete, which is why the shelf is short.
+            // Consuming again is the double-count. Record and raise it instead.
+            line.deferred_to = poDebited.order_number;
+            unmatched.push({
+              reason: 'production_not_completed', sku, title, qty: toMake,
+              production_order: poDebited.order_number, production_status: poDebited.status,
+            });
+          } else {
+            const bom = await computeFinishedGoodBom(tq, p.id, toMake);
+            if (bom.makeToOrder) {
+              await consumeFragranceOil(tq, bom.oil.oil_id, bom.oil.ml, 'MUSE', `${note} — ${toMake} made to order`);
+              const matResults = [];
+              for (const m of bom.materials) {
+                const u = await adjustProductStock(m.product_id, -m.qty, txType, note, null, null, null, tq, opts);
+                matResults.push({ code: m.product_code, qty: m.qty, unit: m.unit, stock_after: parseFloat(u.current_stock) });
+              }
+              line.oil_ml = bom.oil.ml;
+              line.materials = matResults;
+              if (poOpen && !staleOrders.some((s) => s.id === poOpen.id)) staleOrders.push(poOpen);
+            } else {
+              // No oil or no BOM: nothing can be consumed, so the shortfall can
+              // only be recorded as an oversell. Loud, because a sale that
+              // consumes nothing is exactly the silence we are trying to remove.
+              const u = await adjustProductStock(p.id, -toMake, txType, `${note} — ${toMake} with no BOM to consume`, null, null, null, tq, opts);
+              line.stock_after = parseFloat(u.current_stock);
+              line.oversold = true;
+              unmatched.push({ reason: 'no_bom_to_consume', sku, title, qty: toMake });
+            }
+          }
+        }
+        results.push(line);
+        await tq(`RELEASE SAVEPOINT ${sp}`);
+        } catch (e) {
+          // Undo THIS line only; the rest of the shipment stands.
+          await tq(`ROLLBACK TO SAVEPOINT ${sp}`).catch(() => {});
+          console.error(`[muse-fulfil] line ${sku} failed and was rolled back: ${e.message}`);
+          unmatched.push({ reason: 'line_failed', sku, title, qty, error: e.message });
+        }
+      }
+
+      // An open production order whose goods have now shipped is finished work,
+      // not pending work. Leaving it would let the office run it later and burn
+      // a second batch of oil for units already with the customer.
+      for (const s of staleOrders) {
+        await setOrderStatus(s.id, 'cancelled', {
+          tq, force: true,
+          extra: { notes: `Closed automatically: Shopify order ${body.name || orderId} shipped before this was produced` },
+        });
+        console.log(`[muse-fulfil] ${s.order_number} closed — its goods shipped as made-to-order`);
       }
 
       await tq(
@@ -307,7 +418,10 @@ async function smFulfillmentHandler(req, res, topic, body) {
     });
 
     if (results.length) {
-      const summary = results.map((r) => `${r.sku} ${r.delta > 0 ? '+' : ''}${r.delta}`).join(', ');
+      const summary = results.map((r) => r.delta !== undefined
+        ? `${r.sku} ${r.delta > 0 ? '+' : ''}${r.delta}`
+        : `${r.sku} ${r.from_shelf ? `${r.from_shelf} from stock` : ''}${r.from_shelf && r.made ? ' + ' : ''}${r.made ? `${r.made} made` : ''}`.trim()
+      ).join(', ');
       console.log(`[muse-fulfil] ${webhookType} ${key} → ${summary}`);
       await auditLog(0, isCancel ? 'muse_fulfillment_reversed' : 'muse_fulfillment_sale',
         'product', null, body.name || String(orderId),
