@@ -311,7 +311,14 @@ async function registerWebhooks() {
   const callbackUrl = `${host}/api/webhook/shopify/muse`
   // D13: fulfillments included — MUSE is retail, so shipping must deduct the
   // finished-good stock (orders/paid alone never moved it).
-  const topics = ['orders/paid', 'orders/cancelled', 'fulfillments/create', 'fulfillments/update']
+  //
+  // THIS ARRAY IS THE ONLY THING THAT REGISTERS A TOPIC. platform.shopify_stores
+  // also has a `topics` column and it is read by nothing — adding a topic there
+  // and not here ships a handler the store will never call. That happened on
+  // 2026-08-11 with refunds/create: the code was live and correct, and Shopify
+  // had no subscription, so the fix sat inert until the live store was listed.
+  // Adding a topic means editing HERE and in SM_TOPICS (platform/webhooks.js).
+  const topics = ['orders/paid', 'orders/cancelled', 'refunds/create', 'fulfillments/create', 'fulfillments/update']
 
   for (const topic of topics) {
     try {

@@ -74,6 +74,30 @@ check(at('2026-08-10T02:00:00Z') === true, 'Mon 12:00 Melbourne is inside the wi
 check(at('2026-08-09T18:00:00Z') === false, 'Mon 04:00 Melbourne is outside — this is what stops the polling');
 check(at('2026-08-08T02:00:00Z') === false, 'Saturday is outside');
 
+// ── 5. The two topic lists must not drift ──────────────────────────────────
+// A Shopify topic has to be in TWO places to work: registerWebhooks (which
+// subscribes the store) and SM_TOPICS (which lets the receiver dispatch it).
+// Miss the first and the handler is never called; miss the second and the
+// delivery is acknowledged and dropped. Neither failure says anything.
+//
+// This happened on 2026-08-11: refunds/create was added to the receiver, to the
+// handler and to platform.shopify_stores.topics — a column nothing reads — but
+// not to registerWebhooks. The deploy went live with a correct, unreachable
+// handler, and only listing the store's subscriptions revealed it.
+const RECEIVER = readFileSync(join(ROOT, 'server/platform/webhooks.js'), 'utf8');
+const listOf = (src, re) => {
+  const m = src.match(re);
+  return m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]).sort() : null;
+};
+const registered = listOf(SRC, /const topics = \[([^\]]+)\]/);
+const dispatched = listOf(RECEIVER, /const SM_TOPICS = new Set\(\[([^\]]+)\]\)/);
+check(registered !== null && dispatched !== null, 'both topic lists are readable',
+  `registered=${registered} dispatched=${dispatched}`);
+check(JSON.stringify(registered) === JSON.stringify(dispatched),
+  'registerWebhooks and SM_TOPICS list exactly the same topics',
+  `only registered: ${registered?.filter((t) => !dispatched?.includes(t))} · only dispatched: ${dispatched?.filter((t) => !registered?.includes(t))}`);
+check(registered?.includes('refunds/create'), 'refunds/create is among them');
+
 console.log(failed === 0
   ? `\n✅ sync-cron-window: all checks passed`
   : `\n❌ sync-cron-window: ${failed} failed`);
