@@ -487,6 +487,65 @@ async function smWebhookHandler(req, res) {
       return await smFulfillmentHandler(req, res, topic, JSON.parse(rawBodyStr))
     }
 
+    // A refund is NOT a cancellation, and Shopify sends no orders/cancelled for
+    // one. Order #1020 (2026-08-10) was paid, then refunded with its items
+    // removed — the ONLY event we ever received was orders/paid, so SM-001 sat
+    // in draft as real work for an order that no longer existed. The warehouse
+    // could have produced it and found out at the shipping screen, after the
+    // labour was spent.
+    //
+    // This deliberately does NOT change the order's status. A refund can be
+    // partial, can be goodwill, and can arrive long after the goods shipped;
+    // deciding any of that automatically would be guessing with someone's stock,
+    // and orders/cancelled already exists for the unambiguous case. What was
+    // actually lost here was the CHANCE TO STOP, so that is what this restores:
+    // the order becomes impossible to miss.
+    if (topic === 'refunds/create') {
+      const body = JSON.parse(rawBodyStr)
+      // body.id is the REFUND id — the order is body.order_id. Getting this
+      // wrong would look up a production order that cannot exist.
+      const shopifyOrderId = body.order_id
+      const refundId = body.id
+      if (!shopifyOrderId) { console.warn('[muse-refund] refund with no order_id — ignored'); return }
+
+      // Keyed per refund, not per order: partial refunds are normal, and a
+      // second one carries new information. VARCHAR(50) holds this comfortably.
+      const wtype = `refunds/create#${refundId}`
+      const claimed = await query(
+        `INSERT INTO webhook_processed (shopify_order_id, webhook_type) VALUES ($1, $2)
+         ON CONFLICT (shopify_order_id, webhook_type) DO NOTHING RETURNING id`,
+        [shopifyOrderId, wtype]
+      )
+      if (!claimed.rows[0]) { console.log(`[muse-refund] refund ${refundId} already processed`); return }
+
+      const po = await query(`SELECT * FROM production_orders WHERE shopify_order_id = $1`, [shopifyOrderId])
+      const order = po.rows[0]
+      const units = (Array.isArray(body.refund_line_items) ? body.refund_line_items : [])
+        .reduce((n, li) => n + (parseInt(li.quantity, 10) || 0), 0)
+
+      if (!order) {
+        // Every MUSE line was covered by finished stock, or the sale predates the
+        // ingestion — no production work exists to warn about. Still worth a line
+        // in the log so a refund is never invisible.
+        console.log(`[muse-refund] refund ${refundId} on Shopify order ${shopifyOrderId} — no production order of ours`)
+        return
+      }
+
+      const stamp = `⚠️ REFUNDED on Shopify (${units} unit(s), refund ${refundId}) — confirm before producing`
+      await query(
+        `UPDATE production_orders
+            SET notes = CASE WHEN notes IS NULL OR notes = '' THEN $1 ELSE notes || E'\\n' || $1 END,
+                updated_at = NOW()
+          WHERE id = $2`,
+        [stamp, order.id]
+      )
+      console.error(`⚠️  [muse-refund] ${order.order_number} (${order.status}) — Shopify order refunded, ${units} unit(s). Status NOT changed; a human decides.`)
+      await auditLog(0, 'shopify_order_refunded', 'production_order', order.id, order.order_number, {
+        shopify_order_id: shopifyOrderId, refund_id: refundId, units, order_status: order.status,
+      })
+      return
+    }
+
     if (!['orders/paid', 'orders/cancelled'].includes(topic)) return
 
     const rawBody = rawBodyStr

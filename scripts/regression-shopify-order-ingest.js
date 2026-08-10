@@ -266,6 +266,82 @@ try {
     check((await ordersFor(ref)).length === 0, 'an unmatched cancellation creates nothing');
   }
 
+  // ── 8. A REFUND must reach the production order (2026-08-11) ─────────────
+  // Shopify #1020 was paid, then refunded with its items removed, and the only
+  // event that ever reached us was orders/paid — there is no orders/cancelled
+  // for a refund. SM-001 stayed in draft as real work for an order that no
+  // longer existed, and the warehouse would only have found out at the shipping
+  // screen, after the labour. The contract: the order gets stamped so it cannot
+  // be missed, and its STATUS IS LEFT ALONE, because a refund can be partial or
+  // arrive after shipping and that call belongs to a person.
+  {
+    const ref = `#ZZ-REF-${Date.now()}`;
+    const id = 810008, refundId = 990088;
+    await post('orders/paid', {
+      id, name: ref, line_items: [{ title: 'Reed Diffuser', quantity: 3, sku: skuOf(1) }],
+    });
+    const rows = await waitFor(() => ordersFor(ref), (x) => x.length > 0);
+    check(rows.length === 1 && rows[0].status === 'draft', 'the order is created and in draft', JSON.stringify(rows));
+    await waitFor(
+      async () => (await pool.query(
+        `SELECT 1 FROM webhook_processed WHERE shopify_order_id = $1 AND webhook_type = 'orders/paid'`, [id])).rows,
+      (x) => x.length > 0);
+
+    // body.id is the REFUND id and body.order_id is the order — reading the
+    // wrong one looks up a production order that cannot exist.
+    const r = await post('refunds/create', {
+      id: refundId, order_id: id,
+      refund_line_items: [{ quantity: 3, line_item: { sku: skuOf(1) } }],
+    });
+    check(r.status === 200, 'the refund answers 200', `got ${r.status}`);
+
+    const stamped = await waitFor(
+      async () => (await pool.query(`SELECT status, notes FROM production_orders WHERE id = $1`, [rows[0].id])).rows,
+      (x) => /REFUNDED/.test(x[0]?.notes || ''));
+    check(/REFUNDED/.test(stamped[0]?.notes || ''), 'the production order is stamped as refunded',
+      JSON.stringify(stamped[0]?.notes));
+    check(/3 unit/.test(stamped[0]?.notes || ''), 'the stamp names how many units came back',
+      JSON.stringify(stamped[0]?.notes));
+    check(stamped[0]?.status === 'draft', 'the status is NOT changed automatically — a person decides',
+      `status=${stamped[0]?.status}`);
+
+    const audit = await pool.query(
+      `SELECT details FROM audit_log WHERE action = 'shopify_order_refunded' AND entity_id = $1`, [rows[0].id]);
+    check(audit.rows.length === 1, 'the refund is audited', `${audit.rows.length} rows`);
+    check(audit.rows[0]?.details?.refund_id === refundId, 'the audit row carries the refund id',
+      JSON.stringify(audit.rows[0]?.details));
+
+    // ── 9. The same refund delivered twice must not stamp twice ────────────
+    await post('refunds/create', { id: refundId, order_id: id, refund_line_items: [{ quantity: 3 }] });
+    await new Promise((s) => setTimeout(s, 2500));
+    const again = (await pool.query(`SELECT notes FROM production_orders WHERE id = $1`, [rows[0].id])).rows[0];
+    const stamps = (String(again?.notes || '').match(/REFUNDED/g) || []).length;
+    check(stamps === 1, 'a redelivered refund is ignored, not stamped again', `${stamps} stamps`);
+    const audit2 = await pool.query(
+      `SELECT COUNT(*) n FROM audit_log WHERE action = 'shopify_order_refunded' AND entity_id = $1`, [rows[0].id]);
+    check(Number(audit2.rows[0].n) === 1, 'and audited only once', `${audit2.rows[0].n} rows`);
+
+    // ── 10. A SECOND, different refund on the same order does land ─────────
+    // Partial refunds are normal; keying idempotency on the order alone would
+    // swallow the one that actually matters.
+    await post('refunds/create', { id: 990089, order_id: id, refund_line_items: [{ quantity: 1 }] });
+    const twice = await waitFor(
+      async () => (await pool.query(
+        `SELECT COUNT(*) n FROM audit_log WHERE action = 'shopify_order_refunded' AND entity_id = $1`, [rows[0].id])).rows,
+      (x) => Number(x[0].n) === 2);
+    check(Number(twice[0].n) === 2, 'a different refund on the same order is processed', `${twice[0].n} rows`);
+  }
+
+  // ── 11. A refund for an order we never had is a quiet no-op ──────────────
+  {
+    const r = await post('refunds/create', { id: 990099, order_id: 810009, refund_line_items: [{ quantity: 1 }] });
+    check(r.status === 200, 'a refund with no production order still answers 200', `got ${r.status}`);
+    await new Promise((s) => setTimeout(s, 2000));
+    const orphan = await pool.query(
+      `SELECT COUNT(*) n FROM audit_log WHERE action = 'shopify_order_refunded' AND entity_id IS NULL`);
+    check(Number(orphan.rows[0].n) === 0, 'and writes no dangling audit row', `${orphan.rows[0].n} rows`);
+  }
+
   console.log(failed === 0
     ? `\n✅ shopify-order-ingest: all checks passed`
     : `\n❌ shopify-order-ingest: ${failed} failed`);
@@ -298,7 +374,7 @@ try {
   // The unmatched alarm can fire with no order behind it (nothing was
   // plannable), so those rows have no entity_id — they DO carry the reference.
   await pool.query(`DELETE FROM audit_log WHERE entity_name LIKE '#ZZ-%'`).catch(() => {});
-  await pool.query(`DELETE FROM webhook_processed WHERE shopify_order_id BETWEEN 810001 AND 810007`).catch(() => {});
+  await pool.query(`DELETE FROM webhook_processed WHERE shopify_order_id BETWEEN 810001 AND 810010`).catch(() => {});
   await pool.query(`DELETE FROM product_bom WHERE product_type = $1`, [`${TAG}_M`]).catch(() => {});
   await pool.query(`DELETE FROM products WHERE product_code LIKE $1`, [`${TAG}%`]).catch(() => {});
   await pool.query(`DELETE FROM sa.transactions WHERE product_id = $1`, [OIL_ID]).catch(() => {});

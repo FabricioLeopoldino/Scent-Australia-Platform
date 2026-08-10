@@ -128,7 +128,17 @@ async function buildLineComponents(orderId, line, lineInput, clientId, qFn) {
     }
   }
 
-  if (line.fragrance_id) {
+  // `&& !line.oil_id` enforces the "never both" rule the comment above states.
+  // It was only ever a convention, and production disagrees: D14.9 deliberately
+  // kept fragrance_id on all 366 active MUSE variants as a rollback cushion, so
+  // every line built from one arrives carrying BOTH ids. The legacy component
+  // was then created alongside the D14 oil quantity — the same 75 mL charged
+  // twice, to two different records (Shopify #1020 / SM-001, 2026-08-10: the
+  // pick list showed "Vetiver D'Hiver — 75 ml" on two separate rows, inviting
+  // the operator to pour 150). The oil wins: it is the live model, the legacy
+  // FRAG_* records are archived. Guarding here rather than at each caller
+  // covers the manual order path and the Shopify ingestion in one place.
+  if (line.fragrance_id && !line.oil_id) {
     const frag = await qry(`SELECT * FROM products WHERE id = $1`, [line.fragrance_id])
     if (frag.rows[0]) {
       const adjFragQty = rfUsed >= totalFormula ? 0 : fragQty * rfScale

@@ -126,7 +126,7 @@ export async function runPlatformMigrations() {
   await q(
     `INSERT INTO platform.shopify_stores (key, domain, api_version, topics, enabled)
      VALUES ('muse', $1, '2026-04',
-             '["orders/paid","orders/cancelled"]'::jsonb, true)
+             '["orders/paid","orders/cancelled","refunds/create"]'::jsonb, true)
      ON CONFLICT (key) DO UPDATE SET domain = EXCLUDED.domain, topics = EXCLUDED.topics`,
     [process.env.SM_SHOPIFY_SHOP_DOMAIN || process.env.MUSE_SHOPIFY_SHOP_DOMAIN || 'muse-9973.myshopify.com']
   );

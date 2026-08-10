@@ -52,7 +52,10 @@ const SA_TOPICS = new Set(['fulfillments/create', 'fulfillments/update', 'orders
 // product must take it out of finished-good stock. Dispatch stays store-aware:
 // the same topic name means SA oils on the Scent store and MUSE variants on the
 // Muse store, and each only ever reaches its own module.
-const SM_TOPICS = new Set(['orders/paid', 'orders/cancelled', 'fulfillments/create', 'fulfillments/update']);
+// refunds/create (2026-08-11): a refunded order sends NO orders/cancelled, so
+// without this topic a refund is invisible here and its production order stays
+// alive as work to do — see the handler in sm/routes/webhooks.js.
+const SM_TOPICS = new Set(['orders/paid', 'orders/cancelled', 'refunds/create', 'fulfillments/create', 'fulfillments/update']);
 
 export async function shopifyWebhookReceiver(req, res) {
   const store = String(req.params.store || '').toLowerCase();

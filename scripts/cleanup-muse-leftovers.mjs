@@ -104,6 +104,15 @@ try {
   console.log(`  products removed: ${dv.rowCount}`);
 
   if (testClient.length) {
+    // The client's own audit rows too. Keyed on entity_type='client' because
+    // audit_log has no FK — deleting the client alone leaves 'client_created'
+    // rows pointing at nothing, which is what survived the 2026-08-11 run and
+    // had to be removed by hand. entity_id is reused by later real clients, so
+    // match the name as well and never widen this to all client rows.
+    const da = await pool.query(
+      `DELETE FROM audit_log WHERE entity_type = 'client' AND entity_name = ANY($1::text[])`,
+      [testClient.map((r) => r.name)]);
+    if (da.rowCount) console.log(`  client audit rows removed: ${da.rowCount}`);
     const d = await pool.query(`DELETE FROM clients WHERE id = ANY($1::int[])`, [testClient.map((r) => r.id)]);
     console.log(`  clients removed: ${d.rowCount}`);
   }
