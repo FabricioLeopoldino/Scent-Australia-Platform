@@ -351,4 +351,94 @@ async function registerWebhooks() {
   }
 }
 
-module.exports = { buildDraftOrderPayload, enqueueDraftOrder, enqueueInventoryAdjust, startSyncCron, registerWebhooks }
+// ═══════════════════════════════════════════════════════════════════════════
+// Create a MUSE product on the store, in the shape the live catalogue uses.
+//
+// Read off the "Terre" product on 2026-08-11, which is the pattern marketing
+// settled on: ONE product per fragrance, three variants under a single option
+// called "Choose Your Format", inventory NOT tracked, and the Shopify taxonomy
+// category set (that field drives tax rates and cross-channel search, and the
+// REST endpoint cannot set it at all — hence GraphQL).
+//
+// It only ever CREATES. There is no product id in the call, so it has no way to
+// reach an existing product, and it is born DRAFT so marketing finishes the
+// images, copy and metafields before anything is sellable.
+//
+// The one way to make a mess is running it twice, so it refuses if any of the
+// codes is already on the store. Shopify itself accepts duplicate SKUs without
+// complaint — 253 of them exist there today — so that check has to happen here.
+const MUSE_CATEGORY = 'gid://shopify/TaxonomyCategory/hg-3-40-7' // Home & Garden > Decor > Home Fragrances > Reed Diffusers
+const FORMAT_OPTION = 'Choose Your Format'
+
+async function shopifyGraphQL(query, variables) {
+  const domain = process.env.SM_SHOPIFY_SHOP_DOMAIN
+  const token = process.env.SM_SHOPIFY_ACCESS_TOKEN
+  if (!domain || !token) throw new Error('Shopify is not configured')
+  const r = await fetch(`https://${domain}/admin/api/2026-04/graphql.json`, {
+    method: 'POST',
+    headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, variables }),
+  })
+  const j = await r.json()
+  if (j.errors) throw new Error(`Shopify: ${JSON.stringify(j.errors)}`)
+  return j.data
+}
+
+// Which of these codes already exist on the store, on any product.
+async function skusOnStore(skus) {
+  const found = []
+  for (const sku of skus) {
+    const d = await shopifyGraphQL(
+      `query($q: String!) { productVariants(first: 5, query: $q) { nodes { sku product { title status } } } }`,
+      { q: `sku:${sku}` })
+    for (const n of d.productVariants.nodes) {
+      if (n.sku === sku) found.push(`${sku} → "${n.product.title}" [${n.product.status}]`)
+    }
+  }
+  return found
+}
+
+// lines: [{ format, sku, price }] in the order they should appear.
+async function createMuseProductOnShopify({ title, lines }) {
+  // Same gate as every other outbound call: a staging or local boot must never
+  // create real products on the live store.
+  if (!outboundEnabled()) throw new Error('Shopify publishing is disabled (SM_SHOPIFY_SYNC_ENABLED)')
+  if (!title || !lines?.length) throw new Error('A title and at least one format are required')
+  const priceless = lines.filter((l) => l.price == null || Number(l.price) <= 0)
+  if (priceless.length) throw new Error(`No price on: ${priceless.map((l) => l.format).join(', ')}`)
+
+  const clash = await skusOnStore(lines.map((l) => l.sku))
+  if (clash.length) throw new Error(`Already on the store: ${clash.join(' · ')}`)
+
+  const input = {
+    title,
+    status: 'DRAFT',
+    category: MUSE_CATEGORY,
+    productOptions: [{ name: FORMAT_OPTION, values: lines.map((l) => ({ name: l.format })) }],
+    variants: lines.map((l) => ({
+      optionValues: [{ optionName: FORMAT_OPTION, name: l.format }],
+      price: String(Number(l.price).toFixed(2)),
+      sku: l.sku,
+      // The live catalogue is untracked: tracked + deny + zero stock would make
+      // the product unbuyable the moment marketing activates it.
+      inventoryItem: { tracked: false },
+    })),
+  }
+
+  const d = await shopifyGraphQL(
+    `mutation Create($input: ProductSetInput!) {
+       productSet(synchronous: true, input: $input) {
+         product {
+           id title status handle
+           variants(first: 10) { nodes { id sku inventoryItem { id } } }
+         }
+         userErrors { field message }
+       }
+     }`, { input })
+
+  const errs = d.productSet.userErrors || []
+  if (errs.length) throw new Error(errs.map((e) => `${(e.field || []).join('.')} ${e.message}`).join(' · '))
+  return d.productSet.product
+}
+
+module.exports = { buildDraftOrderPayload, enqueueDraftOrder, enqueueInventoryAdjust, startSyncCron, registerWebhooks, createMuseProductOnShopify, skusOnStore }

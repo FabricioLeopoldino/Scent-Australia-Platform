@@ -26,6 +26,7 @@ const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query, withTransaction } = require('../db')
 const { auth, requireRole, auditLog } = require('../auth')
+const { createMuseProductOnShopify } = require('../services/shopify-sync')
 
 // The three formats a MUSE fragrance is sold in. `variantTitle` is the value
 // under the store's "Choose Your Format" option — the same words the live
@@ -103,6 +104,51 @@ async function planFragrance(oilId, wanted) {
   }
 }
 
+// Publish an already-registered number to the store, and remember the ids.
+//
+// Deliberately OUTSIDE the registration transaction. If Shopify is down, or
+// rejects the call, the platform record must still stand — losing the number
+// and the codes because a third party hiccuped is the worse failure. The caller
+// gets told what happened and can retry; nothing is created twice, because the
+// store is checked for the codes first.
+async function publishNumber(number, userId) {
+  const variants = (await query(
+    `SELECT p.id, p.sku, p.name, p.price, p.shopify_product_id, m.product_code AS master
+       FROM products p JOIN products m ON m.id = p.master_product_id
+      WHERE p.sku LIKE $1 AND COALESCE(p.archived,false) = false`, [`Muse\\__${pad(number)}`])).rows
+  if (!variants.length) throw Object.assign(new Error(`No variants found for number ${number}`), { status: 404 })
+  const already = variants.filter((v) => v.shopify_product_id)
+  if (already.length) throw Object.assign(new Error(`Already published (${already[0].shopify_product_id})`), { status: 409 })
+
+  // Keep the store's variant order matching the catalogue: travel, room, reed.
+  const order = FORMATS.map((f) => f.master)
+  const lines = variants
+    .sort((a, b) => order.indexOf(a.master) - order.indexOf(b.master))
+    .map((v) => ({
+      format: FORMATS.find((f) => f.master === v.master).variantTitle,
+      sku: v.sku,
+      price: v.price == null ? null : Number(v.price),
+      id: v.id,
+    }))
+  // The product title is the fragrance, not the format: strip the "Reed
+  // Diffuser 200ml — " the variant name carries.
+  const title = String(variants[0].name).split('—').slice(1).join('—').trim() || variants[0].name
+
+  const product = await createMuseProductOnShopify({ title, lines })
+
+  const bySku = new Map((product.variants?.nodes || []).map((n) => [n.sku, n]))
+  for (const l of lines) {
+    const sv = bySku.get(l.sku)
+    await query(
+      `UPDATE products SET shopify_product_id = $1, shopify_variant_id = $2,
+              shopify_inventory_item_id = $3, shopify_synced_at = NOW() WHERE id = $4`,
+      [product.id, sv?.id || null, sv?.inventoryItem?.id || null, l.id])
+  }
+  await auditLog(userId, 'muse_fragrance_published', 'product', lines[0].id, title,
+    { number, shopify_product_id: product.id, handle: product.handle, skus: lines.map((l) => l.sku) })
+  return { id: product.id, title: product.title, status: product.status, handle: product.handle }
+}
+
 // Step 2 of the screen: show exactly what will be created, write nothing.
 router.get('/muse-fragrance/preview', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
@@ -163,10 +209,32 @@ router.post('/muse-fragrance', auth, requireRole('admin', 'root'), async (req, r
       await auditLog(req.user.id, 'muse_fragrance_registered', 'product', c.id, c.sku,
         { oil_id, number: out.number, title: out.title, master: c.master })
     }
+
+    // Publishing is part of registering, not a second errand — typing the codes
+    // into Shopify by hand is exactly the step that produced eleven wrong ones.
+    // It runs after the commit so a Shopify failure cannot cost us the record.
+    if (req.body?.publish !== false) {
+      try {
+        out.store = { ok: true, product: await publishNumber(out.number, req.user.id) }
+      } catch (e) {
+        console.error(`[muse-fragrance] ${out.number} registered but NOT published: ${e.message}`)
+        out.store = { ok: false, error: e.message }
+      }
+    }
     res.status(201).json(out)
   } catch (e) {
     res.status(e.status || 500).json({ error: e.status ? e.message : sanitizeError(e) })
   }
+})
+
+// Retry, for a number registered before publishing existed or whose publish
+// failed. Same guards — it refuses if the codes are already on the store.
+router.post('/muse-fragrance/:number/publish', auth, requireRole('admin', 'root'), async (req, res) => {
+  try {
+    const n = parseInt(req.params.number, 10)
+    if (!n) return res.status(400).json({ error: 'number required' })
+    res.json({ ok: true, product: await publishNumber(n, req.user.id) })
+  } catch (e) { res.status(e.status || 502).json({ error: e.status ? e.message : String(e.message) }) }
 })
 
 module.exports = router

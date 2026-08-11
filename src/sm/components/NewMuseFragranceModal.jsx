@@ -66,6 +66,17 @@ export default function NewMuseFragranceModal({ onClose, onCreated, addToast }) 
     } finally { setSaving(false) }
   }
 
+  async function retryPublish() {
+    setSaving(true)
+    try {
+      const r = await axios.post(`/api/muse-fragrance/${done.number}/publish`, {}, api())
+      setDone({ ...done, store: { ok: true, product: r.data.product } })
+      addToast('Created on Shopify as a draft')
+    } catch (e) {
+      addToast(e.response?.data?.error || 'Shopify still refused', 'error')
+    } finally { setSaving(false) }
+  }
+
   const shown = oils.filter(o =>
     !search || `${o.name} ${o.code}`.toLowerCase().includes(search.toLowerCase()))
   const lines = (preview?.lines || []).filter(l => !skip.includes(l.master))
@@ -92,13 +103,26 @@ export default function NewMuseFragranceModal({ onClose, onCreated, addToast }) 
           {/* ── Done: hand over the codes ─────────────────────────────────── */}
           {done ? (
             <>
-              <div style={{ ...ROW, background: 'rgba(74,222,128,0.08)', borderColor: 'rgba(74,222,128,0.25)', marginBottom: 14 }}>
-                <Check size={16} color="#4ade80" />
-                <div style={{ fontSize: 12, color: '#4ade80', lineHeight: 1.5 }}>
-                  <strong>{done.title}</strong> registered as number {done.number}. Create the product on Shopify
-                  with these codes — the platform already knows them.
+              {done.store?.ok ? (
+                <div style={{ ...ROW, background: 'rgba(74,222,128,0.08)', borderColor: 'rgba(74,222,128,0.25)', marginBottom: 14 }}>
+                  <Check size={16} color="#4ade80" style={{ flexShrink: 0 }} />
+                  <div style={{ fontSize: 12, color: '#4ade80', lineHeight: 1.5 }}>
+                    <strong>{done.title}</strong> registered as number {done.number} and created on Shopify as a
+                    <strong> draft</strong>. Marketing finishes the images, description and metafields, then activates it.
+                  </div>
                 </div>
-              </div>
+              ) : (
+                // The platform record stands either way — that is the point of
+                // publishing after the commit. Say what to do next, plainly.
+                <div style={{ ...ROW, alignItems: 'flex-start', background: 'rgba(251,191,36,0.07)', borderColor: 'rgba(251,191,36,0.2)', marginBottom: 14 }}>
+                  <AlertTriangle size={16} color="#fbbf24" style={{ flexShrink: 0, marginTop: 1 }} />
+                  <div style={{ fontSize: 12, color: '#fbbf24', lineHeight: 1.5 }}>
+                    <strong>{done.title}</strong> is registered here as number {done.number}, but the Shopify product
+                    was <strong>not</strong> created: {done.store?.error || 'publishing is switched off'}.
+                    <br />Nothing is lost — retry below, or create it on the store with the codes shown.
+                  </div>
+                </div>
+              )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {(done.created || []).map(c => (
                   <div key={c.sku} style={ROW}>
@@ -208,6 +232,11 @@ export default function NewMuseFragranceModal({ onClose, onCreated, addToast }) 
           {done ? (
             <>
               <button className="btn btn-secondary" onClick={copyAll}><Copy size={13} /> Copy codes</button>
+              {!done.store?.ok && (
+                <button className="btn btn-secondary" onClick={retryPublish} disabled={saving}>
+                  {saving ? 'Retrying…' : 'Retry on Shopify'}
+                </button>
+              )}
               <button className="btn btn-primary" onClick={onClose}>Done</button>
             </>
           ) : oil ? (
