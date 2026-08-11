@@ -618,11 +618,17 @@ export default function MuseStock() {
                         <IconButton onClick={() => { openEditVariant(v) }} title="Edit variant — name, min stock, linked oil"><Edit2 size={13} /></IconButton>
                         <IconButton onClick={() => setShopifyModal(v)} title="Publish to Shopify"><ExternalLink size={13} /></IconButton>
                         <IconButton onClick={() => setImageUploadVariant(v)} title={v.image_data ? 'Change image' : 'Upload image'}><ImageIcon size={13} /></IconButton>
-                        {/* Registering is now one click, so undoing it has to be
-                            possible too. Only offered while the fragrance is not
-                            real anywhere: unpublished and at zero. The server
-                            re-checks that plus orders, recipes and movements. */}
-                        {!v.shopify_product_id && Number(v.current_stock) === 0 && /^Muse_(TS|RS|RD)[0-9]+$/.test(v.sku || '') && (
+                        {/* Undo a registration made on this screen — and ONLY
+                            those. The first version keyed on "no Shopify id and
+                            zero stock", which put a delete button on 358 of the
+                            366 live variants: two clicks from orphaning a
+                            selling product on the store. The product code is the
+                            honest marker, because only the new screen writes
+                            `MASTER-M#####`; everything from the original
+                            catalogue carries `-FRAG_`. The server enforces the
+                            same rule, plus stock, orders, recipes, movements and
+                            whether the store still holds the product. */}
+                        {/^(TS10|RS100|RD200)-M[0-9]+$/.test(v.product_code || '') && Number(v.current_stock) === 0 && (
                           <IconButton variant="danger" onClick={() => setDeleteFragrance(v)}
                             title="Delete this fragrance registration (all three formats)"><Trash2 size={13} /></IconButton>
                         )}

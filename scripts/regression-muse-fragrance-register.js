@@ -224,6 +224,28 @@ try {
 
     const gone = await api('DELETE', `/api/sm/muse-fragrance/${num}`);
     check(gone.status === 404, 'deleting it again is a clean 404', `${gone.status}`);
+
+    // THE ORIGINAL CATALOGUE MUST BE UNREACHABLE FROM HERE. The first version of
+    // the button keyed on "no Shopify id and zero stock", which showed it on 358
+    // of the 366 live variants — two clicks from deleting a selling product's
+    // record and orphaning it on the store. Only codes this screen wrote
+    // (MASTER-M#####) may be undone; the catalogue carries MASTER-FRAG_#####.
+    const legacyNum = Number((await db.query(
+      `SELECT substring(sku from '[0-9]+$')::int n FROM products
+        WHERE product_code LIKE '%-FRAG@_%' ESCAPE '@' AND sku LIKE 'Muse@_%' ESCAPE '@'
+        LIMIT 1`)).rows[0]?.n);
+    if (legacyNum) {
+      const refused = await api('DELETE', `/api/sm/muse-fragrance/${legacyNum}`);
+      check(refused.status === 403, `a catalogue fragrance (number ${legacyNum}) cannot be deleted here`,
+        `${refused.status} ${refused.json?.error}`);
+      check(/original catalogue/i.test(refused.json?.error || ''), 'and the refusal says why', refused.json?.error);
+      const still = Number((await db.query(
+        `SELECT COUNT(*) n FROM products WHERE substring(sku from '[0-9]+$')::int = $1
+           AND sku LIKE 'Muse@_%' ESCAPE '@'`, [legacyNum])).rows[0].n);
+      check(still > 0, 'and it is still there', `${still} rows`);
+    } else {
+      check(false, 'could not find a legacy variant to prove the refusal');
+    }
   }
 
   // ── 7. GraphQL ids must be reduced to numbers before they are stored ─────

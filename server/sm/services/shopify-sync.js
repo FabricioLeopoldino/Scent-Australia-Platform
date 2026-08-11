@@ -469,4 +469,4 @@ async function createMuseProductOnShopify({ title, lines }) {
   return d.productSet.product
 }
 
-module.exports = { buildDraftOrderPayload, enqueueDraftOrder, enqueueInventoryAdjust, startSyncCron, registerWebhooks, createMuseProductOnShopify, skusOnStore, findProductBySkus }
+module.exports = { buildDraftOrderPayload, enqueueDraftOrder, enqueueInventoryAdjust, startSyncCron, registerWebhooks, createMuseProductOnShopify, skusOnStore, findProductBySkus, shopifyGraphQL }

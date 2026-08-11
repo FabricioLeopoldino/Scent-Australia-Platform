@@ -26,7 +26,7 @@ const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query, withTransaction } = require('../db')
 const { auth, requireRole, auditLog } = require('../auth')
-const { createMuseProductOnShopify, findProductBySkus } = require('../services/shopify-sync')
+const { createMuseProductOnShopify, findProductBySkus, shopifyGraphQL } = require('../services/shopify-sync')
 
 // Shopify's GraphQL returns GIDs ("gid://shopify/Product/9530…") and our columns
 // are BIGINT — writing the GID straight in throws 22P02. That is exactly what
@@ -288,8 +288,43 @@ router.delete('/muse-fragrance/:number', auth, requireRole('admin', 'root'), asy
         WHERE p.sku LIKE 'Muse@_%' ESCAPE '@' AND substring(p.sku from '[0-9]+$')::int = $1`, [n])).rows
     if (!rows.length) return res.status(404).json({ error: `Nothing registered under number ${n}` })
 
+    // ONLY registrations made on this screen. The original catalogue carries
+    // `MASTER-FRAG_#####` and must never be reachable from here — the first
+    // version of the button was offered on 358 of 366 live variants, which is
+    // two clicks from orphaning a selling product on the store.
+    const legacy = rows.filter((r) => !/^(TS10|RS100|RD200)-M[0-9]+$/.test(r.product_code || ''))
+    if (legacy.length) {
+      return res.status(403).json({
+        error: `Number ${n} is part of the original catalogue (${legacy[0].product_code}), not a registration made here. Archive it from the product screen instead.`,
+      })
+    }
+
     const ids = rows.map((r) => r.id)
     const codes = rows.map((r) => r.product_code)
+
+    // Trust the STORE, not our cached column. The owner deleted the Gingerbread
+    // A product on Shopify while the platform still held its id, and a stale id
+    // would have blocked the deletion forever. If the product is gone there, the
+    // link is stale — clear it and carry on.
+    let stale = false
+    const claimed = rows.filter((r) => r.shopify_product_id)
+    if (claimed.length) {
+      try {
+        const d = await shopifyGraphQL(`query($id: ID!) { product(id: $id) { id } }`,
+          { id: `gid://shopify/Product/${claimed[0].shopify_product_id}` })
+        if (!d.product) {
+          await query(
+            `UPDATE products SET shopify_product_id = NULL, shopify_variant_id = NULL,
+                    shopify_inventory_item_id = NULL WHERE id = ANY($1::int[])`, [ids])
+          rows.forEach((r) => { r.shopify_product_id = null })
+          stale = true
+        }
+      } catch (e) {
+        // Cannot reach Shopify: refuse rather than assume it is gone.
+        return res.status(502).json({ error: `Could not check Shopify before deleting: ${e.message}` })
+      }
+    }
+
     const [published, withStock, inLines, inBom, inTx] = [
       rows.filter((r) => r.shopify_product_id),
       rows.filter((r) => Number(r.current_stock) !== 0),
@@ -310,7 +345,7 @@ router.delete('/muse-fragrance/:number', auth, requireRole('admin', 'root'), asy
     const d = await query(`DELETE FROM products WHERE id = ANY($1::int[])`, [ids])
     await auditLog(req.user.id, 'muse_fragrance_deleted', 'product', null, rows[0].name,
       { number: n, skus: rows.map((r) => r.sku) })
-    res.json({ ok: true, deleted: d.rowCount, skus: rows.map((r) => r.sku) })
+    res.json({ ok: true, deleted: d.rowCount, skus: rows.map((r) => r.sku), staleShopifyLinkCleared: stale })
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
