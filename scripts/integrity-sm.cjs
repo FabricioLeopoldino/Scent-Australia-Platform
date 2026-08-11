@@ -48,7 +48,19 @@ const check = async (name, sql, pool = sm, expectZero = true) => {
   await check('muse_master_fragrances: master exists', `SELECT COUNT(*) n FROM muse_master_fragrances mmf WHERE NOT EXISTS (SELECT 1 FROM products p WHERE p.id = mmf.master_product_id)`);
   await check('muse_master_fragrances: fragrance exists', `SELECT COUNT(*) n FROM muse_master_fragrances mmf WHERE NOT EXISTS (SELECT 1 FROM products p WHERE p.id = mmf.fragrance_id)`);
   await check('every MUSE master link has its variant', `SELECT COUNT(*) n FROM muse_master_fragrances mmf JOIN products m ON m.id = mmf.master_product_id WHERE COALESCE(m.archived,false)=false AND NOT EXISTS (SELECT 1 FROM products v WHERE v.master_product_id = mmf.master_product_id AND v.fragrance_id = mmf.fragrance_id AND COALESCE(v.archived,false)=false)`);
-  await check('every active MUSE variant has its master link', `SELECT COUNT(*) n FROM products v JOIN products m ON m.id = v.master_product_id WHERE m.segment='MUSE' AND COALESCE(v.archived,false)=false AND NOT EXISTS (SELECT 1 FROM muse_master_fragrances mmf WHERE mmf.master_product_id = v.master_product_id AND mmf.fragrance_id = v.fragrance_id)`);
+  // `v.fragrance_id IS NOT NULL` scopes this to LEGACY variants (2026-08-11).
+  // muse_master_fragrances is the pre-Phase-B junction: it links a master to an
+  // `sm` fragrance record. A variant created on the oil model has no such
+  // record to point at — there is no legacy row for a fragrance that never
+  // existed before the migration — so demanding a legacy link would fail on the
+  // first new fragrance registered, for lacking something that cannot exist.
+  // Every one of the 366 variants alive today carries a fragrance_id (D14.9
+  // kept it as a rollback cushion), so this loosens nothing that is in use.
+  await check('every active LEGACY MUSE variant has its master link', `SELECT COUNT(*) n FROM products v JOIN products m ON m.id = v.master_product_id WHERE m.segment='MUSE' AND COALESCE(v.archived,false)=false AND v.fragrance_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM muse_master_fragrances mmf WHERE mmf.master_product_id = v.master_product_id AND mmf.fragrance_id = v.fragrance_id)`);
+  // Its replacement for the new model: an oil-model variant must reach a real
+  // Fragrance Library oil. This is the link that actually decides what gets
+  // debited, so it is the one worth enforcing from here on.
+  await check('every active MUSE variant resolves to a real oil', `SELECT COUNT(*) n FROM products v JOIN products m ON m.id = v.master_product_id WHERE m.segment='MUSE' AND COALESCE(v.archived,false)=false AND (v.oil_id IS NULL OR NOT EXISTS (SELECT 1 FROM sa.products o WHERE o.id = v.oil_id))`);
 
   // ── BOM ──
   await check('product_bom: product_type resolves to a product', `SELECT COUNT(*) n FROM product_bom b WHERE is_active AND NOT EXISTS (SELECT 1 FROM products p WHERE p.product_code = b.product_type)`);
