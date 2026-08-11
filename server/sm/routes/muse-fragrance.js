@@ -26,7 +26,17 @@ const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query, withTransaction } = require('../db')
 const { auth, requireRole, auditLog } = require('../auth')
-const { createMuseProductOnShopify } = require('../services/shopify-sync')
+const { createMuseProductOnShopify, findProductBySkus } = require('../services/shopify-sync')
+
+// Shopify's GraphQL returns GIDs ("gid://shopify/Product/9530…") and our columns
+// are BIGINT — writing the GID straight in throws 22P02. That is exactly what
+// happened on the first real publish (Gingerbread A, 2026-08-11): the product
+// was created on the store and the platform then failed to record it, so the
+// codes were live on Shopify while the platform believed nothing was published.
+const gidNumber = (gid) => {
+  const m = String(gid || '').match(/\/(\d+)(?:\?|$)/)
+  return m ? m[1] : null
+}
 
 // The three formats a MUSE fragrance is sold in. `variantTitle` is the value
 // under the store's "Choose Your Format" option — the same words the live
@@ -141,7 +151,16 @@ async function publishNumber(number, userId) {
   // Diffuser 200ml — " the variant name carries.
   const title = String(variants[0].name).split('—').slice(1).join('—').trim() || variants[0].name
 
-  const product = await createMuseProductOnShopify({ title, lines })
+  // If the codes are already on the store as ONE product, this is a publish that
+  // half-finished — adopt it instead of failing. Creating a second product would
+  // be the wrong recovery, and refusing outright leaves a dead end that needs a
+  // hand-written fix (which is what the first one needed).
+  const existing = await findProductBySkus(lines.map((l) => l.sku))
+  if (existing?.conflict) {
+    throw Object.assign(new Error(`These codes are already on the store, on more than one product: ${existing.conflict.join(' · ')}`), { status: 409 })
+  }
+  const product = existing?.product || await createMuseProductOnShopify({ title, lines })
+  const adopted = Boolean(existing?.product)
 
   const bySku = new Map((product.variants?.nodes || []).map((n) => [n.sku, n]))
   for (const l of lines) {
@@ -149,11 +168,11 @@ async function publishNumber(number, userId) {
     await query(
       `UPDATE products SET shopify_product_id = $1, shopify_variant_id = $2,
               shopify_inventory_item_id = $3, shopify_synced_at = NOW() WHERE id = $4`,
-      [product.id, sv?.id || null, sv?.inventoryItem?.id || null, l.id])
+      [gidNumber(product.id), gidNumber(sv?.id), gidNumber(sv?.inventoryItem?.id), l.id])
   }
   await auditLog(userId, 'muse_fragrance_published', 'product', lines[0].id, title,
-    { number, shopify_product_id: product.id, handle: product.handle, skus: lines.map((l) => l.sku) })
-  return { id: product.id, title: product.title, status: product.status, handle: product.handle }
+    { number, shopify_product_id: gidNumber(product.id), handle: product.handle, adopted, skus: lines.map((l) => l.sku) })
+  return { id: gidNumber(product.id), title: product.title, status: product.status, handle: product.handle, adopted }
 }
 
 // Step 2 of the screen: show exactly what will be created, write nothing.
@@ -293,3 +312,4 @@ router.delete('/muse-fragrance/:number', auth, requireRole('admin', 'root'), asy
 
 module.exports = router
 module.exports.FORMATS = FORMATS
+module.exports.gidNumber = gidNumber

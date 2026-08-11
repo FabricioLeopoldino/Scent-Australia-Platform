@@ -389,13 +389,36 @@ async function skusOnStore(skus) {
   const found = []
   for (const sku of skus) {
     const d = await shopifyGraphQL(
-      `query($q: String!) { productVariants(first: 5, query: $q) { nodes { sku product { title status } } } }`,
+      `query($q: String!) { productVariants(first: 5, query: $q) { nodes { sku product { id title status } } } }`,
       { q: `sku:${sku}` })
     for (const n of d.productVariants.nodes) {
-      if (n.sku === sku) found.push(`${sku} → "${n.product.title}" [${n.product.status}]`)
+      if (n.sku === sku) found.push({ sku, productId: n.product.id, title: n.product.title, status: n.product.status })
     }
   }
   return found
+}
+
+// The product this set of codes ALREADY belongs to, if it is exactly one.
+//
+// This exists because of a real half-finished publish (2026-08-11): the store
+// product was created and the platform then failed to record its ids, leaving
+// the codes live on Shopify while the platform believed nothing was published.
+// Retrying hit "already on the store" and stopped — a dead end that needed a
+// hand-written fix. Now that state heals itself.
+//
+// It demands ALL our codes on ONE product before adopting, so it can never
+// attach us to somebody else's product that happens to share a code.
+async function findProductBySkus(skus) {
+  const hits = await skusOnStore(skus)
+  if (!hits.length) return null
+  const ids = [...new Set(hits.map((h) => h.productId))]
+  if (ids.length > 1 || hits.length !== skus.length) {
+    return { conflict: hits.map((h) => `${h.sku} → "${h.title}" [${h.status}]`) }
+  }
+  const d = await shopifyGraphQL(
+    `query($id: ID!) { product(id: $id) { id title status handle
+       variants(first: 20) { nodes { id sku inventoryItem { id } } } } }`, { id: ids[0] })
+  return { product: d.product }
 }
 
 // lines: [{ format, sku, price }] in the order they should appear.
@@ -408,7 +431,7 @@ async function createMuseProductOnShopify({ title, lines }) {
   if (priceless.length) throw new Error(`No price on: ${priceless.map((l) => l.format).join(', ')}`)
 
   const clash = await skusOnStore(lines.map((l) => l.sku))
-  if (clash.length) throw new Error(`Already on the store: ${clash.join(' · ')}`)
+  if (clash.length) throw new Error(`Already on the store: ${clash.map((c) => `${c.sku} → "${c.title}" [${c.status}]`).join(' · ')}`)
 
   const input = {
     title,
@@ -441,4 +464,4 @@ async function createMuseProductOnShopify({ title, lines }) {
   return d.productSet.product
 }
 
-module.exports = { buildDraftOrderPayload, enqueueDraftOrder, enqueueInventoryAdjust, startSyncCron, registerWebhooks, createMuseProductOnShopify, skusOnStore }
+module.exports = { buildDraftOrderPayload, enqueueDraftOrder, enqueueInventoryAdjust, startSyncCron, registerWebhooks, createMuseProductOnShopify, skusOnStore, findProductBySkus }

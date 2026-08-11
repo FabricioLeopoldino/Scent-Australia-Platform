@@ -223,6 +223,31 @@ try {
     check(gone.status === 404, 'deleting it again is a clean 404', `${gone.status}`);
   }
 
+  // ── 7. GraphQL ids must be reduced to numbers before they are stored ─────
+  // The first real publish created the product on Shopify and then failed to
+  // record it: GraphQL returns "gid://shopify/Product/9530063945941" and the
+  // columns are BIGINT, so the UPDATE threw 22P02. The store had the product,
+  // the platform believed nothing was published, and the delete button was
+  // offered on a fragrance that was live.
+  console.log('\n7. Shopify GIDs are converted before storage');
+  {
+    const { gidNumber } = await import('../server/sm/routes/muse-fragrance.js')
+      .then((m) => m.default ?? m).catch(() => ({}));
+    const gn = gidNumber || require('../server/sm/routes/muse-fragrance.js').gidNumber;
+    check(gn('gid://shopify/Product/9530063945941') === '9530063945941', 'a product GID becomes its number');
+    check(gn('gid://shopify/ProductVariant/54475012833493') === '54475012833493', 'a variant GID too');
+    check(gn(null) === null && gn('') === null, 'nothing in, nothing out');
+
+    // The reason the conversion has to exist, asserted rather than remembered.
+    const bad = await db.query(
+      `SELECT data_type FROM information_schema.columns
+        WHERE table_schema='sm' AND table_name='products'
+          AND column_name IN ('shopify_product_id','shopify_variant_id','shopify_inventory_item_id')`);
+    check(bad.rows.length === 3 && bad.rows.every((r) => r.data_type === 'bigint'),
+      'the three shopify id columns are BIGINT — a raw GID cannot be stored',
+      JSON.stringify(bad.rows.map((r) => r.data_type)));
+  }
+
   console.log(failed === 0
     ? '\n✅ muse-fragrance-register: all checks passed'
     : `\n❌ muse-fragrance-register: ${failed} failed`);
