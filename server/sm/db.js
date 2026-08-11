@@ -237,34 +237,6 @@ async function runStartupMigrations() {
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_reservations_uniq_general ON stock_reservations(production_order_id, product_id) WHERE product_id IS NOT NULL AND client_stock_id IS NULL`)
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_reservations_uniq_client ON stock_reservations(production_order_id, client_stock_id) WHERE client_stock_id IS NOT NULL`)
 
-  // ── Two rules the code already assumed and nothing enforced ──────────────
-  // Both are wrapped: a duplicate present at deploy time must NOT stop the boot.
-  // An uncreated index is a risk; a platform that will not start is an outage.
-  // integrity-sm already reports duplicate SKUs, so the loud log plus that check
-  // is enough to notice.
-  //
-  // SKU: the Shopify order matcher does `WHERE sku = $1` and uses whatever row
-  // comes back, so two rows means an arbitrary one wins — wrong product made,
-  // wrong oil debited, nothing raised. It stopped being theoretical on
-  // 2026-08-11, when SKUs began being typed by hand for new fragrances.
-  // Partial on purpose: ACTIVE products only. An archived row may legitimately
-  // keep the SKU of whatever replaced it. Verified clean before adding: 0
-  // duplicates among active, 0 including archived.
-  // NOTE: this constrains the PLATFORM only. Shopify may hold the same SKU on
-  // several products — it does, 253 of them, mostly an old draft beside the new
-  // active product — and that is unaffected by this index.
-  await query(
-    `CREATE UNIQUE INDEX IF NOT EXISTS uq_products_sku_active ON products(sku)
-      WHERE sku IS NOT NULL AND sku <> '' AND COALESCE(archived, false) = false`
-  ).catch((e) => console.error(`⚠️  [sm-db] could not create uq_products_sku_active — duplicate SKUs exist. Run integrity-sm.cjs. ${e.message}`))
-
-  // One order, one job. manufacturing.js already checks jobExists before
-  // starting, and only one statement in the codebase inserts a job, so this
-  // cannot break a legitimate flow. Without it a double start debits the whole
-  // BOM twice. Verified: 0 orders hold more than one job.
-  await query(
-    `CREATE UNIQUE INDEX IF NOT EXISTS uq_production_jobs_order ON production_jobs(production_order_id)`
-  ).catch((e) => console.error(`⚠️  [sm-db] could not create uq_production_jobs_order — an order already has two jobs. ${e.message}`))
 
   await query(`ALTER TABLE product_bom_history ALTER COLUMN quantity_per_unit DROP NOT NULL`)
   // SA-style auth: email becomes optional, login by name
@@ -312,6 +284,36 @@ async function runStartupMigrations() {
   await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS container_type_id INTEGER REFERENCES container_types(id) ON DELETE SET NULL`)
   await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS volume_unit VARCHAR(10) DEFAULT 'ml'`)
   await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS archived BOOLEAN DEFAULT false`)
+
+  // ── Two rules the code already assumed and nothing enforced ──────────────
+  // Both are wrapped: a duplicate present at deploy time must NOT stop the boot.
+  // An uncreated index is a risk; a platform that will not start is an outage.
+  // integrity-sm already reports duplicate SKUs, so the loud log plus that check
+  // is enough to notice.
+  //
+  // SKU: the Shopify order matcher does `WHERE sku = $1` and uses whatever row
+  // comes back, so two rows means an arbitrary one wins — wrong product made,
+  // wrong oil debited, nothing raised. It stopped being theoretical on
+  // 2026-08-11, when SKUs began being typed by hand for new fragrances.
+  // Partial on purpose: ACTIVE products only. An archived row may legitimately
+  // keep the SKU of whatever replaced it. Verified clean before adding: 0
+  // duplicates among active, 0 including archived.
+  // NOTE: this constrains the PLATFORM only. Shopify may hold the same SKU on
+  // several products — it does, 253 of them, mostly an old draft beside the new
+  // active product — and that is unaffected by this index.
+  await query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_products_sku_active ON products(sku)
+      WHERE sku IS NOT NULL AND sku <> '' AND COALESCE(archived, false) = false`
+  ).catch((e) => console.error(`⚠️  [sm-db] could not create uq_products_sku_active — duplicate SKUs exist. Run integrity-sm.cjs. ${e.message}`))
+
+  // One order, one job. manufacturing.js already checks jobExists before
+  // starting, and only one statement in the codebase inserts a job, so this
+  // cannot break a legitimate flow. Without it a double start debits the whole
+  // BOM twice. Verified: 0 orders hold more than one job.
+  await query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_production_jobs_order ON production_jobs(production_order_id)`
+  ).catch((e) => console.error(`⚠️  [sm-db] could not create uq_production_jobs_order — an order already has two jobs. ${e.message}`))
+
 
   // MUSE: junction master ↔ available fragrances
   await query(`

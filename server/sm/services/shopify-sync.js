@@ -379,8 +379,15 @@ async function shopifyGraphQL(query, variables) {
     headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, variables }),
   })
-  const j = await r.json()
+  // Check the transport before the payload: a 401 or a 5xx returns HTML or an
+  // error envelope, and reading j.data off that surfaced to operators as
+  // "Cannot read properties of undefined" instead of what Shopify actually said.
+  const text = await r.text()
+  let j
+  try { j = JSON.parse(text) } catch { throw new Error(`Shopify ${r.status} ${r.statusText}: ${text.slice(0, 200)}`) }
+  if (!r.ok) throw new Error(`Shopify ${r.status} ${r.statusText}: ${JSON.stringify(j.errors || j).slice(0, 300)}`)
   if (j.errors) throw new Error(`Shopify: ${JSON.stringify(j.errors)}`)
+  if (!j.data) throw new Error(`Shopify returned no data: ${text.slice(0, 200)}`)
   return j.data
 }
 

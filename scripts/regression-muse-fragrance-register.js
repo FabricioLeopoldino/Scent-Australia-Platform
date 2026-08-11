@@ -18,8 +18,11 @@
 //     product that cannot be produced
 //   · registering a second time allocates the NEXT number, never the same one
 //
-// Boots its own server on a spare port. Uses two disposable Fragrance Library
-// oils — sa holds real production data and is never modified here.
+// Boots its own server on a spare port. It DOES insert into sa.products — two
+// disposable oils of its own, deleted in teardown — but never reads, updates or
+// deletes a real one. It also creates a temporary root account whose password is
+// written in this file; that is cleared at both ends, because a run that dies
+// mid-way would otherwise leave a usable root login in production.
 //
 // Run: node scripts/regression-muse-fragrance-register.js
 import 'dotenv/config';

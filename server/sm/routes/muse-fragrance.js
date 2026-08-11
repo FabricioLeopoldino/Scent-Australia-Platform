@@ -134,6 +134,15 @@ async function publishNumber(number, userId) {
         AND substring(p.sku from '[0-9]+$')::int = $1
         AND COALESCE(p.archived,false) = false`, [number])).rows
   if (!variants.length) throw Object.assign(new Error(`No variants found for number ${number}`), { status: 404 })
+  // One number is ONE fragrance in up to three formats. Two generators used to
+  // disagree (masters.js counted per prefix, this route globally), so a number
+  // could end up shared by two fragrances — and publishing it would have put
+  // both in one store product. Both now count globally; this refuses if the
+  // data ever says otherwise rather than acting on the ambiguity.
+  const oils = [...new Set(variants.map((v) => v.oil_id))]
+  if (oils.length > 1) {
+    throw Object.assign(new Error(`Number ${number} covers more than one fragrance (${oils.join(', ')}) — refusing to act on it`), { status: 409 })
+  }
   const already = variants.filter((v) => v.shopify_product_id)
   if (already.length) throw Object.assign(new Error(`Already published (${already[0].shopify_product_id})`), { status: 409 })
 
@@ -164,6 +173,14 @@ async function publishNumber(number, userId) {
   const adopted = Boolean(existing?.product)
 
   const bySku = new Map((product.variants?.nodes || []).map((n) => [n.sku, n]))
+  // Record all three or none. Writing the product id while a variant id came
+  // back missing looks like success and then blocks the retry that would fix
+  // it ("Already published"). Throwing leaves the store product in place, and
+  // the retry adopts it — which reads the variants fresh.
+  const unseen = lines.filter((l) => !bySku.get(l.sku))
+  if (unseen.length) {
+    throw Object.assign(new Error(`Shopify did not return ${unseen.map((l) => l.sku).join(', ')} — retry to adopt the product it created`), { status: 502 })
+  }
   for (const l of lines) {
     const sv = bySku.get(l.sku)
     await query(
@@ -229,7 +246,11 @@ router.post('/muse-fragrance', auth, requireRole('admin', 'root'), async (req, r
     for (let tries = 0; ; tries++) {
       try { out = await attempt(); break }
       catch (e) {
-        const collision = e.code === '23505' && String(e.constraint || '').includes('sku')
+        // Any unique violation here means the number was taken between reading
+        // MAX and inserting. It used to test for 'sku', but the concurrent row
+        // duplicates product_code too and products_product_code_key has the
+        // lower OID, so it fires first and the retry never ran.
+        const collision = e.code === '23505'
         if (!collision || tries >= 4) throw e
         await new Promise((r) => setTimeout(r, 120 * (tries + 1)))
       }
@@ -306,23 +327,30 @@ router.delete('/muse-fragrance/:number', auth, requireRole('admin', 'root'), asy
     // A product on Shopify while the platform still held its id, and a stale id
     // would have blocked the deletion forever. If the product is gone there, the
     // link is stale — clear it and carry on.
-    let stale = false
-    const claimed = rows.filter((r) => r.shopify_product_id)
-    if (claimed.length) {
+    // Probe EVERY distinct product id, and clear only the ones actually gone.
+    // Checking the first and clearing them all would let one dead product erase
+    // a sibling's LIVE link — variants can be published individually by the
+    // older per-variant route — and the delete would then orphan a selling
+    // product, which is the outcome this guard exists to prevent.
+    let stale = 0
+    const claimedIds = [...new Set(rows.filter((r) => r.shopify_product_id).map((r) => String(r.shopify_product_id)))]
+    for (const pid of claimedIds) {
+      let gone
       try {
         const d = await shopifyGraphQL(`query($id: ID!) { product(id: $id) { id } }`,
-          { id: `gid://shopify/Product/${claimed[0].shopify_product_id}` })
-        if (!d.product) {
-          await query(
-            `UPDATE products SET shopify_product_id = NULL, shopify_variant_id = NULL,
-                    shopify_inventory_item_id = NULL WHERE id = ANY($1::int[])`, [ids])
-          rows.forEach((r) => { r.shopify_product_id = null })
-          stale = true
-        }
+          { id: `gid://shopify/Product/${pid}` })
+        gone = !d.product
       } catch (e) {
-        // Cannot reach Shopify: refuse rather than assume it is gone.
+        // Cannot reach Shopify: refuse. Not knowing is not knowing it is gone.
         return res.status(502).json({ error: `Could not check Shopify before deleting: ${e.message}` })
       }
+      if (!gone) continue
+      const affected = rows.filter((r) => String(r.shopify_product_id) === pid).map((r) => r.id)
+      await query(
+        `UPDATE products SET shopify_product_id = NULL, shopify_variant_id = NULL,
+                shopify_inventory_item_id = NULL WHERE id = ANY($1::int[])`, [affected])
+      rows.forEach((r) => { if (String(r.shopify_product_id) === pid) r.shopify_product_id = null })
+      stale += affected.length
     }
 
     const [published, withStock, inLines, inBom, inTx] = [
@@ -341,11 +369,16 @@ router.delete('/muse-fragrance/:number', auth, requireRole('admin', 'root'), asy
     ].filter(Boolean)
     if (blocks.length) return res.status(409).json({ error: `Cannot delete number ${n}: ${blocks.join('; ')}` })
 
-    await query(`DELETE FROM audit_log WHERE entity_type='product' AND entity_id = ANY($1::int[])`, [ids])
-    const d = await query(`DELETE FROM products WHERE id = ANY($1::int[])`, [ids])
+    // One transaction: the audit delete used to autocommit before the products
+    // delete, so a failure on the second left the rows in place with their
+    // history already gone.
+    const d = await withTransaction(async (client) => {
+      await client.query(`DELETE FROM audit_log WHERE entity_type='product' AND entity_id = ANY($1::int[])`, [ids])
+      return await client.query(`DELETE FROM products WHERE id = ANY($1::int[])`, [ids])
+    })
     await auditLog(req.user.id, 'muse_fragrance_deleted', 'product', null, rows[0].name,
       { number: n, skus: rows.map((r) => r.sku) })
-    res.json({ ok: true, deleted: d.rowCount, skus: rows.map((r) => r.sku), staleShopifyLinkCleared: stale })
+    res.json({ ok: true, deleted: d.rowCount, skus: rows.map((r) => r.sku), staleShopifyLinksCleared: stale })
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 

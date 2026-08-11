@@ -18,10 +18,18 @@ function slugify(s) {
 async function nextMuseSku(tq, masterCode) {
   const alpha = String(masterCode || '').replace(/[^A-Za-z]/g, '').toUpperCase() || 'X'
   const prefix = `Muse_${alpha}`
-  const r = await tq(`SELECT sku FROM products WHERE sku LIKE $1`, [prefix + '%'])
-  const nums = r.rows
-    .map(row => parseInt(String(row.sku).slice(prefix.length), 10))
-    .filter(n => !isNaN(n))
+  // The number is GLOBAL across the three prefixes, not per prefix. It
+  // identifies the FRAGRANCE — Muse_TS00125, Muse_RS00125 and Muse_RD00125 are
+  // one product in three formats, and routes/muse-fragrance.js publishes and
+  // deletes by that number.
+  //
+  // This used to take MAX+1 within its own prefix while the registration screen
+  // took MAX+1 across all of them. Register one format only and the two
+  // generators diverge, so the same number ends up on two different fragrances
+  // — and then publishing or deleting it touches both. Found by review,
+  // 2026-08-11, before it happened.
+  const r = await tq(`SELECT substring(sku from '[0-9]+$')::int n FROM products WHERE sku LIKE 'Muse@_%' ESCAPE '@' AND sku ~ '[0-9]+$'`)
+  const nums = r.rows.map(row => Number(row.n)).filter(n => !isNaN(n))
   const next = (nums.length ? Math.max(...nums) : 0) + 1
   return prefix + String(next).padStart(5, '0')
 }

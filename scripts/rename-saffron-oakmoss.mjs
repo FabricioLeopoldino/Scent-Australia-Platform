@@ -44,7 +44,7 @@ const renamed = (name) => `${name.split('—')[0].trim()} — ${NEW_NAME}`;
 
 try {
   const rows = (await pool.query(
-    `SELECT id, sku, name, oil_id, current_stock, archived FROM products
+    `SELECT id, sku, name, oil_id, fragrance_id, current_stock, archived FROM products
       WHERE sku = ANY($1::text[]) ORDER BY sku`, [[...KEEP, ...RETIRE]])).rows;
 
   // ── Guards: refuse on anything unexpected rather than guess ──────────────
