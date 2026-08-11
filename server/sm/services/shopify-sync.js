@@ -442,6 +442,11 @@ async function createMuseProductOnShopify({ title, lines }) {
       optionValues: [{ optionName: FORMAT_OPTION, name: l.format }],
       price: String(Number(l.price).toFixed(2)),
       sku: l.sku,
+      // Barcode IS the code (owner, 2026-08-11). Keeping them identical means
+      // the scanner in the warehouse and the order line from the store resolve
+      // through the same string, so there is no second identifier to keep in
+      // step — the whole reason the code is minted in one place.
+      barcode: l.barcode || l.sku,
       // The live catalogue is untracked: tracked + deny + zero stock would make
       // the product unbuyable the moment marketing activates it.
       inventoryItem: { tracked: false },

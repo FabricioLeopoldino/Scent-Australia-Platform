@@ -144,8 +144,11 @@ try {
   check(createdIds.length === 3, 'three variants created', `${createdIds.length}`);
 
   const rows = (await db.query(
-    `SELECT sku, name, oil_id, fragrance_id, segment, current_stock, price, master_product_id, product_code
+    `SELECT sku, barcode, name, oil_id, fragrance_id, segment, current_stock, price, master_product_id, product_code
        FROM products WHERE id = ANY($1::int[]) ORDER BY sku`, [createdIds])).rows;
+  // One string identifies the variant to the scanner, to the store and to us.
+  check(rows.every((r) => r.barcode === r.sku), 'the barcode is the code',
+    JSON.stringify(rows.map((r) => `${r.sku}/${r.barcode}`)));
   check(rows.every((r) => r.oil_id === OIL_OK), 'every variant points at the chosen oil');
   check(rows.every((r) => r.fragrance_id === null),
     'NO legacy fragrance link — the double-charge cannot come back this way',

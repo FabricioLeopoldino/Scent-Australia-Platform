@@ -128,7 +128,7 @@ async function publishNumber(number, userId) {
   // publish reported "No variants found", and the retry button failed for the
   // same reason. Comparing the digits has no escaping to get wrong.
   const variants = (await query(
-    `SELECT p.id, p.sku, p.name, p.price, p.shopify_product_id, m.product_code AS master
+    `SELECT p.id, p.sku, p.barcode, p.name, p.price, p.shopify_product_id, m.product_code AS master
        FROM products p JOIN products m ON m.id = p.master_product_id
       WHERE p.sku LIKE 'Muse@_%' ESCAPE '@'
         AND substring(p.sku from '[0-9]+$')::int = $1
@@ -144,6 +144,7 @@ async function publishNumber(number, userId) {
     .map((v) => ({
       format: FORMATS.find((f) => f.master === v.master).variantTitle,
       sku: v.sku,
+      barcode: v.barcode || v.sku,
       price: v.price == null ? null : Number(v.price),
       id: v.id,
     }))
@@ -206,10 +207,13 @@ router.post('/muse-fragrance', auth, requireRole('admin', 'root'), async (req, r
           // point at. Setting it would also revive the double-charge fixed the
           // same day: with both ids present the BOM builder used to bill the
           // fragrance twice.
+          // barcode = sku, set explicitly rather than left to the display-time
+          // fallback the stock screen uses. One string identifies the variant to
+          // the scanner, to the store and to us (owner, 2026-08-11).
           `INSERT INTO products
-             (name, product_code, sku, category, unit, current_stock, segment,
+             (name, product_code, sku, barcode, category, unit, current_stock, segment,
               master_product_id, oil_id, fragrance_id, volume_ml, default_oil_pct, price)
-           VALUES ($1,$2,$3,'FINISHED_GOOD','units',0,'MUSE',$4,$5,NULL,$6,$7,$8) RETURNING id, sku, name`,
+           VALUES ($1,$2,$3,$3,'FINISHED_GOOD','units',0,'MUSE',$4,$5,NULL,$6,$7,$8) RETURNING id, sku, name, barcode`,
           [`${(await tq(`SELECT name FROM products WHERE id = $1`, [l.master_id])).rows[0].name} — ${name}`,
            l.product_code, l.sku, l.master_id, oil_id, l.volume_ml, l.oil_pct, price]
         )).rows[0]
