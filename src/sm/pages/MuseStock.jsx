@@ -77,6 +77,8 @@ export default function MuseStock() {
   const [shopifyModal, setShopifyModal] = useState(null) // variant
   const [publishing, setPublishing] = useState(false)
   const [newFragranceModal, setNewFragranceModal] = useState(false)
+  const [deleteFragrance, setDeleteFragrance] = useState(null)   // a variant; deletes its whole number
+  const [deleting, setDeleting] = useState(false)
   const imageFileRef = useRef(null)
   const { addToast } = useToast()
 
@@ -616,6 +618,14 @@ export default function MuseStock() {
                         <IconButton onClick={() => { openEditVariant(v) }} title="Edit variant — name, min stock, linked oil"><Edit2 size={13} /></IconButton>
                         <IconButton onClick={() => setShopifyModal(v)} title="Publish to Shopify"><ExternalLink size={13} /></IconButton>
                         <IconButton onClick={() => setImageUploadVariant(v)} title={v.image_data ? 'Change image' : 'Upload image'}><ImageIcon size={13} /></IconButton>
+                        {/* Registering is now one click, so undoing it has to be
+                            possible too. Only offered while the fragrance is not
+                            real anywhere: unpublished and at zero. The server
+                            re-checks that plus orders, recipes and movements. */}
+                        {!v.shopify_product_id && Number(v.current_stock) === 0 && /^Muse_(TS|RS|RD)[0-9]+$/.test(v.sku || '') && (
+                          <IconButton variant="danger" onClick={() => setDeleteFragrance(v)}
+                            title="Delete this fragrance registration (all three formats)"><Trash2 size={13} /></IconButton>
+                        )}
                         <button onClick={() => setAttachModal(v)} title={`Attachments${v.attachment_count > 0 ? ` (${v.attachment_count})` : ''}`}
                           style={{ position: 'relative', background: v.attachment_count > 0 ? 'rgba(96,165,250,0.18)' : 'rgba(96,165,250,0.1)', border: `1px solid ${v.attachment_count > 0 ? 'rgba(96,165,250,0.45)' : 'rgba(96,165,250,0.2)'}`, borderRadius: 6, padding: '5px 8px', cursor: 'pointer', color: '#60a5fa', display: 'flex', alignItems: 'center' }}>
                           <Paperclip size={12} />
@@ -700,6 +710,56 @@ export default function MuseStock() {
           </div>
         </div>
       )}
+
+      {/* Delete a whole fragrance registration — all three formats share the number */}
+      {deleteFragrance && (() => {
+        const num = parseInt((deleteFragrance.sku.match(/[0-9]+$/) || ['0'])[0], 10)
+        const family = variants.filter(x => parseInt((x.sku?.match(/[0-9]+$/) || ['0'])[0], 10) === num)
+        return (
+          <div className="modal-overlay" onClick={() => setDeleteFragrance(null)}>
+            <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <div>
+                  <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Trash2 size={16} color="#f87171" /> Delete registration
+                  </h2>
+                  <p>Number {num}</p>
+                </div>
+                <button className="modal-close" onClick={() => setDeleteFragrance(null)}><X size={14} /></button>
+              </div>
+              <div className="modal-body">
+                <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 12 }}>
+                  This removes <strong>all {family.length} format{family.length === 1 ? '' : 's'}</strong> registered
+                  under this number. The oil in the Fragrance Library is not touched.
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {family.map(f => (
+                    <div key={f.sku} style={{ display: 'flex', gap: 10, padding: '8px 12px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 7 }}>
+                      <span style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 700, color: '#fbbf24' }}>{f.sku}</span>
+                      <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{f.name}</span>
+                    </div>
+                  ))}
+                </div>
+                <p style={{ fontSize: 11, color: 'rgba(232,234,242,0.4)', marginTop: 12, lineHeight: 1.5 }}>
+                  Refused if any of them is on Shopify, holds stock, or is used by an order, a recipe or a stock movement.
+                </p>
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-secondary" onClick={() => setDeleteFragrance(null)}>Cancel</button>
+                <button className="btn btn-danger" disabled={deleting} onClick={async () => {
+                  setDeleting(true)
+                  try {
+                    const r = await axios.delete(`/api/muse-fragrance/${num}`, api())
+                    addToast(`Deleted ${r.data.skus.join(', ')}`)
+                    setDeleteFragrance(null); load()
+                  } catch (e) { addToast(e.response?.data?.error || 'Could not delete', 'error') }
+                  finally { setDeleting(false) }
+                }}>{deleting ? 'Deleting…' : 'Delete'}</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {newFragranceModal && (
         <NewMuseFragranceModal

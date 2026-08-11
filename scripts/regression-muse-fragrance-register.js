@@ -179,6 +179,50 @@ try {
   check((cr2.json?.warnings || []).some((w) => /already has/.test(w)),
     'and it warns that the oil already has variants', JSON.stringify(cr2.json?.warnings));
 
+  // ── 5. The publish lookup must actually find the variants ────────────────
+  // The first version searched with LIKE 'Muse\__00127'. In SQL `_` matches ONE
+  // character and the prefix is two (TS/RS/RD), so it matched nothing: every
+  // publish answered "No variants found for number N", and the retry button
+  // failed the same way. Publishing is disabled locally, so the proof is that
+  // the error is now about Shopify rather than about missing rows.
+  console.log('\n5. Publish finds the registration (the LIKE bug)');
+  {
+    const r = await api('POST', `/api/sm/muse-fragrance/${cr.json.number}/publish`, {});
+    check(!/No variants found/i.test(r.json?.error || ''),
+      'the lookup finds them — it no longer reports "No variants found"', r.json?.error);
+    check(/disabled|not configured|Shopify/i.test(r.json?.error || ''),
+      'it fails on Shopify instead, which is expected with publishing off here', r.json?.error);
+  }
+
+  // ── 6. A registration can be undone ──────────────────────────────────────
+  console.log('\n6. Delete — and only while it is safe to');
+  {
+    const num = cr2.json.number;
+    const one = (cr2.json.created || [])[0];
+    await db.query(`UPDATE products SET current_stock = 5 WHERE id = $1`, [one.id]);
+    const blocked = await api('DELETE', `/api/sm/muse-fragrance/${num}`);
+    check(blocked.status === 409, 'refused while a variant holds stock', `${blocked.status} ${blocked.json?.error}`);
+    check(/holds stock/i.test(blocked.json?.error || ''), 'and says which', blocked.json?.error);
+    await db.query(`UPDATE products SET current_stock = 0 WHERE id = $1`, [one.id]);
+
+    const del = await api('DELETE', `/api/sm/muse-fragrance/${num}`);
+    check(del.status === 200, 'deleted once nothing depends on it', `${del.status} ${JSON.stringify(del.json)}`);
+    const left = Number((await db.query(
+      `SELECT COUNT(*) n FROM products WHERE substring(sku from '[0-9]+$')::int = $1 AND sku LIKE 'Muse@_%' ESCAPE '@'`,
+      [num])).rows[0].n);
+    check(left === 0, 'all three variants are gone', `${left} left`);
+    createdIds = createdIds.filter((id) => !(cr2.json.created || []).some((c) => c.id === id));
+
+    // Deleting the highest number frees it, so a mistyped registration does not
+    // burn a code forever.
+    const nextNow = Number((await db.query(
+      `SELECT COALESCE(MAX(substring(sku from '[0-9]+')::int),0)+1 n FROM products WHERE sku LIKE 'Muse@_%' ESCAPE '@'`)).rows[0].n);
+    check(nextNow === num, 'the number is released for reuse', `next is ${nextNow}, deleted ${num}`);
+
+    const gone = await api('DELETE', `/api/sm/muse-fragrance/${num}`);
+    check(gone.status === 404, 'deleting it again is a clean 404', `${gone.status}`);
+  }
+
   console.log(failed === 0
     ? '\n✅ muse-fragrance-register: all checks passed'
     : `\n❌ muse-fragrance-register: ${failed} failed`);

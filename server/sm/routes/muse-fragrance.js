@@ -112,10 +112,17 @@ async function planFragrance(oilId, wanted) {
 // gets told what happened and can retry; nothing is created twice, because the
 // store is checked for the codes first.
 async function publishNumber(number, userId) {
+  // Match on the NUMBER, not a LIKE pattern. The first version used
+  // `LIKE 'Muse\__00127'`, and `_` is a single-character wildcard in SQL while
+  // the prefix is two characters (TS/RS/RD) — so it matched nothing, every
+  // publish reported "No variants found", and the retry button failed for the
+  // same reason. Comparing the digits has no escaping to get wrong.
   const variants = (await query(
     `SELECT p.id, p.sku, p.name, p.price, p.shopify_product_id, m.product_code AS master
        FROM products p JOIN products m ON m.id = p.master_product_id
-      WHERE p.sku LIKE $1 AND COALESCE(p.archived,false) = false`, [`Muse\\__${pad(number)}`])).rows
+      WHERE p.sku LIKE 'Muse@_%' ESCAPE '@'
+        AND substring(p.sku from '[0-9]+$')::int = $1
+        AND COALESCE(p.archived,false) = false`, [number])).rows
   if (!variants.length) throw Object.assign(new Error(`No variants found for number ${number}`), { status: 404 })
   const already = variants.filter((v) => v.shopify_product_id)
   if (already.length) throw Object.assign(new Error(`Already published (${already[0].shopify_product_id})`), { status: 409 })
@@ -235,6 +242,53 @@ router.post('/muse-fragrance/:number/publish', auth, requireRole('admin', 'root'
     if (!n) return res.status(400).json({ error: 'number required' })
     res.json({ ok: true, product: await publishNumber(n, req.user.id) })
   } catch (e) { res.status(e.status || 502).json({ error: e.status ? e.message : String(e.message) }) }
+})
+
+// Undo a registration. Needed because registering is now easy, and the first
+// thing anyone does with an easy button is try it — the owner had three test
+// fragrances and no way to remove them (2026-08-11).
+//
+// Deletes rather than archives: an archived row keeps the number spent and
+// clutters every picker, and a registration nobody published and nobody used is
+// not history worth keeping. It refuses the moment the fragrance is real
+// anywhere — on the store, in stock, in an order, in a recipe or in the ledger.
+// Deleting the highest number also frees it, so a mistyped registration does
+// not burn a code forever.
+router.delete('/muse-fragrance/:number', auth, requireRole('admin', 'root'), async (req, res) => {
+  try {
+    const n = parseInt(req.params.number, 10)
+    if (!n) return res.status(400).json({ error: 'number required' })
+
+    const rows = (await query(
+      `SELECT p.id, p.sku, p.name, p.current_stock, p.shopify_product_id, p.product_code
+         FROM products p
+        WHERE p.sku LIKE 'Muse@_%' ESCAPE '@' AND substring(p.sku from '[0-9]+$')::int = $1`, [n])).rows
+    if (!rows.length) return res.status(404).json({ error: `Nothing registered under number ${n}` })
+
+    const ids = rows.map((r) => r.id)
+    const codes = rows.map((r) => r.product_code)
+    const [published, withStock, inLines, inBom, inTx] = [
+      rows.filter((r) => r.shopify_product_id),
+      rows.filter((r) => Number(r.current_stock) !== 0),
+      (await query(`SELECT COUNT(*) n FROM production_order_lines WHERE product_type = ANY($1::text[])`, [codes])).rows[0].n,
+      (await query(`SELECT COUNT(*) n FROM product_bom WHERE component_product_id = ANY($1::int[]) OR product_type = ANY($2::text[])`, [ids, codes])).rows[0].n,
+      (await query(`SELECT COUNT(*) n FROM transactions WHERE product_id = ANY($1::int[])`, [ids])).rows[0].n,
+    ]
+    const blocks = [
+      published.length && `it is on Shopify (${published[0].shopify_product_id}) — delete the product there first`,
+      withStock.length && `it holds stock (${withStock.map((r) => `${r.sku}=${r.current_stock}`).join(', ')})`,
+      Number(inLines) && `${inLines} production order line(s) use it`,
+      Number(inBom) && `${inBom} recipe row(s) reference it`,
+      Number(inTx) && `${inTx} stock movement(s) reference it`,
+    ].filter(Boolean)
+    if (blocks.length) return res.status(409).json({ error: `Cannot delete number ${n}: ${blocks.join('; ')}` })
+
+    await query(`DELETE FROM audit_log WHERE entity_type='product' AND entity_id = ANY($1::int[])`, [ids])
+    const d = await query(`DELETE FROM products WHERE id = ANY($1::int[])`, [ids])
+    await auditLog(req.user.id, 'muse_fragrance_deleted', 'product', null, rows[0].name,
+      { number: n, skus: rows.map((r) => r.sku) })
+    res.json({ ok: true, deleted: d.rowCount, skus: rows.map((r) => r.sku) })
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
 module.exports = router
