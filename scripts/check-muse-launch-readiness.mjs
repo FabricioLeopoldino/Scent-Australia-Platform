@@ -107,11 +107,57 @@ try {
   line(`   positive : ${pos.length}   ← ships from the shelf, no production`);
   for (const r of neg) line(`   NEGATIVE  ${r.sku.padEnd(24)} ${r.current_stock}  ${r.name}`);
 
+  // ── 5. the SKU must agree with the format it is sold as ───────────────────
+  // Added 2026-08-11 after this found TEN wrong SKUs on live, sellable products
+  // in one pass. Checks 2 and 3 could not see them: the SKU is real, the
+  // platform knows it, and it has an oil — it is simply the WRONG FORMAT.
+  // "Green Tea / Room Spray" carried Muse_RD00054, so a $39 room spray order
+  // made a 200 ml reed diffuser: twice the oil, the wrong vessel, and reeds the
+  // room spray never has. EO Blend had its room spray AND its reed diffuser
+  // both pointing at the 10 ml travel spray.
+  //
+  // This is the only check here that needs no other system to agree with it —
+  // Muse_RD##### on a variant sold as "Room Spray" is wrong on its face. That
+  // makes it the one to trust when a name-based comparison would be arguable
+  // (one oil legitimately sells under several commercial names).
+  head('5. SKU PREFIX vs THE FORMAT IT IS SOLD AS  (produces the wrong product)');
+  const EXPECT = { 'Travel Spray': 'TS', 'Room Spray': 'RS', 'Reed Diffuser': 'RD' };
+  const mismatched = active.filter((v) => {
+    const want = EXPECT[v.variant];
+    if (!want || !v.sku) return false;
+    const got = (v.sku.match(/Muse_(TS|RS|RD)/) || [])[1];
+    return got && got !== want;
+  });
+  line(`   ${mismatched.length} found`);
+  for (const v of mismatched) {
+    line(`   · ${v.product} / ${v.variant.padEnd(14)} ${v.sku}  → should be Muse_${EXPECT[v.variant]}#####`);
+  }
+  const unnamed = active.filter((v) => v.sku && !EXPECT[v.variant]);
+  if (unnamed.length) {
+    line(`   (${unnamed.length} sellable variant(s) whose name is not one of the three formats — not checkable by prefix)`);
+    for (const v of unnamed.slice(0, 10)) line(`     ${v.product} / ${v.variant}  ${v.sku}`);
+  }
+
+  // ── 6. one SKU, one sellable variant ──────────────────────────────────────
+  // The order matcher does `WHERE sku = $1` and takes what comes back. Two
+  // sellable variants on one SKU means the store can sell something the
+  // platform will resolve to the other one.
+  head('6. THE SAME SKU ON TWO SELLABLE VARIANTS  (the matcher picks one)');
+  const seen = new Map();
+  for (const v of active.filter((x) => x.sku)) seen.set(v.sku, [...(seen.get(v.sku) || []), v]);
+  const shared = [...seen.entries()].filter(([, vs]) => vs.length > 1);
+  line(`   ${shared.length} found`);
+  for (const [sku, vs] of shared.slice(0, 25)) {
+    line(`   · ${sku}`);
+    for (const v of vs) line(`       ${v.product} / ${v.variant}`);
+  }
+
   head('VERDICT');
-  const blocking = noSku.length + orphan.length + noOil.length + neg.length;
+  const blocking = noSku.length + orphan.length + noOil.length + neg.length
+    + mismatched.length + shared.length;
   line(blocking === 0
-    ? '   ✅ nothing blocking — every sellable variant maps to a product with an oil'
-    : `   ⚠️  ${blocking} item(s) need a decision before Monday`);
+    ? '   ✅ nothing blocking — every sellable variant maps to one product, of the right format, with an oil'
+    : `   ⚠️  ${blocking} item(s) need a decision`);
 } catch (e) {
   console.error(`\n❌ ${e.message}`);
   process.exitCode = 1;
