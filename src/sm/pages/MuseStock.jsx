@@ -13,6 +13,7 @@ import ProductFormModal, { EMPTY_PRODUCT_FORM, ALL_PROD_CATEGORIES, PRODUCT_SEGM
 import StockTable from '../components/StockTable.jsx'
 import MuseHeader from '../components/MuseHeader.jsx'
 import GlowingEffect from '../components/GlowingEffect.jsx'
+import NewMuseFragranceModal from '../components/NewMuseFragranceModal.jsx'
 
 // FRAGRANCE removed (Phase B, 2026-07-29): oil lives in the SA Fragrance Library
 // (the "Fragrances" nav item), not as an editable FRAG_* record here. This page
@@ -75,6 +76,7 @@ export default function MuseStock() {
   const [editVariantSaving, setEditVariantSaving] = useState(false)
   const [shopifyModal, setShopifyModal] = useState(null) // variant
   const [publishing, setPublishing] = useState(false)
+  const [newFragranceModal, setNewFragranceModal] = useState(false)
   const imageFileRef = useRef(null)
   const { addToast } = useToast()
 
@@ -386,7 +388,14 @@ export default function MuseStock() {
             <p style={{ fontSize: 13, color: 'rgba(232,234,242,0.4)', marginTop: 2 }}>Finished goods, components and materials for MUSE</p>
           </div>
         </div>
-        {tab !== 'finished' && (
+        {tab === 'finished' ? (
+          // The store codes are minted here, not typed into Shopify — see
+          // NewMuseFragranceModal. This tab is where MUSE variants live, which
+          // is why "New Product" is hidden on it and this takes its place.
+          <Button onClick={() => setNewFragranceModal(true)}>
+            <Plus size={15} /> New Fragrance
+          </Button>
+        ) : (
           <Button onClick={openCreateProduct}>
             <Plus size={15} /> New Product
           </Button>
@@ -690,6 +699,14 @@ export default function MuseStock() {
             </div>
           </div>
         </div>
+      )}
+
+      {newFragranceModal && (
+        <NewMuseFragranceModal
+          addToast={addToast}
+          onCreated={() => { load(); loadComponents() }}
+          onClose={() => setNewFragranceModal(false)}
+        />
       )}
 
       {/* Shopify Publish Modal */}
