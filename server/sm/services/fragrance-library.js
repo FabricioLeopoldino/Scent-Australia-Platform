@@ -48,6 +48,39 @@ const SEGMENT_MAP = {
   MAJOR:    { exclusivityBucket: 'SM',   debitType: 'sm_major_production', reversalType: 'sm_major_reversal' },
 }
 
+// ONE definition of who may use an oil. Everything that asks the question --
+// the consumption lock, the oil picker and the MUSE registration screen --
+// calls this, so the three cannot drift apart the way the webhook topic lists
+// and the format lists did.
+//
+// The values mirror how the business is actually split (staff deck, Aug 2026):
+// Scent Australia is the B2B commercial side; the Muse PLATFORM is the consumer
+// side, and the Atelier is one of its units. So "MUSE" is not "MUSE retail
+// only" -- it means the Muse platform, which includes the Atelier (segments
+// STANDARD and MAJOR, bucket SM). Reading it as retail-only is exactly the
+// mistake the label invited, and it silently locked the Atelier out of the
+// seven Archive oils on 2026-08-12.
+//
+//   null / ''  shared -- anyone
+//   'MUSE'     the Muse platform: MUSE retail + the Atelier. Never SA.
+//   'SA'       Scent Australia only. This is what protects a B2B client's
+//              Signature Fragrance from being sold through Muse -- the deck's
+//              firmest boundary, which until now had no way to be expressed.
+//   'SM'       legacy, Atelier only. Kept working; no oil uses it.
+const EXCLUSIVITY_ALLOWS = {
+  MUSE: ['MUSE', 'SM'],
+  SM: ['SM'],
+  SA: [],            // nothing on the Muse side may consume it
+}
+function canUseOil(exclusivity, bucket) {
+  const e = (exclusivity || '').trim()
+  if (!e || e === 'SHARED') return true
+  const allowed = EXCLUSIVITY_ALLOWS[e]
+  // An unknown value is treated as a restriction, not as permission. A typo in
+  // that column must never widen access.
+  return allowed ? allowed.includes(bucket) : false
+}
+
 function resolveSegment(segment) {
   const s = SEGMENT_MAP[segment]
   if (!s) throw new Error(`Unknown segment "${segment}" for Fragrance Library consumption (expected MUSE, STANDARD or MAJOR)`)
@@ -64,8 +97,8 @@ async function lockOil(tq, oilId, exclusivityBucket) {
   )
   const oil = r.rows[0]
   if (!oil) throw new Error(`Fragrance oil not found in the Fragrance Library: ${oilId}`)
-  if (oil.exclusivity && oil.exclusivity !== exclusivityBucket) {
-    throw new Error(`Fragrance oil "${oil.name}" is exclusive to ${oil.exclusivity} and cannot be used by ${exclusivityBucket} production`)
+  if (!canUseOil(oil.exclusivity, exclusivityBucket)) {
+    throw new Error(`Fragrance oil "${oil.name}" is restricted to ${oil.exclusivity} and cannot be used by ${exclusivityBucket} production`)
   }
   return oil
 }
@@ -149,4 +182,4 @@ async function restoreFragranceOil(tq, oilId, qtyMl, segment, notes) {
   return { oilId: oil.id, name: oil.name, code: oil.productCode, qtyMl: qty, newStock }
 }
 
-module.exports = { consumeFragranceOil, restoreFragranceOil, SEGMENT_MAP }
+module.exports = { consumeFragranceOil, restoreFragranceOil, SEGMENT_MAP, canUseOil, EXCLUSIVITY_ALLOWS }

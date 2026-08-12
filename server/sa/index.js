@@ -631,8 +631,11 @@ router.post('/products', async (req, res) => {
     // "no restriction" (NULL); MUSE/SM are the D14 exclusivity buckets.
     let finalExclusivity = null;
     if (exclusivity !== undefined && exclusivity !== null && exclusivity !== 'SHARED') {
-      if (!['MUSE', 'SM'].includes(exclusivity)) {
-        return res.status(400).json({ error: `Invalid exclusivity: ${exclusivity}. Allowed: SHARED, MUSE, SM` });
+      // 'SA' added 2026-08-12: it is what protects a B2B client's Signature
+      // Fragrance from being sold through Muse. Until now that boundary — the
+      // firmest one in the staff deck — could not be expressed at all.
+      if (!['MUSE', 'SM', 'SA'].includes(exclusivity)) {
+        return res.status(400).json({ error: `Invalid exclusivity: ${exclusivity}. Allowed: SHARED, MUSE, SM, SA` });
       }
       finalExclusivity = exclusivity;
     }

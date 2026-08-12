@@ -27,6 +27,7 @@ const router = express.Router()
 const { query, withTransaction } = require('../db')
 const { auth, requireRole, auditLog } = require('../auth')
 const { createMuseProductOnShopify, findProductBySkus, shopifyGraphQL } = require('../services/shopify-sync')
+const { canUseOil } = require('../services/fragrance-library')
 
 // Shopify's GraphQL returns GIDs ("gid://shopify/Product/9530…") and our columns
 // are BIGINT — writing the GID straight in throws 22P02. That is exactly what
@@ -73,8 +74,8 @@ async function planFragrance(oilId, wanted) {
   if (oil.status !== 'active') throw Object.assign(new Error(`Oil "${oil.name}" is not active`), { status: 400 })
   // Mirrors lockOil: an oil reserved for SA or SM would be accepted here and
   // then refused at production, leaving a sellable product that cannot be made.
-  if (oil.exclusivity && oil.exclusivity !== 'MUSE') {
-    throw Object.assign(new Error(`Oil "${oil.name}" is exclusive to ${oil.exclusivity} and cannot be sold as MUSE`), { status: 400 })
+  if (!canUseOil(oil.exclusivity, 'MUSE')) {
+    throw Object.assign(new Error(`Oil "${oil.name}" is restricted to ${oil.exclusivity} and cannot be sold as MUSE`), { status: 400 })
   }
 
   const masters = (await query(

@@ -1231,11 +1231,14 @@ export default function ProductManagement({ user, libraryMode = false }) {
                       onChange={(e) => setFormData({...formData, exclusivity: e.target.value})}
                     >
                       <option value="SHARED">Shared by all</option>
-                      <option value="MUSE">MUSE only</option>
-                      <option value="SM">SM only</option>
+                      <option value="MUSE">Muse platform — MUSE + Atelier</option>
+                      <option value="SA">Scent Australia only</option>
                     </select>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                      Controls which businesses can use this oil in production (Fragrance Library). Doesn't affect Shopify.
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
+                      Who may consume this oil in production. <strong>Muse platform</strong> covers MUSE retail
+                      <em> and </em> the Atelier — they are two units of the same business.
+                      <strong> Scent Australia only</strong> is what keeps a client's Signature Fragrance out of Muse.
+                      Doesn't affect Shopify.
                     </div>
                   </div>
                 )}

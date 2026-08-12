@@ -135,7 +135,10 @@ try {
   console.log('\n2. Exclusivity — refused at registration, not at production');
   const ex = await api('GET', `/api/sm/muse-fragrance/preview?oil_id=${OIL_EXCL}`);
   check(ex.status === 400, 'an SA-exclusive oil is refused', `${ex.status} ${JSON.stringify(ex.json)}`);
-  check(/exclusive/i.test(ex.json?.error || ''), 'and the reason says so', ex.json?.error);
+  // Match the meaning, not one word: the wording moved from "exclusive to" to
+  // "restricted to" when the rule stopped being a single-owner comparison.
+  check(/restricted|exclusive/i.test(ex.json?.error || '') && /SA/.test(ex.json?.error || ''),
+    'and the reason names the restriction', ex.json?.error);
   const nf = await api('GET', `/api/sm/muse-fragrance/preview?oil_id=ZZ_NO_SUCH_OIL`);
   check(nf.status === 404, 'an unknown oil is 404', `${nf.status}`);
 
@@ -308,15 +311,23 @@ try {
     await db.query(`DELETE FROM products WHERE id = ANY($1::int[])`, [createdIds]).catch(() => {});
   }
   await db.query(`DELETE FROM sa.products WHERE id = ANY($1::text[])`, [[OIL_OK, OIL_EXCL]]).catch(() => {});
+  // The delete endpoint audits with entity_id NULL — the product is gone by
+  // then — so the id-keyed sweep above cannot reach those rows. Eleven of them
+  // accumulated in production before this was noticed. Keyed on the test title,
+  // which only this suite writes.
+  await db.query(
+    `DELETE FROM audit_log WHERE action = 'muse_fragrance_deleted' AND entity_name LIKE '%ZZ %'`
+  ).catch(() => {});
   await dropTestUser().catch(() => {});
   // Say it out loud: a silent teardown is how 33 audit rows and a root account
   // were left in production on earlier runs.
   const left = (await db.query(
     `SELECT (SELECT COUNT(*) FROM products WHERE product_code LIKE 'ZZ%' OR name LIKE 'ZZ %') p,
             (SELECT COUNT(*) FROM sa.products WHERE id LIKE 'ZZ%') o,
-            (SELECT COUNT(*) FROM platform.users WHERE name = '__regression_mf') u`)).rows[0];
-  console.log(`teardown: products=${left.p} oils=${left.o} testUser=${left.u}` +
-    (Number(left.p) + Number(left.o) + Number(left.u) === 0 ? '  ✅ clean' : '  ⚠️  RESIDUE LEFT'));
+            (SELECT COUNT(*) FROM platform.users WHERE name = '__regression_mf') u,
+            (SELECT COUNT(*) FROM audit_log WHERE entity_name LIKE '%ZZ %') a`)).rows[0];
+  console.log(`teardown: products=${left.p} oils=${left.o} testUser=${left.u} auditRows=${left.a}` +
+    (Number(left.p) + Number(left.o) + Number(left.u) + Number(left.a) === 0 ? '  ✅ clean' : '  ⚠️  RESIDUE LEFT'));
   await db.end();
 }
 process.exitCode = failed === 0 ? 0 : 1;
