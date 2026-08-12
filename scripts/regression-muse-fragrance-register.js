@@ -191,6 +191,23 @@ try {
   // publish answered "No variants found for number N", and the retry button
   // failed the same way. Publishing is disabled locally, so the proof is that
   // the error is now about Shopify rather than about missing rows.
+  // The refill exists as a format but is NOT created by default: no vessel, no
+  // recipe and no price yet, and publishing refuses a priceless line. Including
+  // it by default would have broken registration for every new fragrance --
+  // caught here, which is why the assertion above still says three. It must
+  // still be reachable on request, or the format is dead weight.
+  console.log('\n3b. The refill is available on request, not by default');
+  {
+    const only = await api('GET', `/api/sm/muse-fragrance/preview?oil_id=${OIL_OK}&formats=RF50`);
+    const s2 = (only.json?.lines || []).map((l) => l.sku);
+    check(only.status === 200 && s2.length === 1 && /^Muse_RF/.test(s2[0]),
+      'asking for the refill alone returns exactly the refill', `${only.status} ${JSON.stringify(s2)}`);
+    const dflt = await api('GET', `/api/sm/muse-fragrance/preview?oil_id=${OIL_OK}`);
+    check(!(dflt.json?.lines || []).some((l) => /^Muse_RF/.test(l.sku)),
+      'and it stays out of the default set',
+      JSON.stringify((dflt.json?.lines || []).map((l) => l.sku)));
+  }
+
   console.log('\n5. Publish finds the registration (the LIKE bug)');
   {
     const r = await api('POST', `/api/sm/muse-fragrance/${cr.json.number}/publish`, {});

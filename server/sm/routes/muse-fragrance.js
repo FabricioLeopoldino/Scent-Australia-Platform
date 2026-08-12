@@ -42,10 +42,23 @@ const gidNumber = (gid) => {
 // under the store's "Choose Your Format" option — the same words the live
 // catalogue uses, because the readiness check compares the code prefix against
 // exactly these.
+// KEEP IN STEP with EXPECT in scripts/check-muse-launch-readiness.mjs — a format
+// missing there is a format the catalogue check cannot validate, which is how a
+// wrong code would slip past the very check that exists to catch it.
+// regression-sync-cron-window compares the two and fails if they disagree.
+//
+// `standard: false` means the format EXISTS — its prefix is reserved, the
+// catalogue check validates it, a code can be minted for it — but it is not
+// created unless asked for. The 50ml refill is in that state: the vessel is
+// still in transit, its recipe is empty and it has no price, and publishing
+// refuses a line with no price. Including it by default would have broken
+// registration for every new fragrance, which is how the regression caught it.
+// Flip it to true once the refill can actually be sold.
 const FORMATS = [
-  { master: 'TS10', prefix: 'TS', variantTitle: 'Travel Spray' },
-  { master: 'RS100', prefix: 'RS', variantTitle: 'Room Spray' },
-  { master: 'RD200', prefix: 'RD', variantTitle: 'Reed Diffuser' },
+  { master: 'TS10', prefix: 'TS', variantTitle: 'Travel Spray', standard: true },
+  { master: 'RS100', prefix: 'RS', variantTitle: 'Room Spray', standard: true },
+  { master: 'RD200', prefix: 'RD', variantTitle: 'Reed Diffuser', standard: true },
+  { master: 'RF50', prefix: 'RF', variantTitle: 'Refill 50ml', standard: false },
 ]
 const pad = (n) => String(n).padStart(5, '0')
 
@@ -77,7 +90,9 @@ async function planFragrance(oilId, wanted) {
     `SELECT COALESCE(MAX(substring(sku from '[0-9]+')::int), 0) + 1 AS n
        FROM products WHERE sku LIKE 'Muse\\_%'`)).rows[0].n)
 
-  const pick = Array.isArray(wanted) && wanted.length ? FORMATS.filter((f) => wanted.includes(f.master)) : FORMATS
+  const pick = Array.isArray(wanted) && wanted.length
+    ? FORMATS.filter((f) => wanted.includes(f.master))
+    : FORMATS.filter((f) => f.standard)
   const lines = pick.map((f) => {
     const m = byCode.get(f.master)
     return {
@@ -313,7 +328,10 @@ router.delete('/muse-fragrance/:number', auth, requireRole('admin', 'root'), asy
     // `MASTER-FRAG_#####` and must never be reachable from here — the first
     // version of the button was offered on 358 of 366 live variants, which is
     // two clicks from orphaning a selling product on the store.
-    const legacy = rows.filter((r) => !/^(TS10|RS100|RD200)-M[0-9]+$/.test(r.product_code || ''))
+    // Only the registration screen writes `<master>-M#####`; the original
+    // catalogue carries `<master>-FRAG_#####`. Testing the suffix needs no list
+    // of formats, so adding a fourth one cannot silently lock it out of delete.
+    const legacy = rows.filter((r) => !/-M[0-9]+$/.test(r.product_code || ''))
     if (legacy.length) {
       return res.status(403).json({
         error: `Number ${n} is part of the original catalogue (${legacy[0].product_code}), not a registration made here. Archive it from the product screen instead.`,

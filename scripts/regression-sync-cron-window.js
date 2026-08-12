@@ -98,6 +98,28 @@ check(JSON.stringify(registered) === JSON.stringify(dispatched),
   `only registered: ${registered?.filter((t) => !dispatched?.includes(t))} · only dispatched: ${dispatched?.filter((t) => !registered?.includes(t))}`);
 check(registered?.includes('refunds/create'), 'refunds/create is among them');
 
+// -- 6. The FORMAT lists must not drift either ------------------------------
+// Same shape of bug as the topics above, one layer up. A MUSE format is named
+// in two places: FORMATS in the registration route, which mints the code, and
+// EXPECT in the catalogue check, which validates that a code matches the format
+// it is sold as. A format present in the first and missing from the second is
+// sold and never checked -- and that check is the one that caught ten wrong
+// codes on 2026-08-11. The refill was exactly this case until it was added.
+const ROUTE = readFileSync(join(ROOT, 'server/sm/routes/muse-fragrance.js'), 'utf8');
+const CHECK = readFileSync(join(ROOT, 'scripts/check-muse-launch-readiness.mjs'), 'utf8');
+const routeFormats = [...(ROUTE.match(/const FORMATS = \[([\s\S]*?)\]/)?.[1] || '')
+  .matchAll(/prefix: '([A-Z]+)', variantTitle: '([^']+)'/g)]
+  .map((m) => `${m[2]}=${m[1]}`).sort();
+const checkFormats = [...(CHECK.match(/const EXPECT = \{([^}]+)\}/)?.[1] || '')
+  .matchAll(/'([^']+)':\s*'([A-Z]+)'/g)]
+  .map((m) => `${m[1]}=${m[2]}`).sort();
+check(routeFormats.length > 0 && checkFormats.length > 0, 'both format lists are readable',
+  `route=${routeFormats} check=${checkFormats}`);
+check(JSON.stringify(routeFormats) === JSON.stringify(checkFormats),
+  'the registration route and the catalogue check agree on the formats',
+  `only minted: ${routeFormats.filter((f) => !checkFormats.includes(f))} | only validated: ${checkFormats.filter((f) => !routeFormats.includes(f))}`);
+check(routeFormats.includes('Refill 50ml=RF'), 'the 50ml refill is among them');
+
 console.log(failed === 0
   ? `\n✅ sync-cron-window: all checks passed`
   : `\n❌ sync-cron-window: ${failed} failed`);

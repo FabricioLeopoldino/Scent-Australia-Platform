@@ -121,7 +121,9 @@ try {
   // makes it the one to trust when a name-based comparison would be arguable
   // (one oil legitimately sells under several commercial names).
   head('5. SKU PREFIX vs THE FORMAT IT IS SOLD AS  (produces the wrong product)');
-  const EXPECT = { 'Travel Spray': 'TS', 'Room Spray': 'RS', 'Reed Diffuser': 'RD' };
+  // KEEP IN STEP with FORMATS in server/sm/routes/muse-fragrance.js. A format
+  // that exists there and not here is sold but never validated.
+  const EXPECT = { 'Travel Spray': 'TS', 'Room Spray': 'RS', 'Reed Diffuser': 'RD', 'Refill 50ml': 'RF' };
   const mismatched = active.filter((v) => {
     const want = EXPECT[v.variant];
     if (!want || !v.sku) return false;

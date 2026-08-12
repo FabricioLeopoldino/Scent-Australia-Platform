@@ -628,7 +628,7 @@ export default function MuseStock() {
                             catalogue carries `-FRAG_`. The server enforces the
                             same rule, plus stock, orders, recipes, movements and
                             whether the store still holds the product. */}
-                        {/^(TS10|RS100|RD200)-M[0-9]+$/.test(v.product_code || '') && Number(v.current_stock) === 0 && (
+                        {/-M[0-9]+$/.test(v.product_code || '') && Number(v.current_stock) === 0 && (
                           <IconButton variant="danger" onClick={() => setDeleteFragrance(v)}
                             title="Delete this fragrance registration (all three formats)"><Trash2 size={13} /></IconButton>
                         )}
