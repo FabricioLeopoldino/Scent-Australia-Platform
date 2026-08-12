@@ -15,6 +15,7 @@ export default function MuseDashboard() {
   const [variants, setVariants]   = useState([])
   const [orders, setOrders]       = useState([])
   const [fragrances, setFragrances] = useState([])
+  const [materials, setMaterials] = useState([])
   const [loading, setLoading]     = useState(true)
   const [, navigate]              = useLocation()
   const { addToast } = useToast()
@@ -24,14 +25,21 @@ export default function MuseDashboard() {
   async function load() {
     setLoading(true)
     try {
-      const [m, p, o, f] = await Promise.all([
+      const [m, p, o, f, mat] = await Promise.all([
         axios.get('/api/masters', { ...api(), params: { segment: 'MUSE' } }),
         axios.get('/api/products', { ...api(), params: { category: 'FINISHED_GOOD' } }),
         axios.get('/api/production-orders', api()),
         axios.get('/api/products', { ...api(), params: { category: 'FRAGRANCE' } }),
+        axios.get('/api/products', api()),
       ])
       setMasters(m.data)
       setVariants(p.data.filter(v => v.segment === 'MUSE' && v.master_product_id && !v.archived))
+      // Components, labels and raw materials — the things that actually run out.
+      // They were invisible here until 2026-08-12, so a label at zero showed
+      // nowhere while 445 made-to-order variants shouted "out of stock".
+      setMaterials((mat.data || []).filter(x =>
+        ['COMPONENT', 'LABEL', 'RAW_MATERIAL'].includes(x.category)
+        && !x.is_master && !x.archived && (x.segment === 'MUSE' || x.segment === 'SHARED')))
       setOrders(o.data.filter(o => !o.client_id))  // MUSE orders only
       setFragrances(f.data)
     } catch { addToast('Failed to load MUSE dashboard', 'error') }
@@ -42,8 +50,23 @@ export default function MuseDashboard() {
 
   const activeOrders   = orders.filter(o => ['draft', 'confirmed', 'queued', 'in_production', 'waiting_external'].includes(o.status))
   const recentProduced = orders.filter(o => o.status === 'fulfilled').slice(0, 5)
-  const lowStock       = variants.filter(v => parseFloat(v.current_stock) < parseFloat(v.min_stock_level || 0))
-  const outOfStock     = variants.filter(v => parseFloat(v.current_stock) <= 0)
+  // A MUSE variant sitting at zero is NORMAL — the range is made to order, and
+  // 445 of 450 are at zero on any given day. Flagging those as "out of stock"
+  // filled this panel with 445 false alarms and hid the ten materials that were
+  // genuinely negative. An alarm that always fires is one nobody reads.
+  //
+  // So the rule is the same one the SM dashboard already uses: something is only
+  // low when a minimum was DELIBERATELY set and the stock is under it. Negative
+  // is always wrong, minimum or not — it means material left that we never knew
+  // we had. Availability subtracts what is already reserved, matching the stock
+  // table so the two screens cannot disagree.
+  const avail = (x) => (parseFloat(x.current_stock) || 0) - (parseFloat(x.reserved_qty) || 0)
+  const watched = [...materials, ...variants]
+  const negative = watched.filter(x => (parseFloat(x.current_stock) || 0) < 0)
+  const lowStock = watched.filter(x => !negative.includes(x)
+    && parseFloat(x.min_stock_level || 0) > 0 && avail(x) < parseFloat(x.min_stock_level))
+  const madeToOrder = variants.filter(v => parseFloat(v.current_stock) <= 0
+    && !(parseFloat(v.min_stock_level || 0) > 0)).length
   const totalStock     = variants.reduce((s, v) => s + parseFloat(v.current_stock || 0), 0)
   const topStock       = [...variants].sort((a, b) => parseFloat(b.current_stock) - parseFloat(a.current_stock)).slice(0, 5)
 
@@ -66,7 +89,10 @@ export default function MuseDashboard() {
         <StatCard label="Active Variants" value={variants.length} color="#60a5fa" icon={<Package size={16} />} onClick={() => navigate('/muse-stock')} />
         <StatCard label="Total Stock" value={(() => { const s = splitVolume(totalStock, 'units'); return `${s.value}` })()} subValue="units across all variants" color="#4ade80" icon={<TrendingUp size={16} />} />
         <StatCard label="Active Orders" value={activeOrders.length} color="#a78bfa" icon={<ShoppingBag size={16} />} onClick={() => navigate('/production-orders')} />
-        <StatCard label="Low Stock" value={lowStock.length} color={lowStock.length > 0 ? '#fbbf24' : '#4ade80'} icon={<AlertTriangle size={16} />} />
+        <StatCard label="Needs Attention" value={negative.length + lowStock.length}
+          subValue={negative.length ? `${negative.length} below zero` : 'materials under minimum'}
+          color={negative.length ? '#f87171' : lowStock.length > 0 ? '#fbbf24' : '#4ade80'}
+          icon={<AlertTriangle size={16} />} onClick={() => navigate('/muse-stock')} />
       </div>
 
       {/* Row: Top variants + Low/Out of stock */}
@@ -106,29 +132,39 @@ export default function MuseDashboard() {
 
         {/* Low/Out of stock */}
         <Card title="Stock Alerts" color="#fbbf24" icon={<AlertTriangle size={14} />}>
-          {lowStock.length === 0 && outOfStock.length === 0 ? (
-            <Empty text="All variants healthy" hint="No items below min stock level" />
+          {negative.length === 0 && lowStock.length === 0 ? (
+            <Empty text="Nothing below its minimum"
+              hint={madeToOrder ? `${madeToOrder} variants sit at zero, which is normal — they are made to order` : 'No item is under the level set for it'} />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {[...outOfStock, ...lowStock.filter(v => !outOfStock.includes(v))].slice(0, 8).map(v => {
-                const master = masterById[v.master_product_id]
-                const fragName = v.name?.includes('—') ? v.name.split('—').slice(1).join('—').trim() : v.name
-                const isOut = parseFloat(v.current_stock) <= 0
+              {[...negative, ...lowStock].slice(0, 8).map(x => {
+                const isNeg = negative.includes(x)
+                const master = masterById[x.master_product_id]
+                // A material has no master; a variant reads better as format + scent.
+                const title = master ? master.name : x.name
+                const sub = master
+                  ? (x.name?.includes('—') ? x.name.split('—').slice(1).join('—').trim() : x.name)
+                  : `${Number(x.current_stock)} ${x.unit || ''}${Number(x.min_stock_level) > 0 ? ` · min ${Number(x.min_stock_level)}` : ''}`
                 return (
-                  <div key={v.id} style={{ padding: '9px 12px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 8 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{master?.name || '?'}</div>
-                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{fragName}</div>
+                  <div key={x.id} style={{ padding: '9px 12px', background: 'var(--surface-2)', border: `1px solid ${isNeg ? 'rgba(248,113,113,0.35)' : 'var(--border)'}`, borderRadius: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</div>
                       </div>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 600, color: isOut ? '#f87171' : '#fbbf24' }}>
-                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: isOut ? '#f87171' : '#fbbf24', flexShrink: 0 }} />
-                        {isOut ? 'Out' : 'Low'}
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 600, flexShrink: 0, color: isNeg ? '#f87171' : '#fbbf24' }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: isNeg ? '#f87171' : '#fbbf24', flexShrink: 0 }} />
+                        {isNeg ? 'Below zero' : 'Low'}
                       </span>
                     </div>
                   </div>
                 )
               })}
+              {(negative.length + lowStock.length) > 8 && (
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'center', paddingTop: 2 }}>
+                  and {negative.length + lowStock.length - 8} more
+                </div>
+              )}
             </div>
           )}
         </Card>
