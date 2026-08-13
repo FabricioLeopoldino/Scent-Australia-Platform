@@ -32,6 +32,12 @@ export default function NewMuseFragranceModal({ onClose, onCreated, addToast }) 
   const [loading, setLoading] = useState(false)
   const [title, setTitle] = useState('')
   const [skip, setSkip] = useState([])          // masters the user unticked
+  // Which collection the fragrance is being registered into. Defaults to
+  // Library because that is what every one of the 454 existing MUSE products
+  // is; the ten Archive fragrances register in September and must be switched.
+  // It is stored as business_unit, which decides reporting — segment keeps
+  // deciding oil and production (owner decision, 2026-08-14).
+  const [unit, setUnit] = useState('library')
   const [saving, setSaving] = useState(false)
   const [done, setDone] = useState(null)
 
@@ -58,7 +64,8 @@ export default function NewMuseFragranceModal({ onClose, onCreated, addToast }) 
     if (!formats.length) return addToast('Choose at least one format', 'error')
     setSaving(true)
     try {
-      const r = await axios.post('/api/muse-fragrance', { oil_id: oil.id, title: title.trim(), formats }, api())
+      const r = await axios.post('/api/muse-fragrance',
+        { oil_id: oil.id, title: title.trim(), formats, business_unit: unit }, api())
       setDone(r.data)
       onCreated?.()
     } catch (e) {
@@ -187,6 +194,27 @@ export default function NewMuseFragranceModal({ onClose, onCreated, addToast }) 
                   />
                   <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.5 }}>
                     Marketing can rename this on the store at any time — the codes below are the link, not the name.
+                  </p>
+
+                  {/* Which collection it belongs to. Chosen at registration, not
+                      patched afterwards: once ten Archive fragrances exist, it
+                      is ten records to update instead of ten born correct. */}
+                  <label style={{ ...LABEL, display: 'block', marginBottom: 5 }}>Collection</label>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
+                    {[['library', 'Library'], ['archive', 'Archive']].map(([v, l]) => (
+                      <button key={v} type="button" onClick={() => setUnit(v)}
+                        style={{
+                          flex: 1, padding: '8px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                          background: unit === v ? 'rgba(251,191,36,0.12)' : 'var(--surface-2)',
+                          border: `1px solid ${unit === v ? 'rgba(251,191,36,0.5)' : 'var(--border)'}`,
+                          color: unit === v ? '#fbbf24' : 'var(--text-muted)',
+                          transition: 'border-color .15s, background .15s',
+                        }}>{l}</button>
+                    ))}
+                  </div>
+                  <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.5 }}>
+                    Decides which collection this reports under. It does not change the oil
+                    rules or how it is produced — that stays with the segment.
                   </p>
 
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>

@@ -222,8 +222,16 @@ router.get('/muse-fragrance/preview', auth, requireRole('admin', 'root'), async 
 // is seen working).
 router.post('/muse-fragrance', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
-    const { oil_id, title, formats, prices } = req.body || {}
+    const { oil_id, title, formats, prices, business_unit } = req.body || {}
     if (!oil_id) return res.status(400).json({ error: 'oil_id required' })
+    // Only the two MUSE collections can be registered here. 'atelier' is a real
+    // business_unit but its products do not come through this screen, and
+    // accepting it would write a row integrity-sm then fails on, since this
+    // route always writes segment 'MUSE'.
+    const unit = business_unit == null || business_unit === '' ? 'library' : String(business_unit)
+    if (!['library', 'archive'].includes(unit)) {
+      return res.status(400).json({ error: "business_unit must be 'library' or 'archive'" })
+    }
 
     const attempt = async () => await withTransaction(async (client) => {
       const tq = (t, p) => client.query(t, p)
@@ -243,12 +251,17 @@ router.post('/muse-fragrance', auth, requireRole('admin', 'root'), async (req, r
           // barcode = sku, set explicitly rather than left to the display-time
           // fallback the stock screen uses. One string identifies the variant to
           // the scanner, to the store and to us (owner, 2026-08-11).
+          // business_unit decides reporting and segment decides oil and
+          // production (owner decision, 2026-08-14). A product born without it
+          // cannot be reported on, and integrity-sm fails on exactly that — so
+          // it is set here rather than backfilled later. The ten Archive
+          // fragrances register in September and must arrive as 'archive'.
           `INSERT INTO products
              (name, product_code, sku, barcode, category, unit, current_stock, segment,
-              master_product_id, oil_id, fragrance_id, volume_ml, default_oil_pct, price)
-           VALUES ($1,$2,$3,$3,'FINISHED_GOOD','units',0,'MUSE',$4,$5,NULL,$6,$7,$8) RETURNING id, sku, name, barcode`,
+              master_product_id, oil_id, fragrance_id, volume_ml, default_oil_pct, price, business_unit)
+           VALUES ($1,$2,$3,$3,'FINISHED_GOOD','units',0,'MUSE',$4,$5,NULL,$6,$7,$8,$9) RETURNING id, sku, name, barcode`,
           [`${(await tq(`SELECT name FROM products WHERE id = $1`, [l.master_id])).rows[0].name} — ${name}`,
-           l.product_code, l.sku, l.master_id, oil_id, l.volume_ml, l.oil_pct, price]
+           l.product_code, l.sku, l.master_id, oil_id, l.volume_ml, l.oil_pct, price, unit]
         )).rows[0]
         created.push({ ...row, master: l.master, format: l.format, price })
       }

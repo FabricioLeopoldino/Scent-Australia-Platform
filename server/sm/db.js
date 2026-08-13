@@ -285,6 +285,38 @@ async function runStartupMigrations() {
   await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS volume_unit VARCHAR(10) DEFAULT 'ml'`)
   await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS archived BOOLEAN DEFAULT false`)
 
+  // ── Which business unit a finished good belongs to (owner decision, 2026-08-14)
+  //
+  // The question that could not be answered: "what did the Library sell this
+  // month, and what did the Archive sell?" Both are segment = 'MUSE', 472
+  // variants in one bucket.
+  //
+  // segment could not answer it because segment already means four things —
+  // MUSE (the Library), STANDARD (the old Scented Merchandise catalogue), MAJOR
+  // (client work) and null (legacy rows) — and it decides OIL RULES AND
+  // PRODUCTION, not reporting. Overloading it further is how a field stops
+  // meaning anything.
+  //
+  // THE RULE, enforced by integrity-sm:
+  //     segment        decides oil and production
+  //     business_unit  decides reporting
+  //     library|archive  =>  segment must be MUSE
+  //     atelier          =>  segment must NOT be MUSE
+  //
+  // Only finished goods carry it. A component belongs to no business unit — a
+  // bottle used on a Library order is Library consumption because of the ORDER,
+  // not because of the bottle, so materials stay NULL on purpose.
+  await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS business_unit VARCHAR(20)`)
+  await query(`CREATE INDEX IF NOT EXISTS idx_products_business_unit ON products(business_unit)`)
+  // Backfill only what is certain. Every MUSE finished good alive today is
+  // Library: the Archive has no products registered yet (September) and the
+  // Atelier has none either. STANDARD and null rows are deliberately left
+  // untouched — calling the legacy Scented Merchandise catalogue "atelier"
+  // would be a guess, and the owner has not said it is the same thing.
+  await query(`
+    UPDATE products SET business_unit = 'library'
+     WHERE business_unit IS NULL AND segment = 'MUSE' AND category = 'FINISHED_GOOD'`)
+
   // ── Two rules the code already assumed and nothing enforced ──────────────
   // Both are wrapped: a duplicate present at deploy time must NOT stop the boot.
   // An uncreated index is a risk; a platform that will not start is an outage.

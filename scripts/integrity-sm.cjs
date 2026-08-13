@@ -70,6 +70,34 @@ const check = async (name, sql, pool = sm, expectZero = true) => {
   await check('fragrances use mL unit', `SELECT COUNT(*) n FROM products WHERE category='FRAGRANCE' AND COALESCE(archived,false)=false AND unit <> 'mL' AND product_code NOT IN ('FRAG-SANTAL','FRAG-OUD')`);
   await check('MUSE masters have volume_ml', `SELECT COUNT(*) n FROM products WHERE is_master AND segment='MUSE' AND COALESCE(archived,false)=false AND (volume_ml IS NULL OR volume_ml <= 0)`);
 
+  // ── business_unit vs segment (owner decision 2026-08-14) ──
+  // Two fields that can disagree need a written rule and something that fails
+  // when they do — the same shape as canUseOil. segment decides oil and
+  // production; business_unit decides reporting. Nothing else may be inferred
+  // from either.
+  await check('business_unit holds only known values',
+    `SELECT COUNT(*) n FROM products WHERE business_unit IS NOT NULL
+       AND business_unit NOT IN ('library','archive','atelier')`);
+  await check('library/archive live only under segment MUSE',
+    `SELECT COUNT(*) n FROM products WHERE business_unit IN ('library','archive') AND segment <> 'MUSE'`);
+  await check('atelier never lives under segment MUSE',
+    `SELECT COUNT(*) n FROM products WHERE business_unit = 'atelier' AND segment = 'MUSE'`);
+  // The real boundary is the SKU, not the category: a SKU is what gets sold and
+  // therefore what has to be reportable. DIF_00001 (the Aere diffuser device)
+  // sits under segment MUSE with no SKU and correctly carries no unit — it is
+  // hardware, not a collection product.
+  await check('everything sellable carries a business_unit',
+    `SELECT COUNT(*) n FROM products WHERE sku IS NOT NULL
+       AND COALESCE(archived,false)=false AND business_unit IS NULL`);
+  await check('every live MUSE finished good carries a business_unit',
+    `SELECT COUNT(*) n FROM products WHERE segment='MUSE' AND category='FINISHED_GOOD'
+       AND COALESCE(archived,false)=false AND business_unit IS NULL`);
+  // Materials belong to no unit: a bottle is Library consumption because of the
+  // ORDER it served, not because of the bottle.
+  await check('materials carry no business_unit',
+    `SELECT COUNT(*) n FROM products WHERE business_unit IS NOT NULL
+       AND category IN ('COMPONENT','RAW_MATERIAL','LABEL')`);
+
   // ── muse master↔fragrance↔variant coherence ──
   await check('muse_master_fragrances: master exists', `SELECT COUNT(*) n FROM muse_master_fragrances mmf WHERE NOT EXISTS (SELECT 1 FROM products p WHERE p.id = mmf.master_product_id)`);
   await check('muse_master_fragrances: fragrance exists', `SELECT COUNT(*) n FROM muse_master_fragrances mmf WHERE NOT EXISTS (SELECT 1 FROM products p WHERE p.id = mmf.fragrance_id)`);
