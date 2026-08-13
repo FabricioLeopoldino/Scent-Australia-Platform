@@ -109,7 +109,15 @@ try {
     const order = `#ZZ-NOSKU-${Date.now()}`;
     const r = await post('fulfillments/create', {
       id: Date.now(), order_id: 90001, name: order, status: 'success',
-      line_items: [{ title: 'Phantom Reed Diffuser', quantity: 3, sku: '' }],
+      // Shaped like an Atelier line: the finish arrives as a variant option and
+      // the personalisation as a line-item property. Neither is guesswork the
+      // platform should be doing — the alarm just has to bring them back.
+      line_items: [{
+        title: 'Phantom Reed Diffuser', quantity: 3, sku: '',
+        variant_title: 'Metallic foil', variant_id: 44556677, product_id: 8899001,
+        vendor: 'The Atelier', price: '49.00',
+        properties: [{ name: 'Label text', value: 'Hotel Verde — Lobby' }],
+      }],
     });
     check(r.status === 200, 'no-SKU line still answers 200 (Shopify must not retry)', `got ${r.status}`);
     const rows = await waitFor(() => audits(order), (x) => x.length > 0);
@@ -117,6 +125,14 @@ try {
     const u = rows[0]?.details?.unmatched?.[0];
     check(u?.reason === 'no_sku' && u?.qty === 3, 'alarm records reason and quantity', JSON.stringify(u));
     check(/STOCK NOT DEDUCTED/.test(log), 'alarm is logged loudly as an error');
+
+    // The whole point of capturing the shape: the first real Atelier order has
+    // to describe itself, because nobody can describe it in advance.
+    check(u?.variant_title === 'Metallic foil', 'alarm captures the variant option', JSON.stringify(u?.variant_title));
+    check(u?.properties?.[0]?.name === 'Label text' && u?.properties?.[0]?.value === 'Hotel Verde — Lobby',
+      'alarm captures line-item properties (where personalisation rides)', JSON.stringify(u?.properties));
+    check(u?.vendor === 'The Atelier' && String(u?.product_id) === '8899001',
+      'alarm captures vendor and product id, so the product can be found on the store');
   }
 
   // ── 2. An unknown SKU must alarm too ─────────────────────────────────────

@@ -72,15 +72,47 @@ const FULFILLMENT_TOPICS = ['fulfillments/create', 'fulfillments/update'];
 // original plan and is wrong: getNextOrderNumber parses the previous number
 // back out with replace('SM-',''), so one MUSE-numbered row would make every
 // later order SM-NaN. The Shopify identity lives in shopify_order_number.
+// What an unmatched line records, beyond the reason it did not match.
+//
+// The Atelier has not launched, so nobody can say yet how its orders will be
+// shaped — whether the finish arrives as a variant option, a line-item property
+// or a separate product. Guessing is what caused a week of rework, so the alarm
+// captures the whole line instead: the first real Atelier order answers the
+// question by itself, with nobody having to be watching when it lands.
+//
+// Three sellable variants on the store already hint at the answer (Room Spray /
+// Standard, Room Spray / Metallic foil, Graphic design service) — none has a
+// SKU, so all three would arrive here.
+//
+// ONE definition, used by both unmatched paths: the order webhook
+// (shopify_order_unmatched) and the fulfilment webhook
+// (muse_fulfillment_unmatched). They are separate code and it would be easy to
+// instrument only the first — the regression caught exactly that mistake — and
+// two copies is how the webhook topics and the format lists drifted apart.
+//
+// properties is where personalisation rides; capped so a pasted brief cannot
+// bloat the audit row. Internal, admin/root only, like the order itself.
+const lineShape = (li) => ({
+  variant_title: li.variant_title || null,
+  variant_id: li.variant_id || null,
+  product_id: li.product_id || null,
+  vendor: li.vendor || null,
+  price: li.price || null,
+  properties: Array.isArray(li.properties) && li.properties.length
+    ? li.properties.slice(0, 10).map((p) => ({ name: p.name, value: String(p.value ?? '').slice(0, 200) }))
+    : null,
+});
+
 async function planLinesFromShopifyOrder(tq, body) {
   const toProduce = [];
   const unmatched = [];
+  const shape = lineShape;
   for (const li of (Array.isArray(body.line_items) ? body.line_items : [])) {
     const sku = (li.sku || '').trim();
     const qty = parseInt(li.quantity, 10) || 0;
     const title = li.title || li.name || '(untitled)';
     if (qty <= 0) continue;
-    if (!sku) { unmatched.push({ reason: 'no_sku', title, qty }); continue; }
+    if (!sku) { unmatched.push({ reason: 'no_sku', title, qty, ...shape(li) }); continue; }
 
     const r = await tq(
       `SELECT p.id, p.name, p.current_stock, p.oil_id, p.fragrance_id,
@@ -91,11 +123,11 @@ async function planLinesFromShopifyOrder(tq, body) {
       [sku]
     );
     const v = r.rows[0];
-    if (!v) { unmatched.push({ reason: 'sku_not_found', sku, title, qty }); continue; }
+    if (!v) { unmatched.push({ reason: 'sku_not_found', sku, title, qty, ...shape(li) }); continue; }
     // No master means no BOM. Creating the line anyway would produce an order
     // that can be started while debiting nothing — the exact dangling state
     // validateProductTypes exists to prevent on the manual path.
-    if (!v.master_code) { unmatched.push({ reason: 'no_master', sku, title, qty }); continue; }
+    if (!v.master_code) { unmatched.push({ reason: 'no_master', sku, title, qty, ...shape(li) }); continue; }
 
     const need = qty - (parseFloat(v.current_stock) || 0);
     if (need <= 0) continue; // covered by finished stock already on the shelf
@@ -274,7 +306,9 @@ async function smFulfillmentHandler(req, res, topic, body) {
           // left the building and no stock moved. This used to `continue`
           // silently; MUSE went retail on 2026-08-10 with a catalogue marketing
           // rebuilt by hand, so a variant created without a SKU is a real risk.
-          unmatched.push({ reason: 'no_sku', title, qty });
+          // ...and this is the path that matters most for the Atelier: goods
+          // that actually shipped. lineShape brings back what the line was.
+          unmatched.push({ reason: 'no_sku', title, qty, ...lineShape(li) });
           continue;
         }
 
@@ -300,7 +334,7 @@ async function smFulfillmentHandler(req, res, topic, body) {
           // never guess. Collected for the alarm below so a mismatch surfaces
           // in Activity, not only in a log line nobody reads.
           await tq(`RELEASE SAVEPOINT ${sp}`);
-          unmatched.push({ reason: 'sku_not_found', sku, title, qty });
+          unmatched.push({ reason: 'sku_not_found', sku, title, qty, ...lineShape(li) });
           continue;
         }
         const p = prod.rows[0];
