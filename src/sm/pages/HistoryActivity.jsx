@@ -11,19 +11,24 @@ function api() { return { headers: { Authorization: `Bearer ${localStorage.getIt
 // stock history (kind="history") or audit events (kind="activity") of SA +
 // Scented Merchandise + MUSE, with a System column, filters and CSV export.
 // Backend: /api/platform/history|activity (+ /export). Admin/root only.
-const SYSTEMS = ['ALL', 'SA', 'Scented Merchandise', 'MUSE']
-const SYS_COLOR = { SA: '#60a5fa', 'Scented Merchandise': '#4ade80', MUSE: '#fbbf24' }
+const SYS_COLOR = { SA: '#60a5fa', 'Scented Merchandise': '#4ade80', MUSE: '#fbbf24', Platform: '#a78bfa' }
 
+// The two tabs do not cover the same systems. Stock movements only ever belong
+// to SA or SM — the platform schema has no transactions table. Audit events do
+// include platform-level ones (sign-ins, module access, password changes,
+// transfers, product links), so only Activity offers that filter.
 const CONFIG = {
   history: {
     title: 'History', sub: 'All stock movements across SA · Scented Merchandise · MUSE',
     icon: HistoryIcon, endpoint: 'history', searchPlaceholder: 'Search product or code…',
     columns: ['Date', 'System', 'By', 'Type', 'Product', 'Qty', 'Balance', 'Notes'],
+    systems: ['ALL', 'SA', 'Scented Merchandise', 'MUSE'],
   },
   activity: {
-    title: 'Activity', sub: 'All system actions across SA · Scented Merchandise · MUSE',
+    title: 'Activity', sub: 'All system actions across SA · Scented Merchandise · MUSE · Platform',
     icon: ScrollText, endpoint: 'activity', searchPlaceholder: 'Search entity or action…',
     columns: ['Date', 'System', 'By', 'Action', 'Entity', 'Details'],
+    systems: ['ALL', 'SA', 'Scented Merchandise', 'MUSE', 'Platform'],
   },
 }
 
@@ -124,7 +129,7 @@ export default function HistoryActivity({ kind = 'history' }) {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {scope ? (
             <span style={{ fontSize: 12, fontWeight: 700, color: 'rgba(232,234,242,0.55)' }}>Showing: {SCOPE_LABEL[scope]}</span>
-          ) : SYSTEMS.map(s => (
+          ) : cfg.systems.map(s => (
             <button key={s} onClick={() => setSystem(s)} style={chip(system === s)}>{s === 'ALL' ? 'All Systems' : s}</button>
           ))}
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginLeft: 'auto' }}>

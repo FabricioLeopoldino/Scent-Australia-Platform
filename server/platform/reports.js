@@ -1,5 +1,5 @@
 import express from 'express';
-import { saPool, smPool } from '../db.js';
+import { saPool, smPool, platformPool } from '../db.js';
 import { requireRole } from './auth.js';
 
 const router = express.Router();
@@ -16,7 +16,7 @@ const router = express.Router();
 // by the product's segment (audit rows: SA vs SM, MUSE split where derivable).
 // ═══════════════════════════════════════════════════════════════════════
 
-const SYSTEMS = ['SA', 'Scented Merchandise', 'MUSE'];
+const SYSTEMS = ['SA', 'Scented Merchandise', 'MUSE', 'Platform'];
 const cap = (v, def, max) => Math.min(parseInt(v) || def, max);
 
 // t.* date/type/search filters — Sydney-local date matches the SA module's own
@@ -64,12 +64,16 @@ async function fetchHistory({ system, from, to, type, search, limit }) {
 // products (audit rows aren't product-scoped). SM MUSE/Scented split isn't always
 // derivable from the event, so SM audit is tagged 'Scented Merchandise' unless the
 // details JSON carries an explicit segment.
-function auditFilters(base, { from, to, action, search }, params) {
+// nameExpr: platform.audit_log has no entity_name column (SA and SM do), so the
+// search filter has to point at whatever stands in for it. Passing it in keeps
+// one filter function for all three schemas instead of a second copy — the kind
+// of duplication that let the webhook topics and format lists drift apart.
+function auditFilters(base, { from, to, action, search }, params, nameExpr = 'al.entity_name') {
   let q = base;
   if (from)   { params.push(from);   q += ` AND (al.created_at AT TIME ZONE 'Australia/Sydney')::date >= $${params.length}::date`; }
   if (to)     { params.push(to);     q += ` AND (al.created_at AT TIME ZONE 'Australia/Sydney')::date <= $${params.length}::date`; }
   if (action) { params.push(action); q += ` AND al.action = $${params.length}`; }
-  if (search) { params.push(`%${search}%`); q += ` AND (al.entity_name ILIKE $${params.length} OR al.action ILIKE $${params.length})`; }
+  if (search) { params.push(`%${search}%`); q += ` AND (${nameExpr} ILIKE $${params.length} OR al.action ILIKE $${params.length})`; }
   return q;
 }
 
@@ -86,13 +90,32 @@ const SM_AUDIT = `
   FROM audit_log al LEFT JOIN users u ON al.user_id = u.id
   WHERE 1=1`;
 
+// The platform schema holds the events that belong to no single business:
+// sign-ins, module access grants, password changes, fragrance transfers between
+// SA and SM, product links. 515 of them were invisible here until 2026-08-13 —
+// fetchActivity queried saPool and smPool and never platformPool — on the one
+// page whose stated purpose is "who used what, when".
+//
+// It has no entity_name column, so a readable label is derived from details;
+// the keys below are the ones its writers actually use.
+const PF_NAME = `COALESCE(al.details->>'name', al.details->>'fragrance', al.details->>'sm',
+                          al.entity_type || ' #' || al.entity_id)`;
+const PF_AUDIT = `
+  SELECT al.id::text AS id, al.created_at, COALESCE(u.name, 'System') AS performed_by,
+         al.action, al.entity_type, ${PF_NAME} AS entity_name,
+         al.details::text AS details, 'Platform' AS system
+  FROM platform.audit_log al LEFT JOIN platform.users u ON al.user_id = u.id
+  WHERE 1=1`;
+
 async function fetchActivity({ system, from, to, action, search, limit }) {
   const lim = cap(limit, 2000, 10000);
   const wantSA = !system || system === 'ALL' || system === 'SA';
   const wantSM = !system || system === 'ALL' || system === 'SM' || system === 'MUSE' || system === 'Scented Merchandise';
+  const wantPF = !system || system === 'ALL' || system === 'Platform';
   const jobs = [];
   if (wantSA) { const p = []; jobs.push(saPool.query(auditFilters(SA_AUDIT, { from, to, action, search }, p) + ` ORDER BY al.created_at DESC LIMIT ${lim}`, p).then(r => r.rows)); }
   if (wantSM) { const p = []; jobs.push(smPool.query(auditFilters(SM_AUDIT, { from, to, action, search }, p) + ` ORDER BY al.created_at DESC LIMIT ${lim}`, p).then(r => r.rows)); }
+  if (wantPF) { const p = []; jobs.push(platformPool.query(auditFilters(PF_AUDIT, { from, to, action, search }, p, PF_NAME) + ` ORDER BY al.created_at DESC LIMIT ${lim}`, p).then(r => r.rows)); }
   let rows = (await Promise.all(jobs)).flat();
   if (system && system !== 'ALL' && system !== 'SM') rows = rows.filter(r => r.system === system);  // 'SM' keeps both Scented + MUSE
   rows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));

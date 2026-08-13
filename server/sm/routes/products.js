@@ -75,15 +75,37 @@ router.post('/products', auth, requireRole('admin', 'root'), async (req, res) =>
   }
 })
 
+// Fields worth an audit line when they change. image_data and notes are left
+// out on purpose: base64 blobs and free text would bury the change that matters.
+const AUDITED_FIELDS = ['name', 'product_code', 'category', 'sub_category', 'unit',
+  'min_stock_level', 'supplier', 'supplier_id', 'supplier_code', 'barcode',
+  'shopify_variant_id', 'client_id', 'volume_ml', 'default_oil_pct', 'segment', 'price']
+
 router.put('/products/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const { name, product_code, category, sub_category, unit, min_stock_level, supplier, supplier_id, supplier_code, bin_location, barcode, shopify_variant_id, lead_time, notes, image_data, client_id, volume_ml, default_oil_pct, segment, price, description } = req.body
+    // Read first so the audit can say what the value WAS. Without this, nothing
+    // recorded who changed a SKU or a price — which is why the eleven wrong MUSE
+    // codes of 2026-08-10 had no author and no timestamp (verified 2026-08-13:
+    // not one product_updated row existed in 2,761 audit entries).
+    const before = (await query(`SELECT * FROM products WHERE id = $1`, [req.params.id])).rows[0]
     const result = await query(
       `UPDATE products SET name=COALESCE($1,name), product_code=COALESCE($2,product_code), category=COALESCE($3,category), sub_category=$4, unit=COALESCE($5,unit), min_stock_level=COALESCE($6,min_stock_level), supplier=$7, supplier_id=$8, supplier_code=$9, bin_location=$10, barcode=$11, shopify_variant_id=$12, lead_time=$13, notes=$14, image_data=$15, client_id=$16, volume_ml=COALESCE($17,volume_ml), default_oil_pct=COALESCE($18,default_oil_pct), segment=COALESCE($19,segment), price=$20, description=$21 WHERE id=$22 RETURNING *`,
       [name, product_code?.toUpperCase(), category, sub_category ?? null, unit, min_stock_level, supplier ?? null, supplier_id ?? null, supplier_code ?? null, bin_location ?? null, barcode ?? null, shopify_variant_id ?? null, lead_time ?? null, notes ?? null, image_data ?? null, client_id ?? null, volume_ml ? parseFloat(volume_ml) : null, default_oil_pct ? parseFloat(default_oil_pct) : null, segment ?? null, price != null && price !== '' ? parseFloat(price) : null, description ?? null, req.params.id]
     )
     if (!result.rows[0]) return res.status(404).json({ error: 'Not found' })
-    res.json(result.rows[0])
+    const after = result.rows[0]
+    const changes = {}
+    for (const f of AUDITED_FIELDS) {
+      // String() so 49 and '49.00' from numeric columns do not read as a change.
+      const a = before?.[f] == null ? null : String(before[f])
+      const b = after[f] == null ? null : String(after[f])
+      if (a !== b) changes[f] = { from: before?.[f] ?? null, to: after[f] ?? null }
+    }
+    if (Object.keys(changes).length) {
+      await auditLog(req.user.id, 'product_updated', 'product', after.id, after.name, changes)
+    }
+    res.json(after)
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ error: 'Product code already exists' })
     res.status(500).json({ error: sanitizeError(e) })

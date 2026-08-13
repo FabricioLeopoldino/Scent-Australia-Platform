@@ -49,6 +49,27 @@ const pool = new Pool({
 
 const log = (s = '') => console.log(s);
 
+// A script that writes straight to the database bypasses the audit the routes
+// write, so the change lands with no author, no timestamp and no reason. That
+// gap was found on 2026-08-13: this script's own first run left zero rows in
+// audit_log, transactions and product_bom_history, while the same actions done
+// on screen record `product_created`.
+//
+// Idempotent by design: it only writes a row when one is not already there, so
+// re-running records nothing twice AND a change applied before this existed
+// still gets its entry on the next run.
+async function audit(q, action, entityId, entityName, details) {
+  const seen = await q(
+    `SELECT 1 FROM audit_log WHERE action = $1 AND entity_id = $2 LIMIT 1`,
+    [action, entityId]);
+  if (seen.rowCount) return false;
+  await q(
+    `INSERT INTO audit_log (user_id, action, entity_type, entity_id, entity_name, details)
+     VALUES (NULL, $1, 'product', $2, $3, $4)`,
+    [action, entityId, entityName, JSON.stringify({ ...details, via: 'script setup-refill-50ml.cjs' })]);
+  return true;
+}
+
 (async () => {
   const client = await pool.connect();
   try {
@@ -62,11 +83,16 @@ const log = (s = '') => console.log(s);
     log(`\n${APPLY ? 'APPLYING' : 'DRY RUN'} — 50ml Library Refill\n`);
 
     // 1. Price -------------------------------------------------------------
-    if (master.price != null && Number(master.price) === PRICE) {
+    const priceWasSet = master.price != null && Number(master.price) === PRICE;
+    if (priceWasSet) {
       log(`  1. price          already ${PRICE}, unchanged`);
     } else {
       log(`  1. price          ${master.price ?? 'NULL'} → ${PRICE}`);
       await q(`UPDATE products SET price = $1 WHERE id = $2`, [PRICE, master.id]);
+    }
+    if (await audit(q, 'product_updated', master.id, 'Library Refill 50ml',
+      { price: { from: priceWasSet ? 'set before this audit existed' : master.price, to: PRICE } })) {
+      log(`     audit          product_updated recorded`);
     }
 
     // 2. The vessel --------------------------------------------------------
@@ -90,6 +116,10 @@ const log = (s = '') => console.log(s);
         [VESSEL.name, code, VESSEL.category, VESSEL.unit, VESSEL.segment])).rows[0];
       log(`  2. vessel         created ${code} at stock 0  (250 units in transit, ETA end of September)`);
     }
+    if (await audit(q, 'product_created', vessel.id, VESSEL.name,
+      { product_code: vessel.product_code, category: VESSEL.category, segment: VESSEL.segment, current_stock: 0 })) {
+      log(`     audit          product_created recorded`);
+    }
 
     // 3. The recipe --------------------------------------------------------
     const existing = (await q(
@@ -106,6 +136,25 @@ const log = (s = '') => console.log(s);
                                   quantity_per_unit, quantity_formula, sort_order)
          VALUES ('RF50', $1, 'core', 1, 'fixed', 1)`, [vessel.id]);
       log(`  3. recipe         1 × ${vessel.product_code} per refill (core)`);
+    }
+
+    // A recipe change is traced by product_bom_history, not audit_log — the same
+    // mechanism routes/bom.js uses (saveBomSnapshot). Writing the snapshot here
+    // means the RF50 recipe has a version 1 to roll back to, exactly as it would
+    // if it had been built on screen.
+    if (!(await q(`SELECT 1 FROM product_bom_history WHERE product_type = 'RF50' LIMIT 1`)).rowCount) {
+      const snap = (await q(
+        `SELECT pb.id, pb.component_product_id, pb.quantity_formula, pb.quantity_per_unit,
+                pb.sort_order, pb.component_group, p.name AS component_name,
+                p.product_code AS component_code, p.unit AS component_unit,
+                p.category AS component_category
+           FROM product_bom pb JOIN products p ON pb.component_product_id = p.id
+          WHERE pb.product_type = 'RF50' AND pb.is_active = true
+          ORDER BY pb.sort_order, pb.id`)).rows;
+      await q(
+        `INSERT INTO product_bom_history (product_type, version, action, changed_by, snapshot)
+         VALUES ('RF50', 1, 'add', NULL, $1::jsonb)`, [JSON.stringify(snap)]);
+      log(`     history        RF50 recipe version 1 recorded`);
     }
 
     // 4. Prove it ----------------------------------------------------------
