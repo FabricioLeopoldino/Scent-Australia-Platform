@@ -16,6 +16,7 @@ export default function MuseDashboard() {
   const [orders, setOrders]       = useState([])
   const [fragrances, setFragrances] = useState([])
   const [materials, setMaterials] = useState([])
+  const [oil, setOil]             = useState(null)
   const [loading, setLoading]     = useState(true)
   const [, navigate]              = useLocation()
   const { addToast } = useToast()
@@ -25,13 +26,19 @@ export default function MuseDashboard() {
   async function load() {
     setLoading(true)
     try {
-      const [m, p, o, f, mat] = await Promise.all([
+      const [m, p, o, f, mat, oilPos] = await Promise.all([
         axios.get('/api/masters', { ...api(), params: { segment: 'MUSE' } }),
         axios.get('/api/products', { ...api(), params: { category: 'FINISHED_GOOD' } }),
         axios.get('/api/production-orders', api()),
         axios.get('/api/products', { ...api(), params: { category: 'FRAGRANCE' } }),
         axios.get('/api/products', api()),
+        // The oil lives in SA, so this panel could not see it. SA warns its own
+        // users; whoever runs MUSE never saw that a scent behind their range was
+        // running low. Failing softly: an oil read that breaks must not take the
+        // whole dashboard down with it.
+        axios.get('/api/dashboard/oil-position', api()).catch(() => ({ data: null })),
       ])
+      setOil(oilPos.data)
       setMasters(m.data)
       setVariants(p.data.filter(v => v.segment === 'MUSE' && v.master_product_id && !v.archived))
       // Components, labels and raw materials — the things that actually run out.
@@ -170,6 +177,47 @@ export default function MuseDashboard() {
         </Card>
       </div>
 
+      {/* Oil behind the range — the one thing this panel could not see */}
+      {oil && oil.total > 0 && (
+        <div style={{ marginBottom: 18 }}>
+          <Card title="Fragrance Oil" color="#f0abfc" icon={<FlaskConical size={14} />}
+            action={{ label: 'Fragrance Library', onClick: () => navigate('/fragrance-library') }}>
+            <div style={{ display: 'flex', gap: 18, marginBottom: oil.below.length || oil.no_minimum.length ? 14 : 0, flexWrap: 'wrap' }}>
+              <OilTally n={oil.below.length} label="below minimum" color="#fbbf24" />
+              <OilTally n={oil.no_minimum.length} label="no minimum set" color="#94a3b8" />
+              <OilTally n={oil.healthy} label="healthy" color="#4ade80" />
+              <OilTally n={oil.total} label="oils behind the range" color="rgba(232,234,242,0.5)" />
+            </div>
+
+            {oil.below.length === 0 && oil.no_minimum.length === 0 ? (
+              <Empty text="Every oil behind the range is above its minimum" />
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14 }}>
+                {/* Below a minimum somebody chose: act. */}
+                {oil.below.length > 0 && (
+                  <OilList rows={oil.below} tone="#fbbf24" heading="Below minimum"
+                    note="Someone set a level for these and stock is under it."
+                    right={(r) => `${Math.round(r.stock)} / ${Math.round(r.min_stock)} ${r.unit || 'ml'}`} />
+                )}
+                {/* No minimum at all: not an alarm, an unanswered question. Kept
+                    separate because merging the two is what made this dashboard
+                    show 445 false alerts before 2026-08-12. */}
+                {oil.no_minimum.length > 0 && (
+                  <OilList rows={oil.no_minimum} tone="#94a3b8" heading="No minimum set"
+                    note="These can never raise a warning, however low they get."
+                    right={(r) => `${Math.round(r.stock)} ${r.unit || 'ml'}`} />
+                )}
+              </div>
+            )}
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 12, lineHeight: 1.5 }}>
+              Oil is held by Scent Australia; this is a read-only view of it.
+              Whether a variant is currently on sale is not shown here — the launch
+              readiness check answers that.
+            </div>
+          </Card>
+        </div>
+      )}
+
       {/* Row: Active production + Recent produced */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
         {/* Active production */}
@@ -270,6 +318,49 @@ function Empty({ text, hint }) {
     <div style={{ textAlign: 'center', padding: '24px 16px', color: 'var(--text-muted)' }}>
       <div style={{ fontSize: 13, marginBottom: 4 }}>{text}</div>
       {hint && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{hint}</div>}
+    </div>
+  )
+}
+
+function OilTally({ n, label, color }) {
+  return (
+    <div>
+      <div style={{ fontSize: 20, fontWeight: 700, color, lineHeight: 1.1 }}>{n}</div>
+      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{label}</div>
+    </div>
+  )
+}
+
+// One oil per row: the scent, how many MUSE products depend on it, and the
+// number. The dependant count is what turns "1000 ml" into something a person
+// can act on — a 200 ml reed diffuser takes 50 ml of it.
+function OilList({ rows, tone, heading, note, right }) {
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: tone, flexShrink: 0 }} />
+        <span style={{ fontSize: 11, fontWeight: 700, color: tone }}>{heading}</span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>· {rows.length}</span>
+      </div>
+      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 8 }}>{note}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {rows.slice(0, 6).map((r) => (
+          <div key={r.oil_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '8px 11px', background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 8 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                {r.product_code} · {r.variant_count} product{r.variant_count === 1 ? '' : 's'} depend{r.variant_count === 1 ? 's' : ''} on it
+              </div>
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: tone, flexShrink: 0, fontFamily: 'monospace' }}>{right(r)}</div>
+          </div>
+        ))}
+        {rows.length > 6 && (
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'center', paddingTop: 2 }}>
+            and {rows.length - 6} more
+          </div>
+        )}
+      </div>
     </div>
   )
 }

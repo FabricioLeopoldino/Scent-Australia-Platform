@@ -148,6 +148,52 @@ router.get('/dashboard/draft-orders', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
+// ── Oil position behind the MUSE range ───────────────────────────────────────
+//
+// WHY (2026-08-13). The manager's stated requirement is that oil never runs out.
+// Scent Australia already warns on low stock and it is genuinely in use — 187 of
+// 325 oils carry a minimum. But the warning lives in SA, on SA's own dashboard,
+// and the person running MUSE never sees it. Worse, 22 of the oils behind live
+// MUSE products carry NO minimum at all, so for those the warning can never fire
+// however low they get.
+//
+// Read-only against sa.products. MUSE never writes there — oil is only ever
+// debited through the audited consumption path in fragrance-library.js.
+//
+// Three states, kept apart on purpose. This is the same distinction that turned
+// 445 false alarms into 10 real ones on this dashboard: "below a minimum someone
+// deliberately set" and "nobody ever set one" are different problems, and
+// merging them produces an alarm nobody reads.
+router.get('/dashboard/oil-position', auth, async (req, res) => {
+  try {
+    const { rows } = await query(`
+      SELECT o."productCode" AS product_code, o.name, o.id AS oil_id,
+             o."currentStock"::float AS stock, o."minStockLevel"::float AS min_stock,
+             o.unit, o.exclusivity, count(v.id)::int AS variant_count
+        FROM sa.products o
+        JOIN products v ON v.oil_id = o.id AND COALESCE(v.archived, false) = false
+        JOIN products m ON m.id = v.master_product_id AND m.segment = 'MUSE'
+       WHERE o.category = 'OILS'
+       GROUP BY o.id, o."productCode", o.name, o."currentStock", o."minStockLevel", o.unit, o.exclusivity`)
+
+    const hasMin = (r) => r.min_stock > 0
+    // Sorted by how much room is left, so the most urgent reads first.
+    const below = rows.filter((r) => hasMin(r) && r.stock <= r.min_stock)
+      .sort((a, b) => (a.stock - a.min_stock) - (b.stock - b.min_stock))
+    // Not an alarm — an unanswered question. Ordered by how many products depend
+    // on it, because that is what makes deciding a minimum worth the time.
+    const noMinimum = rows.filter((r) => !hasMin(r))
+      .sort((a, b) => b.variant_count - a.variant_count || a.stock - b.stock)
+
+    res.json({
+      total: rows.length,
+      below,
+      no_minimum: noMinimum,
+      healthy: rows.length - below.length - noMinimum.length,
+    })
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
+})
+
 // Dashboard alerts (reservation displacements, etc.)
 router.get('/dashboard/alerts', auth, async (req, res) => {
   try {
