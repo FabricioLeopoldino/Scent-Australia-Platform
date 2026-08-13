@@ -67,9 +67,13 @@ const NEG_SQL = (codes) => `
 
     console.log('\n3. A NEW negative still fails — the alarm is not silenced');
     // COMP_00019 (the refill vessel) is deliberately not exempt.
+    // Archived rows are excluded: the July test components were the obvious
+    // candidates until they were archived on 2026-08-14, and a test that picks
+    // a retired record is testing nothing anyone will ever see.
     const victim = (await client.query(
       `SELECT product_code FROM products
         WHERE category IN ('COMPONENT','RAW_MATERIAL') AND current_stock >= 0
+          AND COALESCE(archived, false) = false
           AND product_code <> ALL ($1::text[]) LIMIT 1`, [UNCOUNTED])).rows[0];
     check(!!victim, 'a non-exempt component exists to test with');
     if (victim) {
