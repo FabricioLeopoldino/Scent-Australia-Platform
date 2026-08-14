@@ -42,6 +42,17 @@ const pool = new Pool({
 });
 
 let failed = 0, server, productId;
+
+// webhook_processed is keyed on the FULFILMENT id, not on order_id. The teardown
+// deleted 90001-90003, which are order_ids, so it never matched anything and six
+// rows from this suite were left in the live table on 2026-08-14. They matter
+// more than they look: live-store-guard.cjs reads webhook_processed to decide
+// the store has served real traffic, so this suite was quietly inflating the
+// signal a safety guard depends on. Track what we post and remove exactly that.
+const postedFulfilmentIds = [];
+let nextFulfilmentId = Date.now();
+const newFulfilmentId = () => { const id = nextFulfilmentId++; postedFulfilmentIds.push(id); return id; };
+
 const check = (ok, label, detail = '') => {
   console.log(ok ? `  ok    ${label}` : `  FAIL  ${label}${detail ? ` — ${detail}` : ''}`);
   if (!ok) failed++;
@@ -108,7 +119,7 @@ try {
   {
     const order = `#ZZ-NOSKU-${Date.now()}`;
     const r = await post('fulfillments/create', {
-      id: Date.now(), order_id: 90001, name: order, status: 'success',
+      id: newFulfilmentId(), order_id: 90001, name: order, status: 'success',
       // Shaped like an Atelier line: the finish arrives as a variant option and
       // the personalisation as a line-item property. Neither is guesswork the
       // platform should be doing — the alarm just has to bring them back.
@@ -139,7 +150,7 @@ try {
   {
     const order = `#ZZ-BADSKU-${Date.now()}`;
     const r = await post('fulfillments/create', {
-      id: Date.now() + 1, order_id: 90002, name: order, status: 'success',
+      id: newFulfilmentId(), order_id: 90002, name: order, status: 'success',
       line_items: [{ title: 'Ghost', quantity: 1, sku: 'Muse_DOES_NOT_EXIST' }],
     });
     check(r.status === 200, 'unknown-SKU line answers 200', `got ${r.status}`);
@@ -154,7 +165,7 @@ try {
   {
     const order = `#ZZ-CLEAN-${Date.now()}`;
     const r = await post('fulfillments/create', {
-      id: Date.now() + 2, order_id: 90003, name: order, status: 'success',
+      id: newFulfilmentId(), order_id: 90003, name: order, status: 'success',
       line_items: [{ title: `${TAG} probe`, quantity: 2, sku: TAG }],
     });
     check(r.status === 200, 'clean fulfillment answers 200', `got ${r.status}`);
@@ -180,6 +191,10 @@ try {
     await pool.query(`DELETE FROM products WHERE id = $1`, [productId]).catch(() => {});
   }
   await pool.query(`DELETE FROM audit_log WHERE entity_name LIKE '#ZZ-%'`).catch(() => {});
+  if (postedFulfilmentIds.length) {
+    await pool.query(`DELETE FROM webhook_processed WHERE shopify_order_id = ANY($1::bigint[])`,
+      [postedFulfilmentIds]).catch(() => {});
+  }
   await pool.query(`DELETE FROM webhook_processed WHERE shopify_order_id IN (90001,90002,90003)`).catch(() => {});
   await pool.end();
 }
