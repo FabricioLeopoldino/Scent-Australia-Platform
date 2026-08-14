@@ -77,6 +77,11 @@ async function cleanup() {
 }
 
 (async () => {
+  // Same reason as e2e-muse-retail.cjs: this creates and completes a real draft
+  // order on the Muse store, which stopped being a playground on 2026-08-10.
+  await require('./lib/live-store-guard.cjs').assertStoreNotLive(
+    'This creates and COMPLETES a real draft order on the Muse store.');
+
   console.log(`Platform: ${PLATFORM}\nMuse store: ${SHOP}\n`);
 
   // ── 1. SM production order in the platform ───────────────────────────────

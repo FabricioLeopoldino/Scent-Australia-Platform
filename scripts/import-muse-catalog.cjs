@@ -140,7 +140,38 @@ async function run() {
   if (!health || health.status !== 'ok') { console.error('Server not reachable on ' + BASE); process.exit(1); }
 
   if (!LINKS_ONLY) {
-    if (RESET) await resetTestData();
+    // ── Guards added 2026-08-14 ─────────────────────────────────────────────
+    // This script builds the MUSE catalogue from a CSV. It was written for an
+    // empty database. The catalogue now exists, is on the store, and has been
+    // hand-corrected — eleven wrong SKUs were fixed on 11 August. Re-running it
+    // over that is not an import, it is an overwrite of work that only exists
+    // here.
+    //
+    // Deliberately INSIDE `if (!LINKS_ONLY)`. The first version sat above it and
+    // blocked --links-only too, which does nothing but
+    // `INSERT ... ON CONFLICT DO NOTHING` — the one genuinely safe mode. That
+    // taught the operator to type IMPORT_OVER_LIVE_CATALOGUE=yes for a harmless
+    // run, and then have it sitting in their shell for a dangerous one. A guard
+    // that fires on safe work trains people to disable it.
+    const live = (await smPool.query(
+      `SELECT count(*)::int n FROM products
+        WHERE segment = 'MUSE' AND category = 'FINISHED_GOOD'
+          AND sku IS NOT NULL AND COALESCE(archived, false) = false`)).rows[0].n;
+    if (live > 0 && process.env.IMPORT_OVER_LIVE_CATALOGUE !== 'yes') {
+      console.error(`\n❌ REFUSING TO RUN — ${live} MUSE products with SKUs already exist.`);
+      console.error(`   This importer was written for an empty catalogue. Re-running it now`);
+      console.error(`   would write CSV values over records that have been corrected since.`);
+      console.error(`\n   --links-only is safe and is not blocked by this.`);
+      console.error(`   If you really mean to re-import, re-run with IMPORT_OVER_LIVE_CATALOGUE=yes\n`);
+      process.exit(2);
+    }
+
+    // --reset-test deletes production orders. Some of them are now real.
+    if (RESET) {
+      await require('./lib/live-store-guard.cjs').assertStoreNotLive(
+        '--reset-test deletes production orders, and some now came from the store.');
+      await resetTestData();
+    }
 
     // ── 1. Fragrances (upsert by cleaned name) ────────────────────────────
     console.log('\n── Fragrances ──');

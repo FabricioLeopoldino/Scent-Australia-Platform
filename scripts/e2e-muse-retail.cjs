@@ -64,6 +64,13 @@ async function cleanup() {
 }
 
 (async () => {
+  // This creates a REAL order on the Muse store and completes it. The header
+  // above says the store is a playground with no live sales; that was true in
+  // July and stopped being true on 2026-08-10. A completed order on a live
+  // store can reach a real customer's inbox and appear in real reporting.
+  await require('./lib/live-store-guard.cjs').assertStoreNotLive(
+    'This creates and COMPLETES a real order on the Muse store.');
+
   console.log(`Muse store: ${SHOP}\n`);
 
   // ── 1. Fixture ───────────────────────────────────────────────────────────

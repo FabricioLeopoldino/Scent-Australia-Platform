@@ -50,14 +50,40 @@ if (!target) {
   process.exit(2);
 }
 
-// Compare the actual database, not the raw string: the pooled and direct hosts
-// differ by one substring and are the same database.
-const same = (a, b) => {
-  const norm = (u) => String(u || '').replace('-pooler.', '.').trim().replace(/\/$/, '');
-  return norm(a) !== '' && norm(a) === norm(b);
+// Compare HOST + DATABASE NAME, which is what identifies a database.
+//
+// The previous version claimed to do this and did not: it normalised the whole
+// connection string and compared that. Every one of these was enough to make it
+// return false and TRUNCATE production — 3,937 rows across 31 tables, plus
+// platform.stock_transfers and platform.product_links, with no verified undo:
+//
+//     dropping &channel_binding=require from one of the two URLs
+//     copying the direct string from the Neon dashboard instead of the pooled one
+//     a different role or password on the same database
+//     adding ?application_name=anything
+//
+// migrate-sa.js already had the right helper; this is the same approach.
+const identity = (u) => {
+  try {
+    const p = new URL(String(u || '').replace('-pooler.', '.'));
+    return `${p.host}${p.pathname.replace(/\/$/, '')}`.toLowerCase();
+  } catch { return null; }
 };
-if (same(target, process.env.PLATFORM_DATABASE_URL)) {
-  console.error('REFUSING TO RUN: RESET_DATABASE_URL is the PRODUCTION database (it matches PLATFORM_DATABASE_URL).');
+const targetId = identity(target);
+const prodId = identity(process.env.PLATFORM_DATABASE_URL);
+// Fail closed: an unparseable URL means the comparison could not be made, and
+// this script TRUNCATEs — "I could not tell" must not mean "go ahead".
+if (!targetId) {
+  console.error(`REFUSING TO RUN: RESET_DATABASE_URL could not be parsed as a URL.`);
+  process.exit(2);
+}
+if (!prodId) {
+  console.error('REFUSING TO RUN: PLATFORM_DATABASE_URL is missing or unparseable, so this');
+  console.error('script cannot prove the target is NOT production.');
+  process.exit(2);
+}
+if (targetId === prodId) {
+  console.error(`REFUSING TO RUN: RESET_DATABASE_URL is the PRODUCTION database (${targetId}).`);
   console.error('This script is for rehearsing on a Neon branch. Point it at the branch.');
   process.exit(2);
 }

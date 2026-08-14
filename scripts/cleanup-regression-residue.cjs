@@ -52,14 +52,16 @@ const log = (s = '') => console.log(s);
     // A real order carries a Shopify number. Anything without one and created
     // by nobody is a script's work. This is asserted, not assumed: if a row
     // with a Shopify number ever matched, the run stops.
+    // shopify_order_id as well as the number: webhooks.js writes `body.name ||
+    // null`, so a real order can carry an id and no display number.
     const orders = (await q(
-      `SELECT id, order_number, status, shopify_order_number FROM production_orders
-        WHERE shopify_order_number IS NULL AND created_by IS NULL
+      `SELECT id, order_number, status, shopify_order_number, shopify_order_id FROM production_orders
+        WHERE shopify_order_id IS NULL AND shopify_order_number IS NULL AND created_by IS NULL
           AND EXISTS (SELECT 1 FROM production_order_lines l
                        WHERE l.production_order_id = production_orders.id
                          AND l.product_type = ANY($1::text[]))`, [TEST_MASTERS])).rows;
-    if (orders.some((o) => o.shopify_order_number)) {
-      throw new Error('an order with a Shopify number matched — refusing to continue');
+    if (orders.some((o) => o.shopify_order_number || o.shopify_order_id)) {
+      throw new Error('an order that came from the store matched — refusing to continue');
     }
     log(`  orders to delete   ${orders.length ? orders.map((o) => o.order_number).join(', ') : '(none)'}`);
 

@@ -325,6 +325,71 @@ async function main() {
   if (!RECONCILE_ONLY && !existsSync(PG_DUMP)) fail(`pg_dump not found at ${PG_DUMP} (set PG_BIN).`);
   if (!RECONCILE_ONLY && !existsSync(PSQL)) fail(`psql not found at ${PSQL} (set PG_BIN).`);
 
+  // ── THE GUARD THAT WAS MISSING (2026-08-14) ─────────────────────────────
+  // Everything above protects the SOURCE. Nothing protected the TARGET from a
+  // second run. This is a ONE-TIME migration that already ran, and running it
+  // again does `DROP SCHEMA sa CASCADE`, `DROP SCHEMA public CASCADE` and
+  // `DELETE FROM platform.users`. It would rebuild sa from a fresh dump, so the
+  // SA data would come back — but everything added to the platform SINCE the
+  // migration would not:
+  //
+  //     sa.products.exclusivity        the Fragrance Library boundary
+  //     platform.product_links         SA↔SM links (CASCADE takes them)
+  //     platform.stock_transfers       the transfer ledger
+  //     platform.users + module access every login on the platform
+  //
+  // It had no confirmation step of any kind: `node scripts/migrate-sa.js` with
+  // no arguments did the whole thing.
+  if (!RECONCILE_ONLY) {
+    // Three SEPARATE queries, and every failure counts as "in service".
+    //
+    // The first version put all three in one statement inside a try/catch that
+    // swallowed the error and left `inService` null, so the refusal below was
+    // skipped and execution walked on to DROP SCHEMA. Nothing downstream
+    // catches it: assertDatabaseIdentities passes on an already-migrated DB
+    // (platform.users exists, public.products does not), and the "public schema
+    // must be empty" check passes too because the previous run recreated it
+    // empty. A statement timeout or a Neon cold-start disconnect was enough.
+    //
+    // One combined statement was also wrong on its own: a single missing table
+    // discards all three signals at once.
+    const probe = new Client({ connectionString: directUrl(TARGET_URL), ssl: { rejectUnauthorized: false } });
+    await probe.connect();
+    const evidence = [];
+    for (const [label, sql] of [
+      ['sa.products.exclusivity present', `SELECT count(*)::int n FROM information_schema.columns
+                                            WHERE table_schema='sa' AND table_name='products'
+                                              AND column_name='exclusivity'`],
+      ['platform users', `SELECT count(*)::int n FROM platform.users`],
+      ['MUSE products with a SKU', `SELECT count(*)::int n FROM sm.products WHERE sku IS NOT NULL`],
+    ]) {
+      try {
+        const n = (await probe.query(sql)).rows[0].n;
+        if (n > 0) evidence.push(`${label}: ${n}`);
+      } catch (e) {
+        // FAIL CLOSED. "I could not tell" must never mean "carry on" when the
+        // next step is DROP SCHEMA CASCADE.
+        evidence.push(`${label}: could not be read (${e.message}) — treated as in service`);
+      }
+    }
+    await probe.end();
+
+    if (evidence.length) {
+      console.error(`\n❌ REFUSING TO RUN — the platform is already in service.\n`);
+      evidence.forEach((e) => console.error(`   ${e}`));
+      console.error(`\n   This is the one-time Phase 2a migration. Re-running it drops schema`);
+      console.error(`   sa and public and deletes platform users. The SA data would be`);
+      console.error(`   restored from the dump; everything built on the platform since the`);
+      console.error(`   migration would not be — sa.products.exclusivity, the SA↔SM product`);
+      console.error(`   links, the transfer ledger, and every login.`);
+      console.error(`\n   --reconcile-only is safe and reads only.`);
+      console.error(`   If you genuinely need to re-migrate, take a Neon branch first and`);
+      console.error(`   re-run with MIGRATE_SA_I_HAVE_A_BACKUP=yes\n`);
+      if (process.env.MIGRATE_SA_I_HAVE_A_BACKUP !== 'yes') process.exit(2);
+      console.warn('   Continuing because MIGRATE_SA_I_HAVE_A_BACKUP is set.\n');
+    }
+  }
+
   console.log('════════════════════════════════════════════');
   console.log(' SA PRODUCTION MIGRATION — Phase 2a (PRD §11)');
   console.log('════════════════════════════════════════════');

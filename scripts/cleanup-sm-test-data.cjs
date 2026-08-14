@@ -41,9 +41,21 @@ if (!DB) {
 // it hangs off the test client "[regression] Coco Republic Test", and a MAJOR master
 // with no client is invalid (the create endpoint refuses one). Owner chose the clean
 // slate — re-register Coco Republic and its product properly later.
-const TEST_MASTER_CODES = ['RD200_TEST', 'CANDLE_240G', 'MAJ_RD200_TEST', 'MC00001'];
+// MC00001 came OFF this list on 2026-08-14. It was on it because it hung off a
+// test client, and the plan recorded above is to re-register Coco Republic
+// properly later — which means a FUTURE MC00001 is a real client product, and
+// deleting it by code would be silent. It does not exist right now, so the
+// entry was a no-op that would become a fault. Exactly the DIF_00001 case.
+const TEST_MASTER_CODES = ['RD200_TEST', 'CANDLE_240G', 'MAJ_RD200_TEST'];
 const TEST_VARIANT_SKUS = ['Muse_RDTEST00001', 'Muse_CANDLEG00001'];
-const TEST_OTHER_CODES = ['DIF_00001'];                       // "Test Diffuser"
+// DIF_00001 was "Test Diffuser" on 2026-07-30 and was on this list. It has
+// since been renamed "Aere Diffuser" and is a real record, so it is OFF the
+// list (2026-08-14). The assert below is what makes that stick: if a code on
+// this list no longer carries the name it had when the list was written, the
+// list is out of date and the run stops. A name is not a strong identifier,
+// which is exactly why a changed one means "check me".
+const TEST_OTHER_CODES = [];
+const EXPECTED_NAMES = { RD200_TEST: 'TEST', CANDLE_240G: 'TEST', MAJ_RD200_TEST: 'TEST' };
 const TEST_CLIENT_NAMES = ['Fabricio Test', '[regression] Coco Republic Test'];
 // The real MUSE catalog + the STANDARD templates — must survive untouched.
 const KEEP_MASTERS = ['RD200', 'RS100', 'TS10', 'CS00001', 'CS00002'];
@@ -74,6 +86,44 @@ function ok(msg) { console.log('  ok   - ' + msg); }
     }
     ok('no order belongs to a non-test client');
 
+    // ── THE GUARD THAT WAS MISSING (2026-08-14) ───────────────────────────
+    // The check above JOINs clients, so it only ever sees orders that HAVE a
+    // client. MUSE orders are defined by client_id IS NULL, so every one of
+    // them slipped past it invisibly and fell into the unconditional DELETE
+    // below. On 30 July that was harmless — every order in the system was test
+    // data. On 10 August MUSE went retail, and from then on this script would
+    // have deleted SM-001 (#1020) and SM-002 (#1021, a real customer order)
+    // while reporting that nothing real was touched.
+    //
+    // A real order always carries a Shopify order number. That is the only
+    // property that does not go stale, so it is what the guard tests.
+    // shopify_order_id, not just the number: webhooks.js writes `body.name ||
+    // null`, so a real order can arrive with an id and no display number. There
+    // are none today, but the check costs nothing and the failure is silent.
+    const storeOrders = (await client.query(
+      `SELECT order_number, shopify_order_number, shopify_order_id, status FROM production_orders
+        WHERE shopify_order_id IS NOT NULL OR shopify_order_number IS NOT NULL ORDER BY id`)).rows;
+    if (storeOrders.length) {
+      storeOrders.forEach(r => console.error(`      ${r.order_number} came from the store as ${r.shopify_order_number || `id ${r.shopify_order_id}`} (${r.status})`));
+      fail(`${storeOrders.length} order(s) came from Shopify — refusing to run. `
+         + `This script's scope was locked on 2026-07-30, when every order was test data. `
+         + `Use scripts/cleanup-regression-residue.cjs for regression leftovers instead.`);
+    }
+    ok('no order came from the store');
+
+    // Every code this script deletes must still look like the test record it
+    // was written for. DIF_00001 is why: it was "Test Diffuser" when the list
+    // was made and is "Aere Diffuser" now.
+    const drifted = (await client.query(
+      `SELECT product_code, name FROM products WHERE product_code = ANY($1)`,
+      [Object.keys(EXPECTED_NAMES)])).rows
+      .filter(r => !r.name.toUpperCase().includes(EXPECTED_NAMES[r.product_code]));
+    if (drifted.length) {
+      drifted.forEach(r => console.error(`      ${r.product_code} is now called "${r.name}"`));
+      fail(`${drifted.length} target(s) no longer look like test records — this list is out of date, refusing to run`);
+    }
+    ok('every deletion target still looks like a test record');
+
     // Snapshot the real catalog so we can prove we did not touch it.
     const keptBefore = (await client.query(
       `SELECT product_code, (SELECT count(*)::int FROM products v WHERE v.master_product_id = p.id AND v.archived = false) AS variants
@@ -99,16 +149,30 @@ function ok(msg) { console.log('  ok   - ' + msg); }
 
     await client.query('BEGIN');
 
+    // The three deletes below were unconditional — no WHERE at all. The
+    // pre-flight above now refuses to reach them if anything from the store
+    // exists, but an unconditional DELETE is a loaded gun regardless of what
+    // guards it: the guard can be edited, skipped, or made stale again. So the
+    // scope is written into the statements themselves as well.
+    const SAFE = `shopify_order_id IS NULL AND shopify_order_number IS NULL`;
+
     // ── 1. Transactions linked to the test orders ─────────────────────────
-    const txDel = await client.query('DELETE FROM transactions WHERE production_order_id IS NOT NULL');
+    const txDel = await client.query(
+      `DELETE FROM transactions WHERE production_order_id IS NOT NULL
+        AND production_order_id IN (SELECT id FROM production_orders WHERE ${SAFE})`);
     console.log(`\nDeleted ${txDel.rowCount} order-linked transactions.`);
 
-    // ── 2. External processing rows (all belong to the test orders) ───────
-    const epDel = await client.query('DELETE FROM external_processing');
+    // ── 2. External processing rows ───────────────────────────────────────
+    // The `production_order_id IS NULL` disjunct was removed: it deleted every
+    // orphan row regardless of the order guard — the same unconditional shape
+    // this file was being cleaned of, hiding inside an OR.
+    const epDel = await client.query(
+      `DELETE FROM external_processing
+        WHERE production_order_id IN (SELECT id FROM production_orders WHERE ${SAFE})`);
     console.log(`Deleted ${epDel.rowCount} external_processing rows.`);
 
     // ── 3. The orders themselves (cascades lines/jobs/components/reservations/…) ──
-    const ordDel = await client.query('DELETE FROM production_orders');
+    const ordDel = await client.query(`DELETE FROM production_orders WHERE ${SAFE}`);
     console.log(`Deleted ${ordDel.rowCount} production orders (+ cascaded children).`);
 
     // ── 4. BOM rows owned by the test masters (product_type is a string, no FK) ──
