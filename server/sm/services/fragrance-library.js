@@ -45,7 +45,19 @@
 const SEGMENT_MAP = {
   MUSE:     { exclusivityBucket: 'MUSE', debitType: 'muse_production',    reversalType: 'muse_reversal' },
   STANDARD: { exclusivityBucket: 'SM',   debitType: 'sm_std_production',  reversalType: 'sm_std_reversal' },
-  MAJOR:    { exclusivityBucket: 'SM',   debitType: 'sm_major_production', reversalType: 'sm_major_reversal' },
+  // MAJOR has its own bucket (2026-08-14). It shared 'SM' with STANDARD, which
+  // was harmless while exclusivity was a single-value comparison. When
+  // EXCLUSIVITY_ALLOWS.MUSE was widened to ['MUSE','SM'] on 12 August so the
+  // Atelier could reach the Archive oils, client work was carried through the
+  // same door: a B2B client's product became able to consume a MUSE-exclusive
+  // oil, which it could not do before. The Muse PLATFORM is retail plus the
+  // Atelier; a client's own production is not part of it.
+  //
+  // No live exposure when this was found — there are no Major Clients migrated
+  // yet — but two existing regressions had been asserting the old behaviour and
+  // failing silently since the 12th, because a NEW test was written instead of
+  // reconciling with the ones already there.
+  MAJOR:    { exclusivityBucket: 'MAJOR', debitType: 'sm_major_production', reversalType: 'sm_major_reversal' },
 }
 
 // ONE definition of who may use an oil. Everything that asks the question --
@@ -56,13 +68,16 @@ const SEGMENT_MAP = {
 // The values mirror how the business is actually split (staff deck, Aug 2026):
 // Scent Australia is the B2B commercial side; the Muse PLATFORM is the consumer
 // side, and the Atelier is one of its units. So "MUSE" is not "MUSE retail
-// only" -- it means the Muse platform, which includes the Atelier (segments
-// STANDARD and MAJOR, bucket SM). Reading it as retail-only is exactly the
-// mistake the label invited, and it silently locked the Atelier out of the
-// seven Archive oils on 2026-08-12.
+// only" -- it means the Muse platform, which includes the Atelier (segment
+// STANDARD, bucket SM). Reading it as retail-only is exactly the mistake the
+// label invited, and it silently locked the Atelier out of the seven Archive
+// oils on 2026-08-12.
 //
-//   null / ''  shared -- anyone
-//   'MUSE'     the Muse platform: MUSE retail + the Atelier. Never SA.
+// It does NOT include a client's own production. MAJOR has its own bucket for
+// that reason -- see SEGMENT_MAP above.
+//
+//   null / ''  shared -- anyone, including client work
+//   'MUSE'     the Muse platform: MUSE retail + the Atelier. Not clients, never SA.
 //   'SA'       Scent Australia only. This is what protects a B2B client's
 //              Signature Fragrance from being sold through Muse -- the deck's
 //              firmest boundary, which until now had no way to be expressed.

@@ -40,10 +40,17 @@ const check = (ok, label, detail = '') => {
   for (const [e, b, want] of [
     [null, 'MUSE', true], [null, 'SM', true],
     ['', 'MUSE', true], ['SHARED', 'MUSE', true],
+    [null, 'MAJOR', true], ['SHARED', 'MAJOR', true],
     // "MUSE" is the PLATFORM, so the Atelier (bucket SM) is included.
     ['MUSE', 'MUSE', true], ['MUSE', 'SM', true],
-    // "SA" keeps a protected Signature Fragrance away from both Muse units.
-    ['SA', 'MUSE', false], ['SA', 'SM', false],
+    // ...but a CLIENT's own production is not part of the Muse platform.
+    // MAJOR shared the 'SM' bucket until 2026-08-14, so widening MUSE for the
+    // Atelier on the 12th carried client work through the same door. This is
+    // the case that regression was missing, and two older suites had been
+    // failing on it unnoticed since.
+    ['MUSE', 'MAJOR', false], ['SM', 'MAJOR', false],
+    // "SA" keeps a protected Signature Fragrance away from every Muse unit.
+    ['SA', 'MUSE', false], ['SA', 'SM', false], ['SA', 'MAJOR', false],
     // Legacy value, still honoured; no oil carries it.
     ['SM', 'SM', true], ['SM', 'MUSE', false],
     // A typo must restrict, never widen.
@@ -55,8 +62,12 @@ const check = (ok, label, detail = '') => {
 
   console.log('\n2. Every segment maps to a bucket the rule knows');
   const buckets = [...new Set(Object.values(SEGMENT_MAP).map((s) => s.exclusivityBucket))];
-  check(buckets.length === 2 && buckets.includes('MUSE') && buckets.includes('SM'),
-    'the buckets are exactly MUSE and SM', JSON.stringify(buckets));
+  check(buckets.length === 3 && ['MUSE', 'SM', 'MAJOR'].every((b) => buckets.includes(b)),
+    'the buckets are MUSE, SM and MAJOR', JSON.stringify(buckets));
+  // The point of the third one: two segments sharing a bucket cannot be told
+  // apart by a rule, so widening the rule for one widens it for both.
+  check(SEGMENT_MAP.MAJOR.exclusivityBucket !== SEGMENT_MAP.STANDARD.exclusivityBucket,
+    'client work and the Atelier are in different buckets');
   for (const b of buckets) {
     check(canUseOil(null, b) === true, `a shared oil is usable by ${b}`);
   }

@@ -148,22 +148,33 @@ async function cleanup() {
     ? ok('no inventory push queued to Shopify', 'Shopify already moved its own count')
     : bad('a Shopify inventory push was queued — stock would deduct TWICE', `${queued} queued`);
 
-  // ── 8. An oversold line is RECORDED and never drops the healthy lines ──────
-  // The retail sale already shipped on Shopify — refusing it would roll back the
-  // whole fulfillment and lose the sale. So a mixed order with one short line must
-  // record BOTH: the healthy line deducts normally, the short line goes negative.
+  // ── 8. A short line is MADE, not oversold, and never drops the healthy line ─
+  //
+  // CHANGED 2026-08-14. This asserted that selling 99 against a shelf of 2 drove
+  // stock to −97: the sale had already shipped, so refusing it would lose the
+  // sale, and the shortfall was recorded as a negative.
+  //
+  // D16 replaced that with the hybrid the owner approved:
+  //     fromShelf = min(qty, max(0, finishedStock))   → 2 come off the shelf
+  //     toMake    = qty − fromShelf                    → 97 are made to order
+  // The 97 consume oil and components through the BOM instead of being invented
+  // as negative finished goods, so the shelf lands at 0. That is not an oversell
+  // being hidden — it is the remainder being manufactured, which is what MUSE
+  // actually does.
+  //
+  // The suite kept asserting the pre-D16 number and had been failing unnoticed.
   await sm.query(`UPDATE products SET current_stock = 2 WHERE sku = $1`, [SKU]);   // short line
   await sm.query(`UPDATE products SET current_stock = 50 WHERE sku = $1`, [SKU2]); // healthy line
   await send('fulfillments/create', {
     id: FID + 2, order_id: FID + 2, status: 'success', name: '#D13-PROBE',
     line_items: [{ sku: SKU2, quantity: 5 }, { sku: SKU, quantity: 99 }],
   });
-  await waitUntil(async () => (await stockOf(SKU)) === 2 - 99 && (await stockOf(SKU2)) === 50 - 5);
+  await waitUntil(async () => (await stockOf(SKU)) === 0 && (await stockOf(SKU2)) === 50 - 5);
   const shortAfter = await stockOf(SKU);
   const healthyAfter = await stockOf(SKU2);
-  shortAfter === 2 - 99
-    ? ok('oversold line is recorded — stock allowed negative (sale not lost)', `${SKU}: 2 → ${shortAfter}`)
-    : bad('oversold line was not recorded correctly', `stock=${shortAfter}, expected ${2 - 99}`);
+  shortAfter === 0
+    ? ok('short line drains the shelf and makes the rest (D16 hybrid)', `${SKU}: 2 → ${shortAfter}, 97 made to order`)
+    : bad('short line did not follow the D16 hybrid', `stock=${shortAfter}, expected 0`);
   healthyAfter === 50 - 5
     ? ok('a short line does NOT roll back the healthy line in the same fulfillment', `${SKU2}: 50 → ${healthyAfter}`)
     : bad('the healthy line was rolled back by the short line', `stock=${healthyAfter}, expected 45`);

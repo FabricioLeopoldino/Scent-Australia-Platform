@@ -109,14 +109,43 @@ async function cleanup() {
   // ── 3. Exclusivity guard ──────────────────────────────────────────────────
   await setStock(100);
   await query(`UPDATE sa.products SET exclusivity = 'MUSE' WHERE id = $1`, [OIL_ID]);
-  let exclusivityBlocked = false;
+  // CHANGED 2026-08-14. This asserted that STANDARD was BLOCKED from a
+  // MUSE-exclusive oil. That was the rule until 12 August, when the owner
+  // settled that "MUSE" names the Muse PLATFORM — retail plus the Atelier —
+  // not MUSE retail alone (PRD locked decision 9). The Atelier is segment
+  // STANDARD, so it must now be allowed.
+  //
+  // The suite kept asserting the old rule and failed quietly for two days,
+  // because a new test was written for the new behaviour instead of
+  // reconciling with the one already here. Two contradictory tests is the same
+  // defect as two copies of a rule.
+  let standardAllowed = true;
   try {
     await withTransaction(async (client) => {
       const tq = (t, p) => client.query(t, p);
       await consumeFragranceOil(tq, OIL_ID, 10, 'STANDARD', 'test-exclusivity');
+      throw Object.assign(new Error('rollback'), { rollbackOnly: true });
     });
-  } catch (e) { exclusivityBlocked = /exclusive to MUSE/.test(e.message); }
-  exclusivityBlocked ? ok('exclusivity: SM (Standard) blocked from a MUSE-exclusive oil') : bad('exclusivity guard did not block SM');
+  // Matched on the wording the lock actually uses ("is restricted to X and
+  // cannot be used by Y"). The first version of this looked for "exclusive",
+  // which appears nowhere in that message, so it passed for the wrong reason.
+  } catch (e) { if (!e.rollbackOnly) standardAllowed = !/is restricted to/i.test(e.message); }
+  standardAllowed
+    ? ok('exclusivity: the Atelier (Standard) CAN use a MUSE-platform oil')
+    : bad('the Atelier was blocked from a MUSE-platform oil — decision 9 says it may');
+
+  // And the boundary that widening it opened: a client's own production is not
+  // part of the Muse platform and must still be refused.
+  let majorBlocked = false;
+  try {
+    await withTransaction(async (client) => {
+      const tq = (t, p) => client.query(t, p);
+      await consumeFragranceOil(tq, OIL_ID, 10, 'MAJOR', 'test-exclusivity-major');
+    });
+  } catch (e) { majorBlocked = /is restricted to MUSE and cannot be used by MAJOR/i.test(e.message); }
+  majorBlocked
+    ? ok('exclusivity: client work (Major) is still blocked from a MUSE-platform oil')
+    : bad('a Major client could consume a MUSE-exclusive oil');
 
   let exclusivityAllowed = true;
   try {

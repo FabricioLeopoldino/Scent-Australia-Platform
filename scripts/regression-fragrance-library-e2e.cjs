@@ -88,13 +88,24 @@ async function cleanup() {
     ? ok('the same oil IS visible in the STANDARD (its own business) picker')
     : bad('SM-exclusive oil wrongly hidden from STANDARD');
 
-  // Vice-versa (Block 2 checklist): a MUSE-exclusive oil must be hidden from
-  // the SM buckets and still visible to MUSE itself.
+  // Vice-versa: a MUSE-platform oil is reachable by the Atelier and hidden from
+  // client work.
+  //
+  // CHANGED 2026-08-14. This block asserted that a MUSE-exclusive oil was hidden
+  // from BOTH SM buckets. The owner settled on 12 August that "MUSE" names the
+  // Muse PLATFORM — retail plus the Atelier — not MUSE retail alone (PRD locked
+  // decision 9), so the Atelier (segment STANDARD) must now see it. The suite
+  // kept asserting the old rule and failed quietly for two days.
+  //
+  // The MAJOR half below was RIGHT and had been failing for a real reason:
+  // STANDARD and MAJOR shared one exclusivity bucket, so widening the rule for
+  // the Atelier had also opened MUSE-platform oils to client production. MAJOR
+  // got its own bucket on 2026-08-14; this is the test that proves it.
   await sa.query(`UPDATE products SET exclusivity = 'MUSE' WHERE id = $1`, [OIL_ID]);
   const stdExcluded = await api('GET', '/api/sm/fragrance-library?segment=STANDARD');
   stdExcluded.json.some((o) => o.id === OIL_ID)
-    ? bad('MUSE-exclusive oil wrongly visible in the STANDARD picker')
-    : ok('MUSE-exclusive oil correctly hidden from the STANDARD picker');
+    ? ok('MUSE-platform oil IS visible in the Atelier (STANDARD) picker')
+    : bad('MUSE-platform oil wrongly hidden from the Atelier — decision 9 says it may use it');
   const majExcluded = await api('GET', '/api/sm/fragrance-library?segment=MAJOR');
   majExcluded.json.some((o) => o.id === OIL_ID)
     ? bad('MUSE-exclusive oil wrongly visible in the MAJOR picker')
