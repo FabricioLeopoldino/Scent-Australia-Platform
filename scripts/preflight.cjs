@@ -163,7 +163,13 @@ const sh = (c) => {
     // :3000 — the first --full run here looked greener than it was for exactly
     // that reason, on code five hours old. Preflight now owns the server, on a
     // port of its own so it cannot collide with anything the owner is running.
-    const PORT = 3996;
+    // 3980, not 399x. The suites that spawn their own server bind 3991, 3995,
+    // 3996, 3997 and 3998, and the first version of this took 3996 — the exact
+    // port regression-shopify-order-ingest.js uses. It then could not bind, fell
+    // through to THIS server, which carries no test webhook secret, and failed
+    // with 401 while passing perfectly when run on its own. A preflight that
+    // makes a healthy suite look broken is worse than no preflight.
+    const PORT = 3980;
     let server = null;
     try {
       server = spawn(process.execPath, ['server/index.js'], {
