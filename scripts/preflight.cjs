@@ -34,7 +34,11 @@ const LIVE = 'https://scent-australia-platform-1.onrender.com/api/health';
 const BASELINE = {
   muse_finished_goods: 454,   // the Library. +3 per new fragrance registered.
   business_unit_library: 454, // must track the line above exactly
-  production_orders: 2,       // SM-001 (#1020), SM-002 (#1021)
+  // SM-002 (#1021, the Kim Moss order). SM-001 (#1020, marketing's test order)
+  // was deleted by the owner through the UI on 2026-08-14 — audited as
+  // production_order_deleted by user 8, which is how it took ten seconds to
+  // prove no script had done it. Scripts write user_id NULL.
+  production_orders: 1,
   sa_oils: 325,               // the Fragrance Library
   negatives: 10,              // uncounted components, see integrity-sm UNCOUNTED
   oils_no_minimum: 22,        // MUSE oils that can never raise a warning
