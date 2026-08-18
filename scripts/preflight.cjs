@@ -34,11 +34,15 @@ const LIVE = 'https://scent-australia-platform-1.onrender.com/api/health';
 const BASELINE = {
   muse_finished_goods: 454,   // the Library. +3 per new fragrance registered.
   business_unit_library: 454, // must track the line above exactly
-  // SM-002 (#1021, the Kim Moss order). SM-001 (#1020, marketing's test order)
-  // was deleted by the owner through the UI on 2026-08-14 — audited as
+  // SM-002 (#1021, the Kim Moss order) and SM-003 (#1023, a marketing test by
+  // Ed Jones, refunded on the store and left in place at the owner's request).
+  // SM-001 was deleted by the owner through the UI on 2026-08-14 — audited as
   // production_order_deleted by user 8, which is how it took ten seconds to
   // prove no script had done it. Scripts write user_id NULL.
-  production_orders: 1,
+  //
+  // Kept current on purpose: a baseline that is always wrong is a line people
+  // stop reading, which is exactly what happened to the negative-stock check.
+  production_orders: 2,
   sa_oils: 325,               // the Fragrance Library
   // 14 since 2026-08-18: order #1022 was the first real MUSE sale to be MADE
   // rather than picked, and it drove the four Room Spray components negative —
