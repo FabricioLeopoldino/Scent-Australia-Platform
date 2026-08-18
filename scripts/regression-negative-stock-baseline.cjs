@@ -48,10 +48,17 @@ const NEG_SQL = (codes) => `
 (async () => {
   console.log('\n1. The exemption list is readable and bounded');
   check(UNCOUNTED.length > 0, 'UNCOUNTED parsed from integrity-sm.cjs', `got ${UNCOUNTED.length}`);
-  // A hard ceiling. Not arbitrary: it is the count on the day the list was
-  // created. Growing it is a deliberate act that has to come here and say so.
-  check(UNCOUNTED.length <= 10,
-    'the list has not grown past its original ten', `now ${UNCOUNTED.length}`);
+  // A hard ceiling. Not arbitrary: it is the count of components the warehouse
+  // has never counted. Growing it is a deliberate act that has to come here and
+  // say so — which is exactly what happened on 2026-08-18, when order #1022 was
+  // the first real MUSE sale to be MADE rather than picked and drove the four
+  // Room Spray components negative. Ten became fourteen, on purpose.
+  //
+  // Fourteen is now the whole set the owner listed for a physical count. If this
+  // needs raising again, something is being consumed that nobody has counted,
+  // and the honest answer is a count, not a bigger number here.
+  check(UNCOUNTED.length <= 14,
+    'the list has not grown past the fourteen awaiting a physical count', `now ${UNCOUNTED.length}`);
 
   const pool = new Pool({
     connectionString: process.env.PLATFORM_DATABASE_URL.replace('-pooler.', '.'),

@@ -96,6 +96,13 @@ const GUARDED = /--apply|--commit|CLEANUP_DATABASE_URL|assertStoreNotLive|ROLLBA
     'regression-muse-unmatched-alarm.js', 'verify-webhooks-d12.cjs',
     'regression-sa.js', 'regression-shopify-order-ingest.js',
     'regression-variant-oil-relink.js', 'regression-muse-fulfilment-model.js',
+    // Added 2026-08-18 and, unlike the rest of this list, it DOES tear down —
+    // its own product, audit rows and webhook_processed rows all go in a
+    // finally block, verified by re-running and seeing the counts unchanged.
+    // It is listed because this check classifies by what a file writes, not by
+    // whether it cleans up, and inventing a "has teardown" detector to keep one
+    // name off a list would be the wrong kind of clever.
+    'regression-awaiting-shipment.js',
   ];
 
   const unguarded = [];

@@ -148,6 +148,43 @@ router.get('/dashboard/draft-orders', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
+// ── Paid, nothing to make, waiting to be picked and posted ───────────────────
+//
+// WHY (2026-08-18). A MUSE order whose lines are covered by finished stock
+// creates no production order — correctly, there is nothing to manufacture —
+// and until today it left no record at all beyond a line in the server log.
+// Order #1022 was paid on a Sunday, needed one Room Spray taken off a shelf,
+// and existed on no screen in the platform. It was found because the Monday
+// preflight noticed a webhook that had moved nothing.
+//
+// The more finished stock the Library holds, the more orders take this path.
+//
+// Read entirely from our own audit log — no Shopify call, so it stays cheap
+// enough to sit on a dashboard that loads all day. An order leaves this list
+// when the fulfilment webhook writes muse_fulfillment_sale for the same Shopify
+// order id, which is what actually moves the stock.
+router.get('/dashboard/awaiting-shipment', auth, async (req, res) => {
+  try {
+    const { rows } = await query(`
+      SELECT r.created_at, r.entity_name AS order_ref,
+             r.details->>'shopify_order_id' AS shopify_order_id,
+             r.details->'lines' AS lines
+        FROM audit_log r
+       WHERE r.action = 'shopify_order_ready_to_ship'
+         -- The two closing events name the order differently: the fulfilment
+         -- writes details->order_id, the cancellation writes
+         -- details->shopify_order_id. Checking only one silently leaves
+         -- cancelled orders on the list forever.
+         AND NOT EXISTS (
+           SELECT 1 FROM audit_log f
+            WHERE f.action IN ('muse_fulfillment_sale', 'shopify_order_cancelled')
+              AND COALESCE(f.details->>'order_id', f.details->>'shopify_order_id')
+                  = r.details->>'shopify_order_id')
+       ORDER BY r.created_at`)
+    res.json(rows)
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
+})
+
 // ── Oil position behind the MUSE range ───────────────────────────────────────
 //
 // WHY (2026-08-13). The manager's stated requirement is that oil never runs out.

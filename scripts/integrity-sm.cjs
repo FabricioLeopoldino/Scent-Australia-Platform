@@ -42,8 +42,14 @@ const check = async (name, sql, pool = sm, expectZero = true) => {
   // LIST the day its physical count is entered; from then on a negative on it is
   // a real alarm. Anything NOT on this list fails immediately, which is the
   // whole point.
+  // Grew from ten to fourteen on 2026-08-18, deliberately. Order #1022 was the
+  // first real MUSE sale to be MADE rather than picked, and it consumed the four
+  // Room Spray components — which had never been counted either, so they went to
+  // −1 the moment one was built. Same cause as the other ten, not a new fault.
+  // The regression forces this edit to be conscious rather than silent.
   const UNCOUNTED = ['COMP_00006', 'COMP_00007', 'COMP_00008', 'COMP_00009',
-    'COMP_00010', 'COMP_00011', 'COMP_00016', 'COMP_00017', 'COMP_00018', 'RAW_00001'];
+    'COMP_00010', 'COMP_00011', 'COMP_00016', 'COMP_00017', 'COMP_00018', 'RAW_00001',
+    'COMP_00012', 'COMP_00013', 'COMP_00014', 'COMP_00015'];
   await check('no negative stock (uncounted components exempt; MUSE retail finished goods exempt)',
     `SELECT COUNT(*) n FROM products v
      WHERE v.current_stock < 0

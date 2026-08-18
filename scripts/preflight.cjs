@@ -40,7 +40,10 @@ const BASELINE = {
   // prove no script had done it. Scripts write user_id NULL.
   production_orders: 1,
   sa_oils: 325,               // the Fragrance Library
-  negatives: 10,              // uncounted components, see integrity-sm UNCOUNTED
+  // 14 since 2026-08-18: order #1022 was the first real MUSE sale to be MADE
+  // rather than picked, and it drove the four Room Spray components negative —
+  // they had never been counted either. See integrity-sm UNCOUNTED.
+  negatives: 14,
   oils_no_minimum: 22,        // MUSE oils that can never raise a warning
 };
 

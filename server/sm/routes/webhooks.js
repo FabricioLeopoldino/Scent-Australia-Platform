@@ -72,6 +72,8 @@ const FULFILLMENT_TOPICS = ['fulfillments/create', 'fulfillments/update'];
 // original plan and is wrong: getNextOrderNumber parses the previous number
 // back out with replace('SM-',''), so one MUSE-numbered row would make every
 // later order SM-NaN. The Shopify identity lives in shopify_order_number.
+// ═══════════════════════════════════════════════════════════════════════════
+
 // What an unmatched line records, beyond the reason it did not match.
 //
 // The Atelier has not launched, so nobody can say yet how its orders will be
@@ -106,6 +108,7 @@ const lineShape = (li) => ({
 async function planLinesFromShopifyOrder(tq, body) {
   const toProduce = [];
   const unmatched = [];
+  const fromStock = [];   // matched, and the shelf already covers it — pick, don't make
   const shape = lineShape;
   for (const li of (Array.isArray(body.line_items) ? body.line_items : [])) {
     const sku = (li.sku || '').trim();
@@ -130,7 +133,16 @@ async function planLinesFromShopifyOrder(tq, body) {
     if (!v.master_code) { unmatched.push({ reason: 'no_master', sku, title, qty, ...shape(li) }); continue; }
 
     const need = qty - (parseFloat(v.current_stock) || 0);
-    if (need <= 0) continue; // covered by finished stock already on the shelf
+    if (need <= 0) {
+      // Covered by finished stock, so there is nothing to MAKE — but somebody
+      // still has to pick it and post it. This used to `continue` and the line
+      // was gone: order #1022 (Daniel Edwards, 17 Aug, one Adventure Room Spray
+      // off a shelf of one) left exactly one row in the whole platform, in
+      // webhook_processed, and appeared on no screen at all. Kept so the order
+      // can be shown as waiting to ship.
+      fromStock.push({ sku, title, qty, product_id: v.id, variant_name: v.name });
+      continue;
+    }
 
     toProduce.push({
       product_type: v.master_code,
@@ -141,7 +153,7 @@ async function planLinesFromShopifyOrder(tq, body) {
       variant_name: v.name,
     });
   }
-  return { toProduce, unmatched };
+  return { toProduce, unmatched, fromStock };
 }
 
 async function createProductionOrderFromShopify(body, shopifyOrderId) {
@@ -157,8 +169,11 @@ async function createProductionOrderFromShopify(body, shopifyOrderId) {
   // that collision is the fix; anything else rethrows.
   const attempt = async () => await withTransaction(async (client) => {
     const tq = (text, params) => client.query(text, params);
-    const { toProduce, unmatched } = await planLinesFromShopifyOrder(tq, body);
-    if (toProduce.length === 0) return { toProduce, unmatched, order: null };
+    const { toProduce, unmatched, fromStock } = await planLinesFromShopifyOrder(tq, body);
+    // fromStock has to come back HERE above all: this is the branch a
+    // shelf-covered order takes, and without it plan.fromStock is undefined and
+    // the "waiting to ship" audit never fires — on the one path it exists for.
+    if (toProduce.length === 0) return { toProduce, unmatched, fromStock, order: null };
 
     const orderNumber = await getNextOrderNumber();
     const ord = (await tq(
@@ -194,7 +209,7 @@ async function createProductionOrderFromShopify(body, shopifyOrderId) {
       // start and debit nothing.
       await buildLineComponents(ord.id, dbLine, line, null, tq);
     }
-    return { toProduce, unmatched, order: ord };
+    return { toProduce, unmatched, fromStock, order: ord };
   });
 
   let plan;
@@ -214,8 +229,25 @@ async function createProductionOrderFromShopify(body, shopifyOrderId) {
       shopify_order: orderRef, shopify_order_id: shopifyOrderId,
       lines: plan.toProduce.map((l) => ({ product_type: l.product_type, qty: l.quantity, variant: l.variant_name })),
     });
-  } else {
-    console.log(`[muse-order] ${orderRef} — every line is covered by finished stock, no production order created`);
+  } else if (plan.fromStock?.length) {
+    // Nothing to MAKE, but the goods still have to be picked and posted. Until
+    // 2026-08-18 this branch was a console.log and nothing else, so an order
+    // that shipped off the shelf existed nowhere a person could see it. Order
+    // #1022 — a real customer, paid on a Sunday — sat unshipped and unknown
+    // until the Monday preflight noticed a webhook that had moved nothing.
+    //
+    // This gets WORSE as the range builds up finished stock, which is the plan
+    // for the Library: the more they hold, the more orders vanish.
+    //
+    // The audit row is what /dashboard/awaiting-shipment reads, and it is
+    // cleared by the fulfilment webhook writing muse_fulfillment_sale for the
+    // same Shopify order id.
+    console.log(`[muse-order] ${orderRef} — covered by finished stock, nothing to make; waiting to ship`);
+    await auditLog(0, 'shopify_order_ready_to_ship', 'production_order', null, orderRef, {
+      shopify_order: orderRef,
+      shopify_order_id: shopifyOrderId,
+      lines: plan.fromStock.map((l) => ({ sku: l.sku, qty: l.qty, variant: l.variant_name || l.title })),
+    });
   }
 
   // Lines we could not plan. Unlike the fulfilment alarm nothing has shipped

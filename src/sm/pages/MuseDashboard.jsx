@@ -17,6 +17,7 @@ export default function MuseDashboard() {
   const [fragrances, setFragrances] = useState([])
   const [materials, setMaterials] = useState([])
   const [oil, setOil]             = useState(null)
+  const [toShip, setToShip]       = useState([])
   const [loading, setLoading]     = useState(true)
   const [, navigate]              = useLocation()
   const { addToast } = useToast()
@@ -26,7 +27,7 @@ export default function MuseDashboard() {
   async function load() {
     setLoading(true)
     try {
-      const [m, p, o, f, mat, oilPos] = await Promise.all([
+      const [m, p, o, f, mat, oilPos, ship] = await Promise.all([
         axios.get('/api/masters', { ...api(), params: { segment: 'MUSE' } }),
         axios.get('/api/products', { ...api(), params: { category: 'FINISHED_GOOD' } }),
         axios.get('/api/production-orders', api()),
@@ -37,8 +38,13 @@ export default function MuseDashboard() {
         // running low. Failing softly: an oil read that breaks must not take the
         // whole dashboard down with it.
         axios.get('/api/dashboard/oil-position', api()).catch(() => ({ data: null })),
+        // Orders paid on the store that need nothing MADE — just picked and
+        // posted. They used to create no record at all, so #1022 sat unshipped
+        // and invisible from a Sunday until the Monday check found it.
+        axios.get('/api/dashboard/awaiting-shipment', api()).catch(() => ({ data: [] })),
       ])
       setOil(oilPos.data)
+      setToShip(ship.data || [])
       setMasters(m.data)
       setVariants(p.data.filter(v => v.segment === 'MUSE' && v.master_product_id && !v.archived))
       // Components, labels and raw materials — the things that actually run out.
@@ -101,6 +107,36 @@ export default function MuseDashboard() {
           color={negative.length ? '#f87171' : lowStock.length > 0 ? '#fbbf24' : '#4ade80'}
           icon={<AlertTriangle size={16} />} onClick={() => navigate('/muse-stock')} />
       </div>
+
+      {/* Paid on the store, nothing to make, waiting to be picked and posted.
+          Deliberately above everything else: it is the only thing on this page
+          with a customer already waiting. Hidden when empty — an always-present
+          empty box teaches people to stop looking. */}
+      {toShip.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <Card title="Paid — waiting to ship" color="#4ade80" icon={<ShoppingBag size={14} />}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {toShip.map((o) => (
+                <div key={o.shopify_order_id} style={{ padding: '10px 12px', background: 'var(--surface-2)', border: '1px solid rgba(74,222,128,0.35)', borderRadius: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace' }}>{o.order_ref}</span>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{fmtDate(o.created_at)}</span>
+                  </div>
+                  {(o.lines || []).map((l, i) => (
+                    <div key={i} style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+                      {l.qty} × {l.variant} <span style={{ fontFamily: 'monospace' }}>{l.sku}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.5 }}>
+              These need no production — the stock is already on the shelf. They clear
+              from here when the order is marked fulfilled on the store.
+            </div>
+          </Card>
+        </div>
+      )}
 
       {/* Row: Top variants + Low/Out of stock */}
       <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 18, marginBottom: 24 }}>
