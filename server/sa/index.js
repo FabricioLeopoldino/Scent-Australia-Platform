@@ -4537,10 +4537,25 @@ router.post('/returns', async (req, res) => {
         ? `Return: ${notes.trim()} | Returned by: ${returnedBy.trim()}`
         : `Product return | Returned by: ${returnedBy.trim()}`;
       
+      // user_id added 2026-08-18. Every one of the 893 returns in the history
+      // has NULL here, so the only record of who was involved is the free text
+      // above — and that text is typed by hand: four or so people appear under
+      // twelve spellings ("Joao", "Joao G", "Joao Gabriel"), sometimes two names
+      // in one field. Finance asks "who used this", and today that can be read
+      // but not filtered or counted.
+      //
+      // These are two different facts and both matter:
+      //   returnedBy  who physically brought the goods back — often a warehouse
+      //               worker with no login, so it stays free text for now
+      //   user_id     who ENTERED it, which the session already knows for
+      //               certain and was simply being discarded
+      //
+      // The second is what made the mis-entered return of 11 August traceable
+      // only because someone remembered. It is recorded now.
       await client.query(
-        `INSERT INTO transactions 
-         (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes) 
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        `INSERT INTO transactions
+         (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes, user_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
           productId,
           product.productCode || product.tag,
@@ -4550,7 +4565,8 @@ router.post('/returns', async (req, res) => {
           quantityToAdd,
           product.unit,
           newStock,
-          transactionNotes
+          transactionNotes,
+          req.user?.id || null
         ]
       );
       
