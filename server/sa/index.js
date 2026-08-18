@@ -4483,23 +4483,62 @@ if (!existsSync(uploadsDir)) {
 // ========================================================================
 // PRODUCT RETURNS ENDPOINT
 // ========================================================================
+// The people who physically handle stock, which is NOT the same list as the
+// people who can log in (owner decision, 2026-08-18). Gustavo and Wanderson do
+// the work through somebody else's account, so an account list would leave them
+// unnameable — and they are the ones the history most needed to name.
+//
+// Read-only. Feeds the "Returned by" selector, which replaces a free-text box
+// that produced nine spellings for five people.
+router.get('/warehouse-operators', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT id, name, user_id FROM sa.warehouse_operators WHERE active ORDER BY name`);
+    res.json(r.rows);
+  } catch (e) {
+    console.error('[warehouse-operators]', e.message);
+    res.status(500).json({ error: 'Failed to load operators' });
+  }
+});
+
 router.post('/returns', async (req, res) => {
   const client = await pool.connect();
   
   try {
     await client.query('BEGIN');
     
-    const { items, notes, returnedBy } = req.body;
-    
+    const { items, notes, returnedBy, operatorIds } = req.body;
+
     // Validation
     if (!items || !Array.isArray(items) || items.length === 0) {
       throw new Error('No items provided');
     }
-    
-    if (!returnedBy || !returnedBy.trim()) {
-      throw new Error('returnedBy is required');
+
+    // operatorIds is the field that replaces free text (owner decision,
+    // 2026-08-18). `returnedBy` stays accepted so an older client keeps working
+    // and so the note reads the same, but the ARRAY is what can be filtered.
+    // More than one is normal: "Fabricio/Joao" in the history means both of them
+    // did it together.
+    //
+    // Resolved to names here rather than trusted from the client, so the note
+    // and the array can never disagree.
+    let opIds = Array.isArray(operatorIds) ? operatorIds.map(Number).filter(Boolean) : [];
+    let opNames = [];
+    if (opIds.length) {
+      const found = await client.query(
+        `SELECT id, name FROM sa.warehouse_operators WHERE id = ANY($1::int[]) AND active`, [opIds]);
+      if (found.rows.length !== opIds.length) {
+        throw new Error('One or more operators are unknown or inactive');
+      }
+      opIds = found.rows.map((r) => r.id);
+      opNames = found.rows.map((r) => r.name);
     }
-    
+
+    const whoDidIt = opNames.length ? opNames.join(' / ') : (returnedBy || '').trim();
+    if (!whoDidIt) {
+      throw new Error('operatorIds or returnedBy is required');
+    }
+
     const processedItems = [];
     
     // Process each return item
@@ -4534,8 +4573,8 @@ router.post('/returns', async (req, res) => {
       
       // Create return transaction with notes and returnedBy
       const transactionNotes = notes && notes.trim() 
-        ? `Return: ${notes.trim()} | Returned by: ${returnedBy.trim()}`
-        : `Product return | Returned by: ${returnedBy.trim()}`;
+        ? `Return: ${notes.trim()} | Returned by: ${whoDidIt}`
+        : `Product return | Returned by: ${whoDidIt}`;
       
       // user_id added 2026-08-18. Every one of the 893 returns in the history
       // has NULL here, so the only record of who was involved is the free text
@@ -4554,8 +4593,8 @@ router.post('/returns', async (req, res) => {
       // only because someone remembered. It is recorded now.
       await client.query(
         `INSERT INTO transactions
-         (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes, user_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+         (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes, user_id, operator_ids)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           productId,
           product.productCode || product.tag,
@@ -4566,7 +4605,10 @@ router.post('/returns', async (req, res) => {
           product.unit,
           newStock,
           transactionNotes,
-          req.user?.id || null
+          req.user?.id || null,
+          // The filterable half. The note above carries the same names as text
+          // for anyone reading the history; this is what a report can group by.
+          opIds.length ? opIds : null
         ]
       );
       
@@ -4583,11 +4625,17 @@ router.post('/returns', async (req, res) => {
     
     await client.query('COMMIT');
     
+    // whoDidIt, not returnedBy.trim(). With the selector sending only
+    // operatorIds, returnedBy is undefined and .trim() threw — AFTER the COMMIT
+    // one line above. The caller got a 500 for a return that had already been
+    // saved, and a warehouse that retried would have entered it twice. The
+    // regression caught it on the first run.
     res.json({
       success: true,
       processedCount: processedItems.length,
       items: processedItems,
-      returnedBy: returnedBy.trim(),
+      returnedBy: whoDidIt,
+      operatorIds: opIds,
       timestamp: new Date().toISOString()
     });
     

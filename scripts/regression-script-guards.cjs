@@ -103,6 +103,10 @@ const GUARDED = /--apply|--commit|CLEANUP_DATABASE_URL|assertStoreNotLive|ROLLBA
     // whether it cleans up, and inventing a "has teardown" detector to keep one
     // name off a list would be the wrong kind of clever.
     'regression-awaiting-shipment.js',
+    // Also tears down, and asserts it: it writes to SA, which is a production
+    // system in daily use, so it deletes its product and every transaction it
+    // caused and then FAILS if a single row is left behind.
+    'regression-warehouse-operators.js',
   ];
 
   const unguarded = [];
