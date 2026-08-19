@@ -32,6 +32,44 @@ const CONFIG = {
   },
 }
 
+
+// The Details column held raw JSON on one clipped line, so it read as
+// `{"unit": "mL", "category": "OILS", "orderNumber": "30.7.26", "productCo` —
+// broken mid-key, and useless on the page that is meant to be the audit record.
+// This turns it into something a person reads: keys as words, values inline, a
+// list summarised by its first entry rather than dumped.
+const LABEL = { shopify_order_id: 'shopify id', shopify_order_number: 'order', refund_id: 'refund',
+  order_status: 'status', product_type: 'format', productCode: 'product', orderNumber: 'order',
+  totalQuantity: 'qty', receiveType: 'received', shopify_order: 'order' }
+const words = (k) => LABEL[k] || k.replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()
+
+function readable(raw) {
+  if (!raw) return '—'
+  let o
+  try { o = typeof raw === 'string' ? JSON.parse(raw) : raw } catch { return String(raw) }
+  if (o == null || typeof o !== 'object') return String(raw)
+  const parts = []
+  for (const [k, v] of Object.entries(o)) {
+    if (v == null || v === '') continue
+    if (Array.isArray(v)) {
+      // "lines" is the common one: show what it is, not how it is stored.
+      const first = v[0]
+      const shown = first && typeof first === 'object'
+        ? Object.values(first).filter((x) => typeof x !== 'object').slice(0, 3).join(' ')
+        : String(first ?? '')
+      const noun = v.length === 1 ? words(k).replace(/s$/, '') : words(k)
+      parts.push(`${v.length} ${noun}: ${shown}${v.length > 1 ? ' …' : ''}`)
+    } else if (typeof v === 'object') {
+      // a from/to pair, as product_updated writes
+      const inner = Object.entries(v).map(([a, b]) => `${a} ${b}`).join(' → ')
+      parts.push(`${words(k)} ${inner}`)
+    } else {
+      parts.push(`${words(k)} ${v}`)
+    }
+  }
+  return parts.length ? parts.join('  ·  ') : '—'
+}
+
 function SysBadge({ system }) {
   const c = SYS_COLOR[system] || '#94a3b8'
   return (
@@ -201,7 +239,8 @@ export default function HistoryActivity({ kind = 'history' }) {
                         {r.entity_type && <span style={{ fontSize: 11, color: 'rgba(232,234,242,0.35)', marginLeft: 6 }}>{r.entity_type}</span>}
                       </td>
                       <td style={{ padding: '9px 14px', fontSize: 11, color: 'rgba(232,234,242,0.4)', maxWidth: 320 }}>
-                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.details || '—'}</div>
+                        {/* title carries the full text so nothing is lost when it wraps */}
+                        <div title={r.details || ''} style={{ lineHeight: 1.5, wordBreak: 'break-word' }}>{readable(r.details)}</div>
                       </td>
                     </>
                   )}
