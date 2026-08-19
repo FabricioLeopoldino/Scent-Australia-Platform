@@ -6,7 +6,7 @@ import {
   BookOpen, Users, ScanBarcode, Truck, RotateCcw,
   History, ScrollText, UserCog, LogOut, ChevronLeft, ChevronRight,
   Beaker, ClipboardList, Building2, Star, Briefcase, Tag, Box, FlaskConical,
-  Sun, Moon, Send,
+  Sun, Moon, Send, FileText,
 } from 'lucide-react'
 
 function getInitialTheme() {
@@ -58,6 +58,9 @@ const NAV_SECTIONS = [
     // Centralized cross-system pages (SA + Scented + MUSE), admin/root only (owner 2026-07-28).
     { path: '/history', label: 'History', icon: History, roles: ['root','admin'] },
     { path: '/activity', label: 'Activity', icon: ScrollText, roles: ['root','admin'] },
+    // The list answers "what happened"; this answers "how much was there, and
+    // where did it go" — the question the owner could not get out of the list.
+    { path: '/statement', label: 'Statement', icon: FileText, roles: ['root','admin'] },
   ]},
   // SYSTEM section removed on the platform: user management is platform-level
   // (root reaches it from the Module Picker).
