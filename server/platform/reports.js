@@ -1,7 +1,7 @@
 import express from 'express';
 import { saPool, smPool, platformPool } from '../db.js';
 import { requireRole } from './auth.js';
-import { DIRECTION_SQL } from './movement-direction.js';
+import { DIRECTION_SQL, BUSINESS_SQL } from './movement-direction.js';
 
 const router = express.Router();
 
@@ -139,6 +139,174 @@ function sendCsv(res, name, header, cols, rows, dateCol) {
   res.setHeader('Content-Disposition', `attachment; filename="${name}-${new Date().toISOString().slice(0, 10)}.csv"`);
   res.send(lines.join('\r\n'));
 }
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// STATEMENT (owner 2026-08-19) — the question the History list could not answer
+// ═══════════════════════════════════════════════════════════════════════
+// His words: *"eu penso no History e Activity como uma fonte de auditoria"*, and
+// the test question was the spec: for Santal 33, from the start of the month to
+// now — how much was there, how much was used, who used it, was it SA or MUSE?
+//
+// Searching the list already worked. It returned 271 rows for Zen Garden, and
+// not one of them answered him; only their total would. So this is not another
+// filter, it is the arithmetic: open, move, close, and check.
+//
+// OPENING BALANCE HAS TWO STATES, and they must never be shown as one:
+//   known    the balance_after of the last movement before the period
+//   unknown  no movement before it — nothing was ever received, so every figure
+//            here is relative, not absolute
+// Fourteen MUSE components are in the second state: the first movement of their
+// lives was a consumption. A statement claiming they "reconcile" would be lying.
+// The owner's analogy is exact — a car's odometer only moves when the car moves,
+// and on those it was fitted after the car had already been driven.
+//
+// GENERIC ACROSS PRODUCT TYPES on purpose (owner decision): components, labels
+// and ethanol ask the same question and the arithmetic is identical.
+const POOL_FOR = { SA: () => saPool, SM: () => smPool };
+const STOCK_COL = { SA: '"currentStock"', SM: 'current_stock' };
+const CODE_COL  = { SA: '"productCode"', SM: 'product_code' };
+
+router.get('/statement', requireRole('root', 'admin'), async (req, res) => {
+  try {
+    const schema = String(req.query.schema || 'SA').toUpperCase();
+    const code = String(req.query.code || '').trim();
+    const { from, to } = req.query;
+    if (!POOL_FOR[schema]) return res.status(400).json({ error: 'schema must be SA or SM' });
+    if (!code) return res.status(400).json({ error: 'code required' });
+    const pool = POOL_FOR[schema]();
+
+    const prod = (await pool.query(
+      `SELECT name, unit, ${STOCK_COL[schema]}::float AS stock FROM products WHERE ${CODE_COL[schema]} = $1`,
+      [code])).rows[0];
+    if (!prod) return res.status(404).json({ error: 'product not found' });
+
+    // Opening: the balance the ledger last recorded before the window. Read, not
+    // computed — sa.transactions carries balance_after on every row, so there is
+    // no need to replay history and no chance of drifting from it.
+    const openRow = from ? (await pool.query(
+      `SELECT balance_after::float b FROM transactions
+        WHERE product_code = $1 AND (created_at AT TIME ZONE 'Australia/Sydney')::date < $2::date
+        ORDER BY created_at DESC, id DESC LIMIT 1`, [code, from])).rows[0] : null;
+
+    // When nothing precedes the window, the opening is NOT zero — it is whatever
+    // the product held before its first recorded movement, which is that
+    // movement's balance_after minus its own effect.
+    //
+    // Assuming zero broke every full-history statement: 59 of 60 SA products
+    // came out short, because the July migration set balances directly and wrote
+    // no transaction for them. FRAG_0003 was out by 59,000. The ledger starts
+    // mid-life, and the first row still says what the shelf held before it.
+    // The first movement INSIDE the window, not the first ever. Reading the
+    // first of all time gave LBL_00001 an opening of −500 for August, because
+    // its earliest movement is months old and has nothing to do with the period
+    // being asked about.
+    const firstRow = openRow ? null : (await pool.query(
+      `SELECT balance_after::float b, quantity::float q, ${DIRECTION_SQL('type')} AS direction
+         FROM transactions WHERE product_code = $1
+           ${from ? "AND (created_at AT TIME ZONE 'Australia/Sydney')::date >= '" + String(from).replace(/'/g, '') + "'::date" : ''}
+        ORDER BY created_at ASC, id ASC LIMIT 1`, [code])).rows[0];
+
+    // Whether the product has EVER been received is the thing worth flagging —
+    // not the opening figure, which is always computable.
+    //
+    // The first version of this reported "opening UNKNOWN" whenever nothing
+    // preceded the window, and that was wrong twice over: it said UNKNOWN for a
+    // label whose 500 were entered inside the window (opening was plainly 0),
+    // and it dressed up the real problem as a missing number. The real problem
+    // is that fourteen MUSE components have never had a receipt of any kind, so
+    // their 0 is an assumption nobody made deliberately — there are bottles on
+    // the shelf that the system has never been told about. The arithmetic still
+    // works; it is the ground it starts from that is fiction.
+    const receipts = Number((await pool.query(
+      `SELECT count(*) c FROM transactions WHERE product_code = $1
+         AND type IN ('add','transfer_in','incoming','ready_formula_in','production_in')`,
+      [code])).rows[0].c);
+
+    // Built with the alias it is used under. An earlier version wrote it for
+    // `t.` and rewrote the prefix with a regex before use — one lost backslash
+    // and `/t./g` would have mangled every word containing a t.
+    const params = [code];
+    let period = '';
+    if (from) { params.push(from); period += ` AND (e.created_at AT TIME ZONE 'Australia/Sydney')::date >= $${params.length}::date`; }
+    if (to)   { params.push(to);   period += ` AND (e.created_at AT TIME ZONE 'Australia/Sydney')::date <= $${params.length}::date`; }
+
+    // Each movement's SIGNED EFFECT, taken from what the balance actually did —
+    // not from the recorded magnitude and not from the type.
+    //
+    // Summing magnitudes by a type→direction map does not reconcile, and the
+    // first version of this proved it: LBL_00001 came out at −84 against a real
+    // 498, because `adjust` is deliberately neutral for DISPLAY (it can go
+    // either way, so the row must not claim one) and a neutral type contributed
+    // nothing to the arithmetic. An adjustment moves stock like anything else.
+    //
+    // balance_after is on every row, so the effect is knowable exactly. The type
+    // still labels the row; it no longer decides the sum.
+    const moves = (await pool.query(`
+      WITH e AS (
+        SELECT t.type, t.quantity::float AS qty, t.balance_after::float AS bal,
+               t.balance_after::float - lag(t.balance_after::float)
+                 OVER (PARTITION BY t.product_code ORDER BY t.created_at, t.id) AS effect,
+               t.created_at,
+               -- No previous row means no delta to read. The type map supplies
+               -- the SIGN then — never the bare magnitude, which added an
+               -- outbound instead of subtracting it and left every product whose
+               -- first movement was a sale off by exactly twice that first
+               -- quantity. LBL_00001 and COMP_00006 were each out by 4.
+               CASE WHEN ${DIRECTION_SQL()} = 'out' THEN -t.quantity::float
+                    ELSE t.quantity::float END AS signed_fallback
+          FROM transactions t WHERE t.product_code = $1)
+      SELECT e.type, ${BUSINESS_SQL('e.type')} AS business,
+             sum(COALESCE(e.effect, e.signed_fallback))::float AS effect,
+             sum(e.qty)::float AS recorded,
+             count(*)::int AS movements
+        FROM e WHERE true ${period}
+       GROUP BY 1, 2 ORDER BY abs(sum(COALESCE(e.effect, e.signed_fallback))) DESC`, params)).rows;
+
+    const ins  = moves.filter((m) => m.effect > 0).reduce((a, m) => a + m.effect, 0);
+    const outs = moves.filter((m) => m.effect < 0).reduce((a, m) => a - m.effect, 0);
+
+    // balance_after can be NULL — LBL_00001's very first row is the opening
+    // delivery and carries none. `null - 500` is -500 in JavaScript, which is
+    // how August came out at -500 instead of 0. A row with no recorded balance
+    // says nothing about what came before it, so the honest reading is zero.
+    const opening = openRow?.b != null ? openRow.b
+      : firstRow?.b != null ? firstRow.b - (firstRow.direction === 'out' ? -firstRow.q : firstRow.q)
+      : 0;
+    const closing = opening + ins - outs;
+
+    res.json({
+      product: { schema, code, name: prod.name, unit: prod.unit, stock_now: prod.stock },
+      period: { from: from || null, to: to || null },
+      opening,
+      // The caveat that matters, and it is not about the number above.
+      ever_received: receipts > 0,
+      received: ins,
+      used: outs,
+      closing,
+      // The audit property: the ledger must add up to the shelf.
+      reconciles: Math.abs(closing - prod.stock) < 0.001,
+      movements: moves,
+    });
+  } catch (e) { console.error('[platform/statement]', e.message); res.status(500).json({ error: 'Failed to build statement' }); }
+});
+
+// Product picker for the statement. Searching "Santal" in the list returned 337
+// rows across SEVEN different products with nothing saying so; this makes the
+// choice explicit before any arithmetic is done on it.
+router.get('/statement/products', requireRole('root', 'admin'), async (req, res) => {
+  try {
+    const q = `%${String(req.query.q || '').trim()}%`;
+    const [sa, sm] = await Promise.all([
+      saPool.query(`SELECT "productCode" AS code, name, category, unit, "currentStock"::float AS stock, 'SA' AS schema
+                      FROM products WHERE name ILIKE $1 OR "productCode" ILIKE $1 ORDER BY name LIMIT 25`, [q]),
+      smPool.query(`SELECT product_code AS code, name, category, unit, current_stock::float AS stock, 'SM' AS schema
+                      FROM products WHERE (name ILIKE $1 OR product_code ILIKE $1)
+                        AND COALESCE(archived,false) = false ORDER BY name LIMIT 25`, [q]),
+    ]);
+    res.json([...sa.rows, ...sm.rows]);
+  } catch (e) { console.error('[platform/statement/products]', e.message); res.status(500).json({ error: 'Failed to search' }); }
+});
 
 // ── Routes ──────────────────────────────────────────────────────────────
 router.get('/history', requireRole('root', 'admin'), async (req, res) => {

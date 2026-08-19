@@ -80,3 +80,48 @@ export const DIRECTION_SQL = (col = 't.type') => `
 // ESM. server/sm is CommonJS; if it ever needs this, it imports rather than
 // keeping a second copy — a rule written twice is how the webhook topics and
 // the format lists drifted apart.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Which business a movement belongs to.
+//
+// Added 2026-08-19 for the statement. The owner's question was "was it SA, or
+// MUSE?" and the answer is already in the data — the type says who consumed it.
+// No new column, no backfill.
+//
+// Kept beside the direction map deliberately: they are read together on every
+// row of a statement, and splitting them across two files is how a rule becomes
+// two rules that disagree.
+const BUSINESS = {
+  shopify_sale:          'Store sale',
+  shopify_reversal:      'Store sale reversed',
+  muse_production:       'MUSE',
+  sm_std_production:     'The Atelier',
+  sm_major_production:   'Client work',
+  production_debit:      'Production',
+  production_in:         'Production',
+  ready_formula_in:      'Production',
+  return:                'Returned',
+  add:                   'Entered by hand',
+  remove:                'Entered by hand',
+  adjust:                'Entered by hand',
+  transfer_in:           'Transfer',
+  transfer_out:          'Transfer',
+  transfer_cancel_return:'Transfer cancelled',
+  tech_transfer_in:      'Technicians',
+  tech_transfer_out:     'Technicians',
+  tech_remove:           'Technicians',
+  tech_return_input:     'Technicians',
+  tech_return_to_main:   'Technicians',
+  tech_return_from_tech: 'Technicians',
+};
+
+/** A readable business label, or the raw type when we have not classified it. */
+export function businessOf(type) {
+  const t = String(type || '').trim();
+  return BUSINESS[t] || t || 'Unknown';
+}
+
+export const BUSINESS_SQL = (col = 't.type') =>
+  `CASE ${Object.entries(BUSINESS).map(([k, v]) => `WHEN ${col} = '${k}' THEN '${v.replace(/'/g, "''")}'`).join(' ')} ELSE ${col} END`;
+
+export { BUSINESS };
