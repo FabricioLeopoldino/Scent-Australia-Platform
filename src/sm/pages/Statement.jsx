@@ -19,6 +19,20 @@ function api() { return { headers: { Authorization: `Bearer ${localStorage.getIt
 const fmt = (n, unit) => n == null ? '—'
   : `${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}${unit ? ` ${unit}` : ''}`
 
+// Litres alongside millilitres, never instead of them (owner 2026-08-19: "tem
+// gente aqui que não sabe converter"). The stored figure stays the headline so
+// it always matches the rest of the platform; the litre reading rides beside it.
+//
+// Matched case-insensitively on purpose: stock is stored as 'mL' in sa and 'ml'
+// in sm, and the existing fmtVolume helper compares against lowercase 'ml' only
+// — so it silently declines to convert every SA fragrance.
+const litres = (n, unit) => {
+  if (n == null || !/^ml$/i.test(String(unit || ''))) return null
+  const v = Math.abs(Number(n))
+  if (!isFinite(v) || v < 1000) return null
+  return `${(Number(n) / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 })} L`
+}
+
 const firstOfMonth = () => {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
@@ -76,7 +90,7 @@ export default function Statement() {
   const unit = data?.product?.unit || ''
 
   return (
-    <div style={{ padding: 28, maxWidth: 1100 }}>
+    <div style={{ padding: 28, maxWidth: 1400 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 22 }}>
         <FileText size={22} color="#60a5fa" />
         <div>
@@ -173,7 +187,7 @@ export default function Statement() {
             </div>
           )}
 
-          <Row label="Opening balance" value={fmt(data.opening, unit)} strong />
+          <Row label="Opening balance" value={fmt(data.opening, unit)} sub={litres(data.opening, unit)} strong />
 
           <div style={{ margin: '10px 0', paddingLeft: 14, borderLeft: '2px solid rgba(255,255,255,0.08)' }}>
             {data.movements.length === 0 && (
@@ -190,16 +204,21 @@ export default function Statement() {
                 <span style={{ fontSize: 12.5, fontWeight: 700, fontFamily: 'monospace', whiteSpace: 'nowrap',
                   color: m.effect < 0 ? '#f87171' : m.effect > 0 ? '#4ade80' : 'var(--text-muted)' }}>
                   {m.effect > 0 ? '+' : m.effect < 0 ? '−' : ''}{fmt(Math.abs(m.effect), unit)}
+                  {litres(m.effect, unit) && (
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 7, fontWeight: 500 }}>
+                      {litres(Math.abs(m.effect), unit)}
+                    </span>
+                  )}
                 </span>
               </div>
             ))}
           </div>
 
-          <Row label="Received" value={`+ ${fmt(data.received, unit)}`} color="#4ade80" />
-          <Row label="Used" value={`− ${fmt(data.used, unit)}`} color="#f87171" />
+          <Row label="Received" value={`+ ${fmt(data.received, unit)}`} sub={litres(data.received, unit)} color="#4ade80" />
+          <Row label="Used" value={`− ${fmt(data.used, unit)}`} sub={litres(data.used, unit)} color="#f87171" />
           <div style={{ height: 1, background: 'rgba(255,255,255,0.1)', margin: '10px 0' }} />
-          <Row label="Closing balance" value={fmt(data.closing, unit)} strong />
-          <Row label="Stock on the shelf" value={fmt(data.product.stock_now, unit)} />
+          <Row label="Closing balance" value={fmt(data.closing, unit)} sub={litres(data.closing, unit)} strong />
+          <Row label="Stock on the shelf" value={fmt(data.product.stock_now, unit)} sub={litres(data.product.stock_now, unit)} />
 
           {/* The audit property. A statement that does not balance is not a
               report, it is a rumour — so it says which it is. */}
@@ -221,11 +240,14 @@ export default function Statement() {
   )
 }
 
-function Row({ label, value, strong, color }) {
+function Row({ label, value, sub, strong, color }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '4px 0', gap: 12 }}>
       <span style={{ fontSize: strong ? 13.5 : 12.5, fontWeight: strong ? 700 : 500, color: strong ? 'var(--text-primary)' : 'rgba(232,234,242,0.7)' }}>{label}</span>
-      <span style={{ fontSize: strong ? 14 : 12.5, fontWeight: 700, fontFamily: 'monospace', color: color || 'var(--text-primary)', whiteSpace: 'nowrap' }}>{value}</span>
+      <span style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: strong ? 14 : 12.5, fontWeight: 700, fontFamily: 'monospace', color: color || 'var(--text-primary)' }}>{value}</span>
+        {sub && <span style={{ fontSize: 10.5, color: 'var(--text-muted)', marginLeft: 8, fontFamily: 'monospace' }}>{sub}</span>}
+      </span>
     </div>
   )
 }
