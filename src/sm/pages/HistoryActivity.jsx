@@ -21,7 +21,7 @@ const CONFIG = {
   history: {
     title: 'History', sub: 'All stock movements across SA · Scented Merchandise · MUSE',
     icon: HistoryIcon, endpoint: 'history', searchPlaceholder: 'Search product or code…',
-    columns: ['Date', 'System', 'By', 'Type', 'Product', 'Qty', 'Balance', 'Notes'],
+    columns: ['Date', 'System', 'By', 'Type', 'Product', 'Qty', 'Balance after', 'Notes'],
     systems: ['ALL', 'SA', 'Scented Merchandise', 'MUSE'],
   },
   activity: {
@@ -174,8 +174,19 @@ export default function HistoryActivity({ kind = 'history' }) {
                         {r.product_name || '—'}
                         {r.product_code && <span style={{ fontSize: 11, color: 'rgba(232,234,242,0.35)', fontFamily: 'monospace', marginLeft: 6 }}>{r.product_code}</span>}
                       </td>
-                      <td style={{ padding: '9px 14px', fontSize: 13, fontWeight: 700, color: Number(r.quantity) < 0 ? '#f87171' : '#4ade80', whiteSpace: 'nowrap' }}>
-                        {r.quantity != null ? `${Number(r.quantity) > 0 ? '+' : ''}${Number(r.quantity).toLocaleString()}` : '—'} <span style={{ fontSize: 10, color: 'rgba(232,234,242,0.4)' }}>{r.unit || ''}</span>
+                      {/* Direction comes from the SERVER, from the transaction type — it is
+                          not in the number. quantity is stored as a MAGNITUDE, so the old
+                          code (`quantity > 0 ? '+' : ''`, green unless negative) printed
+                          every sale as a green "+400 mL". The owner spotted it: the screen
+                          was stating the opposite of what happened.
+                          A type that does not commit to a direction (an adjustment can go
+                          either way) renders with no sign and no colour. Saying nothing
+                          beats saying the wrong thing. */}
+                      <td style={{ padding: '9px 14px', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap',
+                        color: r.direction === 'out' ? '#f87171' : r.direction === 'in' ? '#4ade80' : 'var(--text-muted)' }}>
+                        {r.quantity != null
+                          ? `${r.direction === 'out' ? '−' : r.direction === 'in' ? '+' : ''}${Math.abs(Number(r.quantity)).toLocaleString()}`
+                          : '—'} <span style={{ fontSize: 10, color: 'rgba(232,234,242,0.4)' }}>{r.unit || ''}</span>
                       </td>
                       <td style={{ padding: '9px 14px', fontSize: 12, color: 'rgba(232,234,242,0.6)', whiteSpace: 'nowrap' }}>{r.balance_after != null ? Number(r.balance_after).toLocaleString() : '—'}</td>
                       <td style={{ padding: '9px 14px', fontSize: 12, color: 'rgba(232,234,242,0.45)', maxWidth: 220 }}>

@@ -1,6 +1,7 @@
 import express from 'express';
 import { saPool, smPool, platformPool } from '../db.js';
 import { requireRole } from './auth.js';
+import { DIRECTION_SQL } from './movement-direction.js';
 
 const router = express.Router();
 
@@ -33,7 +34,8 @@ function txFilters(base, { from, to, type, search }, params) {
 const SA_TX = `
   SELECT t.id::text AS id, t.created_at, COALESCE(u.name, 'System') AS performed_by,
          t.type, t.category, t.product_name, t.product_code,
-         t.quantity, t.unit, t.balance_after, t.notes, 'SA' AS system
+         t.quantity, t.unit, t.balance_after, t.notes, 'SA' AS system,
+         ${DIRECTION_SQL()} AS direction
   FROM transactions t LEFT JOIN users u ON t.user_id = u.id
   WHERE 1=1`;
 
@@ -41,7 +43,8 @@ const SM_TX = `
   SELECT t.id::text AS id, t.created_at, COALESCE(u.name, 'System') AS performed_by,
          t.type, t.category, t.product_name, t.product_code,
          t.quantity, t.unit, t.balance_after, t.notes,
-         CASE WHEN p.segment = 'MUSE' THEN 'MUSE' ELSE 'Scented Merchandise' END AS system
+         CASE WHEN p.segment = 'MUSE' THEN 'MUSE' ELSE 'Scented Merchandise' END AS system,
+         ${DIRECTION_SQL()} AS direction
   FROM transactions t
   LEFT JOIN users u ON t.user_id = u.id
   LEFT JOIN products p ON t.product_id = p.id
