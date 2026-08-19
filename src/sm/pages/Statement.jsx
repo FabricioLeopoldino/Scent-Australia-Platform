@@ -156,6 +156,23 @@ export default function Statement() {
             </div>
           )}
 
+          {/* When the closing figure is wrong, the BREAKDOWN is wrong too, and it
+              does not look wrong — a period spanning the July migration showed
+              "Store sale +68,800", a sale adding stock. The balance jumped
+              without a transaction and the next movement absorbed the jump.
+              Saying only "does not balance" would leave those per-business
+              figures looking usable. They are not. */}
+          {data.reconciles === false && (
+            <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', padding: '10px 13px', background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.25)', borderRadius: 8, marginBottom: 16 }}>
+              <AlertTriangle size={15} color="#f87171" style={{ flexShrink: 0, marginTop: 1 }} />
+              <div style={{ fontSize: 11.5, color: 'rgba(232,234,242,0.85)', lineHeight: 1.5 }}>
+                This period does not balance, so the figures per business below are
+                unreliable as well — a stock change made outside the ledger is absorbed
+                by whichever movement came next. Read the totals, not the breakdown.
+              </div>
+            </div>
+          )}
+
           <Row label="Opening balance" value={fmt(data.opening, unit)} strong />
 
           <div style={{ margin: '10px 0', paddingLeft: 14, borderLeft: '2px solid rgba(255,255,255,0.08)' }}>
@@ -163,7 +180,7 @@ export default function Statement() {
               <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>No movement in this period.</div>
             )}
             {data.movements.map((m) => (
-              <div key={m.type} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '5px 0', gap: 12 }}>
+              <div key={m.business} title={m.types} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '5px 0', gap: 12 }}>
                 <span style={{ fontSize: 12.5, color: 'var(--text-primary)' }}>
                   {m.business}
                   <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 8 }}>

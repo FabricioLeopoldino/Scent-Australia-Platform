@@ -256,12 +256,13 @@ router.get('/statement', requireRole('root', 'admin'), async (req, res) => {
                CASE WHEN ${DIRECTION_SQL()} = 'out' THEN -t.quantity::float
                     ELSE t.quantity::float END AS signed_fallback
           FROM transactions t WHERE t.product_code = $1)
-      SELECT e.type, ${BUSINESS_SQL('e.type')} AS business,
+      SELECT ${BUSINESS_SQL('e.type')} AS business,
+             string_agg(DISTINCT e.type, ', ' ORDER BY e.type) AS types,
              sum(COALESCE(e.effect, e.signed_fallback))::float AS effect,
              sum(e.qty)::float AS recorded,
              count(*)::int AS movements
         FROM e WHERE true ${period}
-       GROUP BY 1, 2 ORDER BY abs(sum(COALESCE(e.effect, e.signed_fallback))) DESC`, params)).rows;
+       GROUP BY 1 ORDER BY abs(sum(COALESCE(e.effect, e.signed_fallback))) DESC`, params)).rows;
 
     const ins  = moves.filter((m) => m.effect > 0).reduce((a, m) => a + m.effect, 0);
     const outs = moves.filter((m) => m.effect < 0).reduce((a, m) => a - m.effect, 0);
