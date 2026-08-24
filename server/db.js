@@ -42,7 +42,17 @@ function makePool(label, { searchPath } = {}) {
   const url = directUrl(DATABASE_URL);
   const pool = new Pool({
     connectionString: url,
-    ssl: url?.includes('localhost') ? false : { rejectUnauthorized: false },
+  // Verify the server certificate (2026-08-25). It was `false`, which accepted
+  // any certificate. Measured before changing: Neon already presents a
+  // publicly-trusted chain and the socket reported authorized=true even while
+  // we were not requiring it, so this closes a theoretical hole rather than a
+  // live one — but "we happen to be fine" is not a setting.
+  //
+  // The SECURITY WARNING in the Render log does NOT come from here. It comes
+  // from `sslmode=require` in the connection string, and only changing that to
+  // `sslmode=verify-full` silences it. That is an environment variable, not
+  // code. Verified against both the direct and the pooled host.
+    ssl: url?.includes('localhost') ? false : { rejectUnauthorized: true },
     ...(searchPath ? { options: `-c search_path=${searchPath}` } : {}),
     ...POOL_TUNING,
   });

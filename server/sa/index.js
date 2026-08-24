@@ -5776,6 +5776,16 @@ router.post('/tech-stock/return-input', async (req, res) => {
 
 // POST /api/tech-stock/batch — execute a batch of tech operations from the scanner flow
 // (SA v2.8.0 upgrade, ported 2026-07-10 — Appendix A conversion: app.→router., /api strip)
+// Every movement below records who made it (2026-08-25). It did not: the six
+// inserts wrote no user_id, so 386 fragrance movements across five months read
+// as "System" on the history screen. The batch summary in audit_log did name
+// the person, but it names the BATCH - one row for up to 349 movements - so it
+// could not answer "who moved this oil". req.user is guaranteed here: the
+// route refuses anyone outside TECH_ROLES on its first line.
+//
+// This is one route of many. 22 of the 25 places that write a stock movement in
+// this file still record nobody. Listed for the owner rather than changed in
+// bulk - some of those paths have no user at all.
 router.post('/tech-stock/batch', async (req, res) => {
   if (!TECH_ROLES.includes(req.user.role)) return res.status(403).json({ error: 'Not authorised' });
   const { action, items, notes } = req.body;
@@ -5822,12 +5832,12 @@ router.post('/tech-stock/batch', async (req, res) => {
         );
         const newTech = parseFloat(tsRes.rows[0].quantity);
         await client.query(
-          `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes) VALUES ($1,$2,$3,'OILS','tech_transfer_out',$4,$5,$6,$7)`,
-          [item.productId, p.productCode, p.name, qty, p.unit, newMain, batchNote]
+          `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes, user_id) VALUES ($1,$2,$3,'OILS','tech_transfer_out',$4,$5,$6,$7,$8)`,
+          [item.productId, p.productCode, p.name, qty, p.unit, newMain, batchNote, req.user.id]
         );
         await client.query(
-          `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes) VALUES ($1,$2,$3,'OILS','tech_transfer_in',$4,$5,$6,$7)`,
-          [item.productId, p.productCode, p.name, qty, p.unit, newTech, batchNote]
+          `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes, user_id) VALUES ($1,$2,$3,'OILS','tech_transfer_in',$4,$5,$6,$7,$8)`,
+          [item.productId, p.productCode, p.name, qty, p.unit, newTech, batchNote, req.user.id]
         );
         results.push({ productId: item.productId, name: p.name, code: p.productCode, quantity: qty, unit: p.unit, mainAfter: newMain, techAfter: newTech });
 
@@ -5848,8 +5858,8 @@ router.post('/tech-stock/batch', async (req, res) => {
         const newTech = techQty - qty;
         await client.query(`UPDATE tech_stock SET quantity = $1, updated_at = NOW() WHERE product_id = $2`, [newTech, item.productId]);
         await client.query(
-          `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes) VALUES ($1,$2,$3,'OILS','tech_remove',$4,$5,$6,$7)`,
-          [item.productId, p.productCode, p.name, qty, p.unit, newTech, batchNote]
+          `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes, user_id) VALUES ($1,$2,$3,'OILS','tech_remove',$4,$5,$6,$7,$8)`,
+          [item.productId, p.productCode, p.name, qty, p.unit, newTech, batchNote, req.user.id]
         );
         results.push({ productId: item.productId, name: p.name, code: p.productCode, quantity: qty, unit: p.unit, techAfter: newTech });
 
@@ -5873,12 +5883,12 @@ router.post('/tech-stock/batch', async (req, res) => {
         await client.query(`UPDATE tech_stock SET quantity = $1, updated_at = NOW() WHERE product_id = $2`, [newTech, item.productId]);
         await client.query(`UPDATE products SET "currentStock" = $1 WHERE id = $2`, [newMain, item.productId]);
         await client.query(
-          `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes) VALUES ($1,$2,$3,'OILS','tech_return_from_tech',$4,$5,$6,$7)`,
-          [item.productId, p.productCode, p.name, qty, p.unit, newTech, batchNote]
+          `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes, user_id) VALUES ($1,$2,$3,'OILS','tech_return_from_tech',$4,$5,$6,$7,$8)`,
+          [item.productId, p.productCode, p.name, qty, p.unit, newTech, batchNote, req.user.id]
         );
         await client.query(
-          `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes) VALUES ($1,$2,$3,'OILS','tech_return_to_main',$4,$5,$6,$7)`,
-          [item.productId, p.productCode, p.name, qty, p.unit, newMain, batchNote]
+          `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes, user_id) VALUES ($1,$2,$3,'OILS','tech_return_to_main',$4,$5,$6,$7,$8)`,
+          [item.productId, p.productCode, p.name, qty, p.unit, newMain, batchNote, req.user.id]
         );
         results.push({ productId: item.productId, name: p.name, code: p.productCode, quantity: qty, unit: p.unit, mainAfter: newMain, techAfter: newTech });
 
@@ -5897,8 +5907,8 @@ router.post('/tech-stock/batch', async (req, res) => {
         );
         const newTech = parseFloat(tsRes.rows[0].quantity);
         await client.query(
-          `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes) VALUES ($1,$2,$3,'OILS','tech_return_input',$4,$5,$6,$7)`,
-          [item.productId, p.productCode, p.name, qty, p.unit, newTech, batchNote]
+          `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes, user_id) VALUES ($1,$2,$3,'OILS','tech_return_input',$4,$5,$6,$7,$8)`,
+          [item.productId, p.productCode, p.name, qty, p.unit, newTech, batchNote, req.user.id]
         );
         results.push({ productId: item.productId, name: p.name, code: p.productCode, quantity: qty, unit: p.unit, techAfter: newTech });
       }

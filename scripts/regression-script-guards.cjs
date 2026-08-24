@@ -111,6 +111,10 @@ const GUARDED = /--apply|--commit|CLEANUP_DATABASE_URL|assertStoreNotLive|ROLLBA
     // its audit rows and its webhook_processed rows, and preflight's residue
     // check is the backstop that proves it.
     'regression-unmatched-orders.js',
+    // Added 2026-08-25. Writes to SA, which is production: it removes its oil,
+    // its movements, its tech-stock row and its batch receipts, then counts what
+    // is left and fails if anything is.
+    'regression-tech-stock-author.js',
   ];
 
   const unguarded = [];
@@ -264,6 +268,19 @@ const GUARDED = /--apply|--commit|CLEANUP_DATABASE_URL|assertStoreNotLive|ROLLBA
   const imp = readFileSync(join(SCRIPTS, 'import-muse-catalog.cjs'), 'utf8');
   check(/IMPORT_OVER_LIVE_CATALOGUE/.test(imp), 'it refuses when MUSE products with SKUs exist');
   check(/sku IS NOT NULL/.test(imp), 'and it measures that from the SKUs actually present');
+
+  console.log('');
+  console.log('8. The server verifies the database certificate');
+  // Static, because the failure is silent: a copied pool config with
+  // rejectUnauthorized:false connects perfectly and says nothing. Set to true
+  // on 2026-08-25 after measuring that Neon already presents a trusted chain.
+  // The SECURITY WARNING in the Render log is separate - it comes from
+  // sslmode=require in the connection string, which is an environment variable.
+  for (const rel of ['../server/db.js', '../server/sm/db.js']) {
+    const src = stripComments(readFileSync(join(SCRIPTS, rel), 'utf8'));
+    check(!/rejectUnauthorized:\s*false/.test(src),
+      `${rel.replace('../', '')} does not accept any certificate`);
+  }
 
   console.log(failed === 0 ? '\n✅ script-guards: all checks passed' : `\n❌ ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);
