@@ -4,7 +4,7 @@ import axios from 'axios'
 import { useLocation } from 'wouter'
 import { useToast } from '../SMModule.jsx'
 import { splitVolume } from '../utils/volume.js'
-import { fmtDate } from '../utils/date.js'
+import { fmtDate, fmt } from '../utils/date.js'
 import MuseHeader from '../components/MuseHeader.jsx'
 import GlowingEffect from '../components/GlowingEffect.jsx'
 
@@ -146,7 +146,7 @@ Say why, so the record shows it — for example "marketing test" or "raised by h
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace' }}>{o.order_ref}</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{fmtDate(o.created_at)}</span>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{fmt(o.created_at)}</span>
                       <button onClick={() => resolveUnread(o)} style={{ background: 'none', border: '1px solid rgba(232,234,242,0.25)', borderRadius: 6, color: 'var(--text-muted)', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em', padding: '4px 10px', cursor: 'pointer' }}>
                         Mark handled
                       </button>
