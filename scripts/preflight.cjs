@@ -53,6 +53,13 @@ const BASELINE = {
   // rather than picked, and it drove the four Room Spray components negative —
   // they had never been counted either. See integrity-sm UNCOUNTED.
   negatives: 14,
+  // SA has its own negatives and this check never looked at them until
+  // 2026-08-25: `negatives` above counts sm.products only, so the morning report
+  // said 14 while 22 SA items were also below zero — among them two Fragrance
+  // Library oils, Miami Woods at -6.8 L and Kona at -2 L. Found while tracing
+  // this morning's real store sales, which drive two of them further down every
+  // time one goes out. Baselined, not cleared: the same rule as the fourteen.
+  sa_negatives: 22,
   oils_no_minimum: 22,        // MUSE oils that can never raise a warning
 };
 
@@ -128,6 +135,7 @@ const sh = (c) => {
     production_orders: await one(`SELECT count(*) c FROM production_orders`),
     sa_oils: await one(`SELECT count(*) c FROM sa.products WHERE category='OILS'`),
     negatives: await one(`SELECT count(*) c FROM products WHERE current_stock<0`),
+    sa_negatives: await one(`SELECT count(*) c FROM sa.products WHERE "currentStock"<0`),
     oils_no_minimum: await one(`SELECT count(*) c FROM (
         SELECT o.id FROM sa.products o
           JOIN products v ON v.oil_id=o.id AND COALESCE(v.archived,false)=false

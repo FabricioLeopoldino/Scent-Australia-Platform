@@ -111,6 +111,36 @@ try {
   });
   check(!bad.ok, 'a return naming somebody who does not exist fails', `HTTP ${bad.status}`);
 
+  console.log('');
+  console.log('4. What the returns SCREEN now sends, exactly');
+  // The form stopped being a free-text box on 2026-08-25 and now always sends
+  // BOTH fields - the chosen ids, and an empty returnedBy that is only filled
+  // if the operator list failed to load. Both shapes are asserted here because
+  // the screen cannot be, and an empty string reaching the name branch is
+  // precisely how this would break quietly.
+  const asScreen = await api('/returns', {
+    method: 'POST',
+    body: JSON.stringify({
+      items: [{ productId: TAG, quantity: 2 }],
+      operatorIds: [gustavo.id],
+      returnedBy: '',
+    }),
+  });
+  check(asScreen.ok, 'ids plus an empty name is accepted', `HTTP ${asScreen.status}`);
+  const screenTx = (await sa.query(
+    `SELECT operator_ids, notes FROM transactions
+      WHERE product_code = $1 AND type = 'return' ORDER BY id DESC LIMIT 1`, [TAG])).rows[0];
+  check(screenTx?.operator_ids?.length === 1, 'the ids win over the empty name',
+    JSON.stringify(screenTx?.operator_ids));
+  check(/Gustavo/.test(screenTx?.notes || '') && !/Returned by:\s*$/.test(screenTx?.notes || ''),
+    'and the note is not left blank', screenTx?.notes);
+
+  const neither = await api('/returns', {
+    method: 'POST',
+    body: JSON.stringify({ items: [{ productId: TAG, quantity: 1 }], operatorIds: [], returnedBy: '' }),
+  });
+  check(!neither.ok, 'nobody selected and nothing typed is refused', `HTTP ${neither.status}`);
+
   console.log(failed === 0 ? '\n✅ warehouse-operators: all checks passed' : `\n❌ ${failed} failed`);
 } catch (e) {
   console.error('\nFATAL', e.message);

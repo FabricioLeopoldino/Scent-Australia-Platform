@@ -34,6 +34,62 @@ const fmtEditDefault = (qty, unit) => {
   return `${qty}`;
 };
 
+// ONE picker, used by the manual tab and the scanner tab. They are the same
+// question asked twice, and two copies is how the free-text boxes drifted into
+// twelve spellings of four names in the first place.
+//
+// More than one person is normal, not an edge case: "Fabricio/Joao" in the
+// history always meant both of them did it together, which is why this selects
+// several rather than one.
+function OperatorPicker({ operators, selected, onChange, label, fallbackValue, onFallbackChange }) {
+  // No list means the lookup failed. Fall back to typing rather than blocking
+  // the return — the old behaviour, kept only for that case.
+  if (!operators.length) {
+    return (
+      <div className="form-group" style={{ marginBottom: 12 }}>
+        <label className="label">{label} *</label>
+        <input type="text" className="input" value={fallbackValue}
+          onChange={(e) => onFallbackChange(e.target.value)} placeholder="Your name" />
+        <div style={{ fontSize: 11, color: 'rgba(232,234,242,0.4)', marginTop: 4 }}>
+          The operator list could not be loaded — typing a name still works.
+        </div>
+      </div>
+    );
+  }
+  const toggle = (id) => onChange(selected.includes(id)
+    ? selected.filter((x) => x !== id)
+    : [...selected, id]);
+  return (
+    <div className="form-group" style={{ marginBottom: 12 }}>
+      <label className="label">{label} *</label>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
+        {operators.map((o) => {
+          const on = selected.includes(o.id);
+          return (
+            <button key={o.id} type="button" onClick={() => toggle(o.id)}
+              aria-pressed={on}
+              style={{
+                // 44px tall: this is used on the warehouse touch screen.
+                minHeight: 44, padding: '0 16px', borderRadius: 8, cursor: 'pointer',
+                fontSize: 13, fontWeight: on ? 700 : 500,
+                background: on ? 'rgba(16,185,129,0.18)' : 'var(--surface-2)',
+                color: on ? '#10b981' : 'rgba(232,234,242,0.75)',
+                border: `1px solid ${on ? 'rgba(16,185,129,0.55)' : 'var(--border)'}`,
+                transition: 'background 180ms, color 180ms, border-color 180ms',
+              }}>
+              {on ? '✓ ' : ''}{o.name}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 11, color: 'rgba(232,234,242,0.4)', marginTop: 6 }}>
+        Tap everyone who did the work. Someone missing? They need adding to the
+        operator list — do not put the name in the notes.
+      </div>
+    </div>
+  );
+}
+
 export default function ProductReturns({ user }) {
   const showToast = useToast();
 
@@ -44,6 +100,10 @@ export default function ProductReturns({ user }) {
   const [products, setProducts] = useState([]);
   const [formulas, setFormulas] = useState([]);
   const [loading,  setLoading]  = useState(true);
+  // The people who physically do the work. Deliberately NOT the login list:
+  // Gustavo and Wanderson have no account and work through somebody else's, so
+  // the account says which login was used, not who did it (owner, 18/08/2026).
+  const [operators, setOperators] = useState([]);
 
   // ── Manual tab state ───────────────────────────────────────────────────────
   const [confirmState,    setConfirmState]    = useState(null);
@@ -52,6 +112,7 @@ export default function ProductReturns({ user }) {
   const [cart,            setCart]            = useState(new Map());
   const [notes,           setNotes]           = useState('');
   const [returnedBy,      setReturnedBy]      = useState('');
+  const [operatorIds,     setOperatorIds]     = useState([]);
   const [processing,      setProcessing]      = useState(false);
   const [qtyModal,        setQtyModal]        = useState({ open: false, product: null, value: '' });
 
@@ -62,6 +123,7 @@ export default function ProductReturns({ user }) {
   const [modalQtyRaw,      setModalQtyRaw]      = useState('');
   const [scanStage,        setScanStage]        = useState('scan'); // 'scan' | 'check'
   const [scanReturnedBy,   setScanReturnedBy]   = useState('');
+  const [scanOperatorIds,  setScanOperatorIds]  = useState([]);
   const [scanNotes,        setScanNotes]        = useState('');
   const [batchProcessing,  setBatchProcessing]  = useState(false);
   // Inline editing on check screen
@@ -75,11 +137,20 @@ export default function ProductReturns({ user }) {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [pRes, fRes] = await Promise.all([fetch('/api/products'), fetch('/api/formulas')]);
+      // Failing softly on the operator list only: if it cannot be read the form
+      // falls back to typing a name, which is what this replaced. Blocking a
+      // return because one lookup is down would be worse than the old problem.
+      const [pRes, fRes, oRes] = await Promise.all([
+        fetch('/api/products'),
+        fetch('/api/formulas'),
+        fetch('/api/warehouse-operators').catch(() => null),
+      ]);
       const pData = await pRes.json();
       const fData = await fRes.json();
+      const oData = oRes && oRes.ok ? await oRes.json() : [];
       setProducts(Array.isArray(pData) ? pData : []);
       setFormulas(Array.isArray(fData) ? fData : []);
+      setOperators(Array.isArray(oData) ? oData : []);
     } catch (e) {
       console.error('Error fetching data:', e);
     } finally {
@@ -196,7 +267,8 @@ export default function ProductReturns({ user }) {
   // ── Manual tab: process ────────────────────────────────────────────────────
   const handleProcess = async () => {
     if (cart.size === 0) return showToast('Add at least one item to the list', 'warning');
-    if (!returnedBy.trim()) return showToast('Enter the name of the person processing the return', 'warning');
+    if (!operatorIds.length && !returnedBy.trim())
+      return showToast('Say who did the return', 'warning');
     const invalid = cartProducts.filter(({ qty }) => !qty || parseFloat(qty) <= 0);
     if (invalid.length > 0)
       return showToast(`Enter valid quantities for: ${invalid.map(x => x.product.name).join(', ')}`, 'warning');
@@ -218,6 +290,10 @@ export default function ProductReturns({ user }) {
               body: JSON.stringify({
                 items: productEntries.map(({ product, qty }) => ({ productId: product.id, quantity: parseFloat(qty) })),
                 notes: notes.trim(),
+                // The server resolves ids to names, so the note and the
+                // filterable array can never disagree. returnedBy is only sent
+                // when the list could not be loaded.
+                operatorIds,
                 returnedBy: returnedBy.trim()
               })
             });
@@ -243,7 +319,7 @@ export default function ProductReturns({ user }) {
           }
           if (successCount > 0) {
             showToast(`Successfully restocked ${successCount} item(s)!`, 'success');
-            setCart(new Map()); setNotes(''); setReturnedBy(''); setSearchTerm('');
+            setCart(new Map()); setNotes(''); setReturnedBy(''); setOperatorIds([]); setSearchTerm('');
             fetchAll();
           }
         } catch { showToast('Connection error', 'error'); }
@@ -308,7 +384,7 @@ export default function ProductReturns({ user }) {
   // The Manual tab on this same page confirms before restocking; this one used to
   // fire straight into a multi-item stock write with no confirmation step.
   const handleBatchSubmit = () => {
-    if (!scanReturnedBy.trim()) { showToast('Enter the name of the person processing the return', 'warning'); return; }
+    if (!scanOperatorIds.length && !scanReturnedBy.trim()) { showToast('Say who did the return', 'warning'); return; }
     const totalItems = groupedCheckRows.length;
     const totalQty = groupedCheckRows.reduce((s, r) => s + (parseFloat(r.finalQty) || 0), 0);
     setConfirmState({
@@ -331,6 +407,7 @@ export default function ProductReturns({ user }) {
           body: JSON.stringify({
             items: productRows.map(r => ({ productId: r.product.id, quantity: r.finalQty })),
             notes: scanNotes.trim(),
+            operatorIds: scanOperatorIds,
             returnedBy: scanReturnedBy.trim()
           })
         });
@@ -360,7 +437,7 @@ export default function ProductReturns({ user }) {
       if (successCount > 0) {
         showToast(`Successfully restocked ${successCount} item(s)!`, 'success');
         clearScanner();
-        setScanReturnedBy('');
+        setScanReturnedBy(''); setScanOperatorIds([]);
         setScanNotes('');
         fetchAll();
       }
@@ -658,8 +735,13 @@ export default function ProductReturns({ user }) {
                   </div>
                   <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginBottom: 14 }}>
                     <div className="form-group" style={{ marginBottom: 12 }}>
-                      <label className="label">{cartProducts.some(x => x.product._isFormula) ? 'Received By *' : 'Returned By *'}</label>
-                      <input type="text" className="input" value={returnedBy} onChange={e => setReturnedBy(e.target.value)} placeholder="Your name" />
+                      <OperatorPicker
+                        operators={operators}
+                        selected={operatorIds}
+                        onChange={setOperatorIds}
+                        label={cartProducts.some(x => x.product._isFormula) ? 'Received By' : 'Returned By'}
+                        fallbackValue={returnedBy}
+                        onFallbackChange={setReturnedBy} />
                     </div>
                     <div className="form-group" style={{ marginBottom: 16 }}>
                       <label className="label">Notes (optional)</label>
@@ -801,9 +883,13 @@ export default function ProductReturns({ user }) {
                   </div>
                 ) : (<>
                   <div className="form-group" style={{ marginBottom: 12 }}>
-                    <label className="label">Returned By *</label>
-                    <input type="text" className="input" value={scanReturnedBy}
-                      onChange={e => setScanReturnedBy(e.target.value)} placeholder="Your name" />
+                    <OperatorPicker
+                      operators={operators}
+                      selected={scanOperatorIds}
+                      onChange={setScanOperatorIds}
+                      label="Returned By"
+                      fallbackValue={scanReturnedBy}
+                      onFallbackChange={setScanReturnedBy} />
                   </div>
                   <div className="form-group" style={{ marginBottom: 20 }}>
                     <label className="label">Notes (optional)</label>
@@ -813,7 +899,7 @@ export default function ProductReturns({ user }) {
                   </div>
                   <button
                     onClick={() => {
-                      if (!scanReturnedBy.trim()) { showToast('Enter the name of the person processing the return', 'warning'); return; }
+                      if (!scanOperatorIds.length && !scanReturnedBy.trim()) { showToast('Say who did the return', 'warning'); return; }
                       setEditingCheckId(null); setEditingCheckRaw('');
                       setScanStage('check');
                     }}
@@ -842,7 +928,11 @@ export default function ProductReturns({ user }) {
                   ↩ Restock — {groupedCheckRows.length} product{groupedCheckRows.length !== 1 ? 's' : ''} ({scanItems.length} scan{scanItems.length !== 1 ? 's' : ''})
                 </div>
                 <div style={{ fontSize: 13, color: 'rgba(232,234,242,0.5)', marginTop: 4 }}>
-                  Returned by: <strong style={{ color: 'rgba(232,234,242,0.8)' }}>{scanReturnedBy}</strong>
+                  Returned by: <strong style={{ color: 'rgba(232,234,242,0.8)' }}>{
+                    scanOperatorIds.length
+                      ? operators.filter(o => scanOperatorIds.includes(o.id)).map(o => o.name).join(' / ')
+                      : scanReturnedBy
+                  }</strong>
                   {scanNotes && <> · {scanNotes}</>}
                 </div>
               </div>
