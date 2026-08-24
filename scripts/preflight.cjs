@@ -40,9 +40,14 @@ const BASELINE = {
   // production_order_deleted by user 8, which is how it took ten seconds to
   // prove no script had done it. Scripts write user_id NULL.
   //
+  // SM-004 (#1024) joined them on 2026-08-18 — also a marketing test, of the
+  // fragrance customizer. It is a ONE-unit order against a 501-unit basket
+  // because the other two lines carried no SKU; left in place on the same
+  // reasoning as SM-003, and cleared from the unread list with that note.
+  //
   // Kept current on purpose: a baseline that is always wrong is a line people
   // stop reading, which is exactly what happened to the negative-stock check.
-  production_orders: 2,
+  production_orders: 3,
   sa_oils: 325,               // the Fragrance Library
   // 14 since 2026-08-18: order #1022 was the first real MUSE sale to be MADE
   // rather than picked, and it drove the four Room Spray components negative —
@@ -96,7 +101,7 @@ const sh = (c) => {
     connectionString: process.env.PLATFORM_DATABASE_URL.replace('-pooler.', '.'),
     ssl: { rejectUnauthorized: false }, options: '-c search_path=sm,public',
   });
-  const one = async (sql) => Number((await pool.query(sql)).rows[0].c);
+  const one = async (sql, params) => Number((await pool.query(sql, params)).rows[0].c);
 
   head('2. Integrity');
   try {
@@ -138,18 +143,39 @@ const sh = (c) => {
     fail('a MUSE product has no business_unit', 'reporting would silently miss it');
   }
 
+  // Orders the store took and the platform could not turn into work. The alarm
+  // has always been written; on 2026-08-24 five of them had been sitting in the
+  // audit log for six days, and this check found them only because the
+  // production-order count above had moved by one. Now it asks directly.
+  const unread = await one(`SELECT count(*) c FROM audit_log u
+     WHERE u.action IN ('shopify_order_unmatched', 'muse_fulfillment_unmatched')
+       AND NOT EXISTS (
+         SELECT 1 FROM audit_log r
+          WHERE r.action = 'shopify_order_unmatched_resolved'
+            AND r.details->>'shopify_order_id'
+                = COALESCE(u.details->>'shopify_order_id', u.details->>'order_id'))`);
+  if (unread === 0) ok('orders unread by the platform', '0');
+  else note(`orders the platform could not read: ${unread}`,
+            '— MUSE dashboard, top panel: raise the work by hand or mark handled');
+
   // Test residue: the pattern that reached production three times this month.
   head('4. Test residue in live data');
   const residue = [
     ['products named TEST', `SELECT count(*) c FROM products WHERE COALESCE(archived,false)=false
                               AND (name ILIKE '%TEST%' OR product_code LIKE '%_TEST' OR sku LIKE 'ZZ%')`],
-    ['#ZZ- audit rows', `SELECT count(*) c FROM audit_log WHERE entity_name LIKE '#ZZ-%'`],
+    // The names come from cleanup-regression-residue.cjs, which is also the cure.
+    // '#ZZ-' on its own missed 138 fixture rows sitting in the audit log since
+    // July — found on 2026-08-24 when six of them appeared on the unread-orders
+    // panel looking like real customer orders.
+    ['test fixture audit rows', `SELECT count(*) c FROM audit_log
+       WHERE entity_name LIKE '#ZZ-%' OR entity_name = ANY($1::text[])`,
+      [require('./cleanup-regression-residue.cjs').TEST_AUDIT_NAMES]],
     ['test clients', `SELECT count(*) c FROM clients WHERE name ILIKE '%test%'`],
     ['orders with no store ref and no author', `SELECT count(*) c FROM production_orders
        WHERE shopify_order_id IS NULL AND shopify_order_number IS NULL AND created_by IS NULL`],
   ];
-  for (const [label, sql] of residue) {
-    const n = await one(sql);
+  for (const [label, sql, params] of residue) {
+    const n = await one(sql, params);
     if (n === 0) ok(label, '0');
     else note(`${label}: ${n}`, '— run scripts/cleanup-regression-residue.cjs');
   }

@@ -107,6 +107,10 @@ const GUARDED = /--apply|--commit|CLEANUP_DATABASE_URL|assertStoreNotLive|ROLLBA
     // system in daily use, so it deletes its product and every transaction it
     // caused and then FAILS if a single row is left behind.
     'regression-warehouse-operators.js',
+    // Added 2026-08-24. Tears down its product, its production order and lines,
+    // its audit rows and its webhook_processed rows, and preflight's residue
+    // check is the backstop that proves it.
+    'regression-unmatched-orders.js',
   ];
 
   const unguarded = [];

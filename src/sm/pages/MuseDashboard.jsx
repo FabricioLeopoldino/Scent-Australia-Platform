@@ -18,6 +18,7 @@ export default function MuseDashboard() {
   const [materials, setMaterials] = useState([])
   const [oil, setOil]             = useState(null)
   const [toShip, setToShip]       = useState([])
+  const [unread, setUnread]       = useState([])
   const [loading, setLoading]     = useState(true)
   const [, navigate]              = useLocation()
   const { addToast } = useToast()
@@ -27,7 +28,7 @@ export default function MuseDashboard() {
   async function load() {
     setLoading(true)
     try {
-      const [m, p, o, f, mat, oilPos, ship] = await Promise.all([
+      const [m, p, o, f, mat, oilPos, ship, unmatched] = await Promise.all([
         axios.get('/api/masters', { ...api(), params: { segment: 'MUSE' } }),
         axios.get('/api/products', { ...api(), params: { category: 'FINISHED_GOOD' } }),
         axios.get('/api/production-orders', api()),
@@ -42,9 +43,14 @@ export default function MuseDashboard() {
         // posted. They used to create no record at all, so #1022 sat unshipped
         // and invisible from a Sunday until the Monday check found it.
         axios.get('/api/dashboard/awaiting-shipment', api()).catch(() => ({ data: [] })),
+        // Lines the store sold that the platform could not identify. The alarm
+        // has always been written to the audit log; until 24/08/2026 nothing
+        // read it, so five orders sat unseen for six days.
+        axios.get('/api/dashboard/unmatched-orders', api()).catch(() => ({ data: [] })),
       ])
       setOil(oilPos.data)
       setToShip(ship.data || [])
+      setUnread(unmatched.data || [])
       setMasters(m.data)
       setVariants(p.data.filter(v => v.segment === 'MUSE' && v.master_product_id && !v.archived))
       // Components, labels and raw materials — the things that actually run out.
@@ -57,6 +63,21 @@ export default function MuseDashboard() {
       setFragrances(f.data)
     } catch { addToast('Failed to load MUSE dashboard', 'error') }
     finally { setLoading(false) }
+  }
+
+  // Clearing is a decision, not a delete: it writes its own audit event beside
+  // the alarm, so "who said this was fine" survives.
+  async function resolveUnread(o) {
+    const note = window.prompt(
+      `Clear "${o.order_ref}" from this list?
+
+Say why, so the record shows it — for example "marketing test" or "raised by hand as SM-005".`, '')
+    if (note === null) return
+    try {
+      await axios.post(`/api/dashboard/unmatched-orders/${o.shopify_order_id}/resolve`, { note }, api())
+      setUnread((prev) => prev.filter((x) => x.shopify_order_id !== o.shopify_order_id))
+      addToast(`${o.order_ref} cleared`, 'success')
+    } catch { addToast('Could not clear it', 'error') }
   }
 
   if (loading) return <div style={{ padding: 28, color: 'rgba(232,234,242,0.4)' }}>Loading...</div>
@@ -107,6 +128,65 @@ export default function MuseDashboard() {
           color={negative.length ? '#f87171' : lowStock.length > 0 ? '#fbbf24' : '#4ade80'}
           icon={<AlertTriangle size={16} />} onClick={() => navigate('/muse-stock')} />
       </div>
+
+      {/* An order the store accepted and the platform could not read. Above
+          everything, including waiting-to-ship: that list has a customer
+          waiting for a parcel, this one has a customer waiting for work that
+          nobody knows about. Hidden when empty. */}
+      {unread.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <Card title="Orders the platform could not read" color="#f87171" icon={<AlertTriangle size={14} />}>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 14, lineHeight: 1.6 }}>
+              These were paid on the store, but the products carry no SKU, so the platform
+              could not tell what was sold. <strong>No production work was raised for the lines below.</strong>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {unread.map((o) => (
+                <div key={o.shopify_order_id} style={{ padding: '12px 14px', background: 'var(--surface-2)', border: '1px solid rgba(248,113,113,0.4)', borderRadius: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace' }}>{o.order_ref}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{fmtDate(o.created_at)}</span>
+                      <button onClick={() => resolveUnread(o)} style={{ background: 'none', border: '1px solid rgba(232,234,242,0.25)', borderRadius: 6, color: 'var(--text-muted)', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em', padding: '4px 10px', cursor: 'pointer' }}>
+                        Mark handled
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* A partly-read order is the dangerous one: it looks finished. */}
+                  {o.production_order_number && (
+                    <div style={{ fontSize: 11, color: '#fbbf24', marginTop: 6 }}>
+                      Part of this order WAS read and became {o.production_order_number} ({o.production_order_status}).
+                      The lines below are not in it.
+                    </div>
+                  )}
+
+                  <div style={{ marginTop: 8 }}>
+                    {(o.lines || []).map((l, i) => (
+                      <div key={i} style={{ fontSize: 12, color: 'var(--text-primary)', marginTop: 6 }}>
+                        <strong>{l.qty} ×</strong> {l.title}
+                        {l.variant_title ? ` — ${l.variant_title}` : ''}
+                        <span style={{ color: 'var(--text-muted)', marginLeft: 8, fontSize: 10 }}>
+                          {l.reason === 'no_sku' ? 'no SKU on the store' : `SKU ${l.sku} is not in the catalogue`}
+                        </span>
+                        {(l.properties || []).filter((pr) => !pr.name.startsWith('_')).map((pr, j) => (
+                          <div key={j} style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 16 }}>
+                            {pr.name}: {pr.value}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 12, lineHeight: 1.5 }}>
+              The fix is on the store side: give the product a SKU that matches the catalogue.
+              Until then the work has to be raised by hand.
+            </div>
+          </Card>
+        </div>
+      )}
 
       {/* Paid on the store, nothing to make, waiting to be picked and posted.
           Deliberately above everything else: it is the only thing on this page

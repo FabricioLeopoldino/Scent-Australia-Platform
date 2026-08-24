@@ -31,6 +31,27 @@ const { Pool } = require('pg');
 const APPLY = process.argv.includes('--apply');
 const TEST_MASTERS = ['RD200_TEST', 'CANDLE_240G', 'MAJ_RD200_TEST'];
 const TEST_CLIENTS = ['[regression] Coco Republic Test', 'Fabricio Test'];
+// Audit rows left by suites and probes. Named exactly — never a pattern.
+//
+// Added 2026-08-24, because six of these ('#D13-PROBE', from
+// regression-muse-fulfillment.cjs) surfaced as real orders on the new
+// "orders the platform could not read" panel. Residue in the audit log used to
+// be untidy; now it puts fiction on a screen someone acts on.
+//
+// 'Test Diffuser' is DELIBERATELY ABSENT. It is DIF_00001, which became the
+// Aere Diffuser — a real product. Those two rows are its birth record, not
+// residue, and they are the same trap this file's header warns about for
+// cleanup-sm-test-data.cjs.
+const TEST_AUDIT_NAMES = [
+  '#D13-PROBE',                       // regression-muse-fulfillment.cjs
+  '#D16-PROBE',                       // regression-d16-makeorder.cjs
+  'Reed Diffuser 200ml TEST',         // RD200_TEST
+  'Candle 240g TEST',                 // CANDLE_240G
+  'Major Reed 200ml TEST',            // MAJ_RD200_TEST
+  '[regression] Coco Republic Test',
+  'Fabricio Test',
+  '__cascade_probe', '__sku_probe', 'probe',
+];
 // What the fixtures read before the suites ran, measured 2026-08-14.
 const FIXTURE_BASELINE = { 'CMP-RB200': 4620, 'CMP-RLID': 4620, 'RM-ETHANOL': 43000 };
 
@@ -39,6 +60,15 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }, options: '-c search_path=sm,public',
 });
 const log = (s = '') => console.log(s);
+
+// The list is exported so preflight can DETECT what this script CURES, from one
+// definition. Two copies is how a detector and its cure drift apart, and a
+// residue check that misses the residue is worse than none — '#ZZ-' alone
+// missed 138 rows for eleven days.
+module.exports = { TEST_AUDIT_NAMES, TEST_MASTERS, TEST_CLIENTS };
+
+// Required by preflight for the list above; must not run on require.
+if (require.main !== module) return;
 
 (async () => {
   const client = await pool.connect();
@@ -90,6 +120,20 @@ const log = (s = '') => console.log(s);
     const cl = await q(`DELETE FROM clients WHERE name = ANY($1::text[]) RETURNING name`,
       [TEST_CLIENTS]);
     log(`  clients deleted    ${cl.rowCount ? cl.rows.map((r) => r.name).join(', ') : '(none)'}`);
+
+    // ── Audit rows the suites left behind ─────────────────────────────────
+    // Refused if anything outside the named list would go: the whole point is
+    // that this can never reach a real event.
+    const auditRows = (await q(
+      `SELECT entity_name, action, count(*)::int n FROM audit_log
+        WHERE entity_name = ANY($1::text[]) GROUP BY entity_name, action
+        ORDER BY entity_name`, [TEST_AUDIT_NAMES])).rows;
+    if (auditRows.some((r) => !TEST_AUDIT_NAMES.includes(r.entity_name))) {
+      throw new Error('an unnamed audit row matched — refusing to continue');
+    }
+    for (const r of auditRows) log(`  audit ${r.entity_name.padEnd(33)} ${String(r.n).padStart(3)} × ${r.action}`);
+    const ad = await q(`DELETE FROM audit_log WHERE entity_name = ANY($1::text[])`, [TEST_AUDIT_NAMES]);
+    log(`  audit rows deleted ${ad.rowCount}`);
 
     // ── Fixture balances ──────────────────────────────────────────────────
     // Restoring the number without a transaction row would be a silent edit, so

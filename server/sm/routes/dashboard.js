@@ -269,4 +269,77 @@ router.post('/dashboard/alerts/acknowledge-all', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
+// ── Orders the store took that the platform could not read ───────────────────
+//
+// WHY (2026-08-24). Between 18 and 20 August five paid orders arrived carrying
+// nine line items with no SKU on the Shopify product. The webhook did its job
+// and recorded every one of them — and then nothing showed them to anybody.
+// Four of the five produced no production order at all; the fifth produced a
+// one-unit order against a 501-unit basket, which is worse, because it looks
+// finished. They turned out to be marketing tests, but they were found only
+// because the morning check noticed the production-order count had moved by
+// one. A real order would have been lost the same way.
+//
+// The alarm was already being written. This is the reading end of it.
+//
+// BOTH unmatched paths, deliberately. The order webhook writes
+// shopify_order_unmatched keyed on details->shopify_order_id; the fulfilment
+// webhook writes muse_fulfillment_unmatched keyed on details->order_id. Reading
+// one and calling it done is the exact mistake lineShape() exists to prevent,
+// and it is the same key mismatch that would have left cancelled orders on the
+// awaiting-shipment list forever.
+const unmatchedKey = (t) => `COALESCE(${t}.details->>'shopify_order_id', ${t}.details->>'order_id')`;
+
+router.get('/dashboard/unmatched-orders', auth, async (req, res) => {
+  try {
+    const { rows } = await query(`
+      SELECT u.created_at,
+             u.action,
+             u.entity_name AS order_ref,
+             ${unmatchedKey('u')} AS shopify_order_id,
+             u.details->'unmatched' AS lines,
+             po.order_number AS production_order_number,
+             po.status       AS production_order_status
+        FROM audit_log u
+        LEFT JOIN production_orders po ON po.id = u.entity_id
+       WHERE u.action IN ('shopify_order_unmatched', 'muse_fulfillment_unmatched')
+         AND NOT EXISTS (
+           SELECT 1 FROM audit_log r
+            WHERE r.action = 'shopify_order_unmatched_resolved'
+              AND r.details->>'shopify_order_id'
+                  = ${unmatchedKey('u')})
+       ORDER BY u.created_at DESC`)
+    res.json(rows)
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
+})
+
+// Clearing one is a decision ("this was a test", "I have raised the work by
+// hand"), so it is recorded as its own audit event rather than by deleting or
+// updating the alarm. The alarm stays; the answer sits beside it.
+router.post('/dashboard/unmatched-orders/:shopifyOrderId/resolve', auth, async (req, res) => {
+  try {
+    const id = String(req.params.shopifyOrderId || '').trim()
+    if (!id) return res.status(400).json({ error: 'Missing order id' })
+
+    const { rows } = await query(
+      `SELECT entity_name FROM audit_log
+        WHERE action IN ('shopify_order_unmatched', 'muse_fulfillment_unmatched')
+          AND ${unmatchedKey('audit_log')} = $1
+        ORDER BY created_at DESC LIMIT 1`, [id])
+    if (!rows[0]) return res.status(404).json({ error: 'No unread order with that id' })
+
+    const note = String(req.body?.note || '').trim().slice(0, 500)
+    // Written directly, NOT through auditLog(): that helper swallows its own
+    // errors, which is right for a side-effect alongside real work and wrong
+    // here, where the record IS the work. A clearing nobody can trace is worse
+    // than a clearing that failed loudly.
+    await query(
+      `INSERT INTO audit_log (user_id, action, entity_type, entity_id, entity_name, details)
+       VALUES ($1, 'shopify_order_unmatched_resolved', 'production_order', NULL, $2, $3::jsonb)`,
+      [req.user.id, rows[0].entity_name,
+       JSON.stringify({ shopify_order_id: id, shopify_order: rows[0].entity_name, note: note || null })])
+    res.json({ success: true })
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
+})
+
 module.exports = router
