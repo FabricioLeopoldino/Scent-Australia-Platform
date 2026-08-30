@@ -1,0 +1,174 @@
+STOCK TAKE TRANSCRIPTION
+Source: Adobe Scan 28 Aug 2026.pdf
+Total items transcribed: 168
+
+Columns: Name | Aliases | Current Stock | Stock on Hand | Supplier Code
+
+001. Armani Woods | - | 4,000 | 9 | FIA231902
+002. Allure | - | 37,100 | 48 | SLC2600
+003. Adventure | Artesian | 77,875 | 69.5 | LUX1100
+004. Ambrette, Magnolia & Chamomile | - | 23,100 | 22 | SLC0803
+005. Australian Bush Lemon Myrtle | Lemon Myrtle | 11,300 | 12 | LUX1220
+006. Australian Bush | - | 26,600 | 32.5 | -
+007. Australian Bush & Eucalyptus | - | 19,000 | 16 | FIA242846
+008. Amalfi Coast | - | 3,000 | 0 | -
+009. Australian Bamboo grass | Bamboo Grass | 13,000 | 13 | Lux0400
+010. Avocado & Mint | - | 11,000 | 7 | LUX0783
+011. Aqua Positano | Aqua | 16,950 | 45 | FIA241035
+012. Baies | - | 16,900 | 15 | FIA213481
+013. Bois Secret | - | 37,000 | 33 | LUX0929
+014. Baccarat Rouge ( Jasmin and Dark woods) | Baccarat, Baccarat Rouge, Jasmine and Dark woods | 106,800 | 80 | SLC0778
+015. Beach Party | - | 116,200 | 115 | LUX1189
+016. Blue Bergamot | - | 10,251 | 3 | 6133475
+017. Black Orchid | Dark Orchid | 68,400 | 51 | FIA223423
+018. Burberry Hero | - | 28,000 | 27 | SLC2431
+019. Blue Ice | - | 21,250 | 37 | FIA221772
+020. Blonde Woods & Cashmere | - | 49,600 | 44 | AA171829
+021. Bergamot and Oakmoss (Creed) | Bergamot & Oakmoss, Bergamot Oakmoss | 117,550 | 128.5 | FIA213666
+022. Blue Grass | - | 48,000 | 48 | FIA231317
+023. Blondewood | HABEN 6, Haben Signature Scent #6 | 79,000 | 78 | FIA250463
+024. B Natural | - | 0 | 0 | FIA250716
+025. Bushwood | - | 114,000 | 86 | FIA223425
+026. By The Fireplace | By The Fire | 2,300 | 1 | FIA232061
+027. Fig Tree | Black Fig, Fig Tree | 16,000 | 16 | FIA223441
+028. Christmas B | - | 6,900 | 8 | FIA251174
+029. Caju & Lime | Caju Fruit & Lime, Caju Fruit and Lime | 133,850 | 118 | LUX1545
+030. Concerto | - | 140,850 | 121 | LUX0706
+031. Crossfit | - | 19,000 | 21.5 | FIA260033
+032. Coconut Lime Punch | - | 79,100 | 81 | LUX1036
+033. Chai Tea | - | 20,100 | 20 | -
+034. Christmas Night Xmas Pudding | Dark Spice | 31,700 | 32 | WO0028199 -20267
+035. Christmas Cedar | - | 16,000 | 16 | -
+036. Clinique Happy | Exhilarate, Exhilarate Optimsm, Happy | 17,000 | 13 | LUX1186
+037. Country Linen | CR Linen, Linen | 71,600 | 49 | LUX1188
+038. Coffe Airfreshener | - | 20,000 | 20 | FIA220415
+039. Coco Mademoiselle | Orlando | 21,000 | 20 | FH20376880 | FIA211
+040. Citrus Bushwood B | - | 82,200 | 93 | FIA231263
+041. Cologne | Oasis | 14,300 | 0 | FH20376931
+042. Campfire | - | 16,000 | 19.5 | FIA230279
+043. Coast | - | 10,000 | 13 | FIA250654
+044. Cyrnos | Limoncello | 11,000 | 19.5 | FIA213958
+045. Dream | - | 291,900 | 250 | LUX1073
+046. Denim | - | 12,700 | 11 | FIA224008
+047. Desert Flower | - | 84,400 | 84 | FIA250462
+048. Eucalyptus | - | 0 | 0 | -
+049. Eucalyptus Citriodora | - | 10,300 | 40 | -
+050. EVE | - | 34,000 | 10 | SLC1946
+051. EO Blend (Essential Oil) | - | 7,100 | 9 | FIA242843
+052. Elevated Lotus Blossom + Lemon | - | 5,000 | 5 | FIA231877
+053. Elevated Tokyo (Aman Haru) | Aman Haru, Star, Star Signature, Tokyo | 181,800 | 80 | FIA231877
+054. Figuier | Fig and Sandalwood, Figuier Sandalwood | 47,100 | 27 | LUX0438
+055. Fresh Coffe | - | 9,000 | 9 | WO0026464
+056. Fierce Type | - | 10,900 | 10 | -
+057. Feu de Camp | Coco Republic | 184,100 | 130 | FIA242164
+058. Linen & Fig | Country Road, Fig & Linen | 57,500 | 95 | FIA223463
+059. Flower Bomb | Flower Bouquet | 13,300 | 18 | FIA213960
+060. Fig, Jasmine & Santal | New Gold | 19,000 | 19 | FIA220519
+061. Floral Drop | - | 29,250 | 38.5 | FIA250658
+062. Green | - | 1,000 | 3 | -
+063. Green Tea | - | 29,000 | 29 | Lux0748
+064. Green Tea and Lemongrass | - | 14,000 | 14 | LUX13377
+065. Ginger Flower | - | 98,000 | 77 | LUX0362
+066. Givenchy Gentlemen | Gentlemen | 15,000 | 15 | FIA222191
+067. Gingerbread A | - | 2,000 | 2 | FIA252391
+068. Gypsy Water | Bohemin Dream | 10,000 | 30 | FIA213584
+069. Grape Chupa Chup | - | 99,150 | 85 | FIA222907
+070. Garden Symphony | - | 1,000 | 1 | FIA241471
+071. Golden Garden | - | 28,100 | 26 | FIA250769
+072. Grey Vetiver | - | 1,800 | 1 | -
+073. Hermes Country | - | 20,000 | 17.5 | SFA1683
+074. Home Department | Home | 7,000 | 7 | FIA250611
+075. Isopropyl Myristate (IPM) | - | 71,350 | 73 | FIA251436
+076. Inspiration - NEW HOPE | - | 18,000 | 18 | SFA1226/2
+077. Intense Air | Aura (Supplier: FIA), Perfume Intense | 84,750 | 85 | FIA250553
+078. Jardin de Carthage | - | 244,900 | 166 | Lux0639
+079. JM Jasmin & Mint | - | 0 | 0 | SFA1367
+080. Japanese Honeysuckle | - | 7,000 | 7 | -
+081. Jasmine Sambac & Marigold | - | 8,800 | 9 | LUX1027
+082. JPG Le Beau | - | 1,000 | 1 | FIA250842
+083. Zen Garden | Jardin Zen | 1,700 | 0 | LUX0928
+084. Kookai Signature | - | 91,450 | 80 | FIA250770
+085. Kiwi Coconut Vanilla | - | 33,500 | 25 | FIA230965
+086. London (BLUE DRUM -Bell) | - | 2,600 | 0 | 6132618
+087. La Vie Est Belle | Sweet Harmony | 16,700 | 17 | FH20376936
+088. Lotus Zen | - | 28,900 | 29 | LUX1335
+089. Lacoste Original | Lacoste Signature | 23,300 | 21 | SLC3015
+090. Leather & Woods | - | 30,550 | 30 | FIA230899
+091. Lemongrass and Persian Lime | - | 14,300 | 14 | -
+092. Light Blue | Light Torquoise, Light Turquoise, Women's | 16,800 | 37 | FIA250554
+093. Lemongrass and Ginger | - | 32,200 | 30 | FIA242434
+094. Myrrh & Tonka | Myrrh & Tonka and Spice, Oriental Myrrh | 169,000 | 126 | LUX1423
+095. Mahogany Fig | - | 64,100 | 60 | LUX1281
+096. Mahogany Wood | - | 69,400 | 73 | LUX0710
+097. Milagrito | - | 145,750 | 85 | LUX0710
+098. Matiere Noire | - | 20,000 | 20 | FH20376949
+099. Miami Strong | Miami | 31,750 | 190 | FIA222066
+100. Moonlight Patchouli | - | 6,000 | 6 | FIA250555
+101. Miami Woods | Harli + Harpa Signature | -6,800 | 121 | FIA242633
+102. Noel | Christmas, Noel Noel | 47,000 | 45 | FIA250025
+103. New Hope | - | 31,000 | 37 | FIA223464
+104. Native B | - | 34,600 | 35.5 | FIA223766
+105. Noir | La Labo The Noir, The Noir, The Noir 29 | 49,400 | 50 | FIA213480
+106. New CBD Perth d3 | CBD Perth D 3, New CBD Perth D3 | 25,000 | 30 | FIA251440
+107. Orange & Bergamot | - | 17,000 | 17.5 | LUX0598
+108. Oz Design Signature | - | 25,500 | 26 | LUX1726
+109. Orange Grass | - | 9,000 | 10 | SFA1578
+110. Orchidee Narco | - | 23,100 | 26 | LUX1129
+111. Orange B | Citrus B3 | 21,000 | 20 | FIA231256
+112. Oud | - | 35,700 | 37 | FIA250823
+113. Premiere | - | 56,100 | 57 | SLC2486
+114. Park Hyatt Peony (Hyatt Peony) | Hyatt Peony, Park Hyatt Peony | 63,000 | 63 | WO0031095 (29234)
+115. Patisserie | Sweet Vanilla Patisserie | 149,850 | 138 | LUX696
+116. Peppermint | - | 11,200 | 11 | LUX0774
+117. Pepperwood | - | 191,350 | 170 | FIA223424
+118. Porsche | - | 5,900 | 6 | FIA232165
+119. Quercers | Royal | 202,700 | 170 | LUX0736
+120. Rosemary & Cinnamon Blend | - | 3,500 | 0 | EBSAMRC2A
+121. Rosewater | - | 5,000 | 4 | SLC2644
+122. Rainstorm | - | 4,600 | 5 | -
+123. Resurrection (Essential Oil) | - | 7,500 | 15 | FIA243524
+124. Rose Diptyque | - | 17,000 | 15 | FIA231309
+125. Review | - | 13,000 | 0 | FIA241706
+126. Rock N Roll | - | 21,200 | 24 | LUX0906A
+127. Rottnest Island Summertime B | - | 7,000 | 12 | FIA241283
+128. Summer Vacay | - | 13,800 | 14 | FIA241782
+129. Saffron | Eastern | 20,622 | 18 | FIA260780
+130. Special Santal | Mondrian (Supplier: AE Air Essentials U | 28,000 | 28 | SLC2775 or Special
+131. Sea Salt | - | 8,000 | 10 | -
+132. Signature | Signature | 19,000 | 32 | FIA260650
+133. Sugar Cookie | - | 12,300 | 12 | LUX13933
+134. Sensual Woods | - | 153,300 | 138 | Lux864
+135. Santal 33 Style A (Black) | Santal 66 (Black), Santal BLACK | 134,450 | 299 | FIA211503
+136. Santal 66 (Blue) - KIRRI | Santal 66 Blue, Santal Blue | 1,300 | 0 | 6132781
+137. Serpentine Comme Des | Serpentine | 45,100 | 44 | FIA221947
+138. Santal and White Tea | - | 50,750 | 67 | FIA241193
+139. Sandalwood B | - | 131,150 | 132 | FIA231155
+140. Santal, Mahogany & Sandalwood | - | 2,000 | 5 | FIA241192
+141. Santal, Mahogany & Soft Floral | - | 1,000 | 0 | FIA252221
+142. Sandalwood Fig & Jasmine | - | 3,000 | 3 | FIA243579
+143. Sandalwood & Hint of Jasmin | - | 19,000 | 25 | FIA243577
+144. TF Ambitious | Ambitious, Tom Ford | 5,600 | 5 | LUX 750
+145. The Rouge | The Rogue | 5,600 | 9 | SFA1416
+146. Teak & Neroli | Neroli | 6,400 | 6 | -
+147. The Blanc | - | 17,000 | 15 | Lux628
+148. Tabac Noir | - | 29,300 | 29 | SFA1375
+149. Tropical Cruise | - | 26,000 | 20 | SFA1209
+150. Tea Time | - | 8,000 | 8 | SLC2631
+151. The Star Azure | - | 1,000 | 2 | FIA250835
+152. Tuberose Vanille | - | 19,000 | 20 | FIA241278
+153. The Star Lobby | - | 10,000 | 10 | FIA250836
+154. Terre | Gold Clementine | 25,200 | 30 | FIA250461
+155. Ultimate Leather | - | 5,000 | 7 | SFA1227
+156. Vetiver, Water Lily + Sandalwood | Ashley | 17,000 | 37 | FIA230295
+157. Vetiver D'Hiver | - | 20,850 | 15 | FIA221547
+158. French Vanilla (Vanilla Bourbon) | French Vanilla | 26,200 | 40 | LUX0637
+159. White Tea | - | 183,950 | 140 | LUX0593
+160. White Tea & Ginger Flowers | WTGF | 94,285 | 94 | SLC1564
+161. Wild Lily & Spring Moss | Starlight Lily | 17,200 | 10 | LUX1234
+162. W Hotel | - | 31,700 | 31 | LUX29228
+163. Waterplants | Plants D'eau, Plants D'eau Waterplants | 15,200 | 10 | LUX0737
+164. Waterfall | - | 107,700 | 107 | LUX0637
+165. Whiskey Bar | - | 9,050 | 8 | FIA213959
+166. White Tea & Bamboo | - | 45,400 | 60 | FIA242839
+167. Wonderwood | - | 10,000 | 10 | FIA222036
+168. ZWT | Zetsty | 27,000 | 27 | FIA223912
