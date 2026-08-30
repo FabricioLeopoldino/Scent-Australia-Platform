@@ -109,4 +109,22 @@ function proposedFor(row, balanceAtCutoff, currentStock) {
   return row.counted * LITRE + movedSince;
 }
 
-module.exports = { LITRE, COUNT_CUTOFF_SYDNEY, norm, num, parseSheet, buildMatcher, proposedFor };
+// Two lines the warehouse contradicted AFTER the sheet was written, by message
+// on 28/08 16:09. Writing a figure somebody has already said is wrong is worse
+// than leaving the old one: the old one is at least known to be doubtful, while
+// a fresh stock-take figure reads as verified.
+//
+//   FRAG_0097 Milagrito       "-180kg in coldroom" — roughly 180 L that the
+//                             count of 85 L does not appear to include
+//   FRAG_0094 Myrrh & Tonka   "correct in system" — so it needs no adjustment
+//                             at all, and this plan would have taken 46.5 L off
+//
+// Both also moved heavily on the count day itself (89 L and 88 L), which is
+// where the approximate cutoff is least reliable. They stay untouched until
+// somebody recounts them.
+const HOLD = {
+  FRAG_0097: 'warehouse 28/08: -180kg in coldroom, not in the counted figure',
+  FRAG_0094: 'warehouse 28/08: correct in system, no adjustment needed',
+};
+
+module.exports = { LITRE, COUNT_CUTOFF_SYDNEY, HOLD, norm, num, parseSheet, buildMatcher, proposedFor };

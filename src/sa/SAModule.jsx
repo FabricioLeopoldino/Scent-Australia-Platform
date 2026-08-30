@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import { Router, Route, Switch, Link, useLocation } from 'wouter';
 import { ToastProvider } from './components/Toast';
 import Dashboard from './pages/Dashboard';
@@ -16,7 +15,7 @@ import RawMaterials from './pages/RawMaterials';
 import Formulas from './pages/Formulas';
 import ActivityLog from './pages/ActivityLog';
 import ScentedProducts from './pages/ScentedProducts';
-import TechStock from './pages/TechStock';
+// TechStock retired 31/08/2026 — page kept at ./pages/TechStock for restoring.
 import ThemeToggle from './components/ThemeToggle';
 
 // SA Scent Stock Manager module shell — nav/routes/role-gating identical to
@@ -37,14 +36,11 @@ export default function SAModule({ user, onSwitchModule, onLogout }) {
 }
 
 function SAContent({ user, onSwitchModule, onLogout }) {
-  const [location, setLocation] = useLocation();
+  const [location] = useLocation();
 
-  // SA behavior preserved: technicians land on Tech Stock
-  useEffect(() => {
-    if (user.role === 'technician' && (location === '/' || location === '')) {
-      setLocation('/tech-stock');
-    }
-  }, [user.role, location]);
+  // Technicians used to land on Tech Stock. That screen was retired on
+  // 31/08/2026 — see the route below — so they land on the Dashboard like
+  // everybody else. Leaving the redirect would drop them on a dead page.
 
   const isActive = (path) => (path === '/' ? location === '/' : location.startsWith(path));
 
@@ -142,7 +138,27 @@ function SAContent({ user, onSwitchModule, onLogout }) {
           <Route path="/replenishment">{!['user', 'technician'].includes(user?.role) ? <ReplenishmentDashboard user={user} /> : null}</Route>
           <Route path="/formulas"><Formulas user={user} /></Route>
           <Route path="/scented-products"><ScentedProducts user={user} /></Route>
-          <Route path="/tech-stock"><TechStock user={user} /></Route>
+          {/* Tech Stock retired by the owner, 31/08/2026. Not a fault in the
+              screen: keeping a second stock ledger did not survive contact with
+              the operation. The 28/08 count found the biggest gaps on exactly
+              the oils the technicians move most — an order not entered, a
+              withdrawal not taken off, a return not put back — so it goes back
+              to one number per oil. The 255 L they were holding was folded into
+              that count and their balances cleared.
+              The page and its route are kept so an old bookmark explains itself
+              instead of showing nothing; restore by putting <TechStock /> back. */}
+          <Route path="/tech-stock">
+            <div style={{ padding: 40, maxWidth: 620 }}>
+              <h1 className="ed-title" style={{ marginBottom: 12 }}>Tech Stock has been retired</h1>
+              <p style={{ color: 'var(--text-muted)', lineHeight: 1.7 }}>
+                Fragrance is now held as one number per oil, as it was before. What the
+                technicians were holding was included in the stock take of 28 August.
+                Use <Link href="/returns" style={{ color: '#60a5fa' }}>Returns</Link> to put
+                fragrance back, and <Link href="/history" style={{ color: '#60a5fa' }}>History</Link> to
+                see what moved.
+              </p>
+            </div>
+          </Route>
           <Route path="/bom"><BOMViewer user={user} /></Route>
           <Route path="/diffuser-bom"><DiffuserMachineBOM user={user} /></Route>
           <Route path="/sku-mapping">{['admin', 'root'].includes(user?.role) ? <SkuMapping user={user} /> : null}</Route>

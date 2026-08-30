@@ -47,7 +47,10 @@ const BASELINE = {
   //
   // Kept current on purpose: a baseline that is always wrong is a line people
   // stop reading, which is exactly what happened to the negative-stock check.
-  production_orders: 3,
+  // SM-005 (#1029) joined on 28/08 — a real MUSE order for three room sprays,
+  // shipped from stock before it was produced, so the platform closed it
+  // automatically. The behaviour is right; only the baseline needed moving.
+  production_orders: 4,
   sa_oils: 325,               // the Fragrance Library
   // 14 since 2026-08-18: order #1022 was the first real MUSE sale to be MADE
   // rather than picked, and it drove the four Room Spray components negative —
@@ -59,7 +62,14 @@ const BASELINE = {
   // Library oils, Miami Woods at -6.8 L and Kona at -2 L. Found while tracing
   // this morning's real store sales, which drive two of them further down every
   // time one goes out. Baselined, not cleared: the same rule as the fourteen.
-  sa_negatives: 22,
+  // 25 after the stock take of 28/08 was applied on 31/08. Miami Woods came OFF
+  // the list (it was -6.8 L and counted 121 L), and four went ON it, because
+  // more was consumed after the count than the count found:
+  //   EVE -9.9 L · Rosemary & Cinnamon -5.8 L
+  //   Santal, Mahogany & Soft Floral -4.5 L · Grey Vetiver -1.0 L
+  // Not cleared to zero: no figure is invented, and the owner is having those
+  // four recounted.
+  sa_negatives: 25,
   oils_no_minimum: 22,        // MUSE oils that can never raise a warning
 };
 

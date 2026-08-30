@@ -33,12 +33,13 @@ require('dotenv').config();
 const { Pool } = require('pg');
 const { readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
-const { LITRE, COUNT_CUTOFF_SYDNEY, parseSheet, buildMatcher, proposedFor } = require('./lib.cjs');
+const { LITRE, COUNT_CUTOFF_SYDNEY, HOLD, parseSheet, buildMatcher, proposedFor } = require('./lib.cjs');
 
 const APPLY = process.argv.includes('--apply');
 const SHEET = process.argv.find((a) => a.endsWith('.txt')) || join(__dirname, '2026-08-28-fragrances.txt');
 const OUT = join(__dirname, 'apply-plan.csv');
 const COUNT_DATE = '28/08/2026';
+
 const NOTE = `Stock take ${COUNT_DATE}`;
 
 const pool = new Pool({
@@ -96,6 +97,7 @@ const log = (s = '') => console.log(s);
 
     const plan = [];
     const problems = [];
+    const held = [];
     for (const r of rows.filter((x) => !x.bad)) {
       const { hit, how } = matcher(r);
       if (hit.length !== 1) { problems.push({ r, n: hit.length, why: hit.length ? 'ambiguous' : 'not found' }); continue; }
@@ -107,6 +109,7 @@ const log = (s = '') => console.log(s);
         problems.push({ r, n: 1, why: 'no ledger balance at the cutoff, but it moved after' });
         continue;
       }
+      if (HOLD[p.code]) { held.push({ r, p, why: HOLD[p.code] }); continue; }
       const bal = atCutoff.has(p.code) ? atCutoff.get(p.code) : p.stock;
       const proposed = proposedFor(r, bal, p.stock);
       plan.push({ r, p, how, balAtCutoff: bal, movedSince: p.stock - bal,
@@ -123,11 +126,16 @@ const log = (s = '') => console.log(s);
     const tech = (await client.query(
       `SELECT t.product_id, t.quantity::float AS ml, p."productCode" AS code, p.name, p.unit
          FROM sa.tech_stock t JOIN sa.products p ON p.id = t.product_id
-        WHERE t.quantity <> 0`)).rows;
+        WHERE t.quantity <> 0 AND p."productCode" <> ALL($1::text[])`,
+      [Object.keys(HOLD)])).rows;
 
     // Every technician balance must belong to a counted product, or clearing it
     // would delete stock nobody has laid eyes on.
     const counted = new Set(plan.map((x) => x.p.code));
+    // A held product keeps its technician balance as well. Clearing that while
+    // leaving the main figure alone would take the oil out of the system on the
+    // strength of a count we have just been told not to trust.
+    for (const code of Object.keys(HOLD)) counted.delete(code);
     const orphan = tech.filter((t) => !counted.has(t.code));
     if (orphan.length) {
       throw new Error(`${orphan.length} technician balance(s) belong to oils that were NOT counted (${orphan.map((o) => o.code).join(', ')}) — refusing`);
@@ -136,6 +144,11 @@ const log = (s = '') => console.log(s);
     log(`\n${APPLY ? 'APPLYING' : 'DRY RUN'} — fragrance stock take of ${COUNT_DATE}\n`);
     log(`  sheet lines            ${rows.length}`);
     log(`  matched to a product   ${plan.length}`);
+    if (held.length) {
+      log(`  HELD BACK              ${held.length}`);
+      held.forEach((h) => log(`     ${h.p.code}  ${h.p.name} — ${h.why}`));
+      log('     left exactly as they are, technician balance included.');
+    }
     log(`  technician balances    ${tech.length} oil(s), ${L(tech.reduce((s, t) => s + t.ml, 0))}`);
     log('');
     log('  The counted figure INCLUDES what the technicians held (owner, 31/08),');
@@ -217,9 +230,17 @@ const log = (s = '') => console.log(s);
     const wrong = changed.filter((x) => after.get(x.p.id) !== x.proposed);
     if (wrong.length) throw new Error(`${wrong.length} product(s) did not land on the proposed figure`);
 
-    const techLeft = Number((await client.query(
-      `SELECT count(*) c FROM sa.tech_stock WHERE quantity <> 0`)).rows[0].c);
-    if (techLeft) throw new Error(`${techLeft} technician balance(s) are still not zero`);
+    // Every technician balance is cleared EXCEPT the held products, which keep
+    // theirs on purpose. This assertion caught the first --apply attempt, which
+    // is what it is for: the check was written before the hold existed.
+    const techLeft = (await client.query(
+      `SELECT p."productCode" AS code FROM sa.tech_stock t
+         JOIN sa.products p ON p.id = t.product_id
+        WHERE t.quantity <> 0`)).rows.map((r) => r.code);
+    const unexpected = techLeft.filter((c) => !HOLD[c]);
+    if (unexpected.length) {
+      throw new Error(`${unexpected.length} technician balance(s) are still not zero: ${unexpected.join(', ')}`);
+    }
 
     const untouched = plan.filter((x) => x.delta === 0);
     const drifted = untouched.filter((x) => after.get(x.p.id) !== x.p.stock);

@@ -80,7 +80,12 @@ try {
 
   server = spawn(process.execPath, ['server/index.js'], {
     cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test', SM_SHOPIFY_SYNC_ENABLED: 'false' },
+    // Tech Stock was retired on 31/08/2026 and its write endpoints refuse unless
+    // this is set. The suite turns it ON deliberately: the author fix has to stay
+    // proven for the day somebody restores the feature, or it comes back broken.
+    // Section 4 asserts the retirement itself, on a server without the flag.
+    env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test', SM_SHOPIFY_SYNC_ENABLED: 'false',
+      SA_TECH_STOCK_ENABLED: 'true' },
   });
   let log = '';
   server.stdout.on('data', (d) => { log += d; });
@@ -143,6 +148,44 @@ try {
       WHERE action = 'tech_batch' AND entity_id = ANY($1::text[])`, [batchRefs])).rows;
   check(receipts.length === 4, 'one receipt per batch', `got ${receipts.length}`);
   check(receipts.every((r) => r.user_id === USER), 'each naming the same person');
+
+  console.log('');
+  console.log('4. With the feature retired, every write refuses');
+  // A second server WITHOUT the flag. The retirement is what stops the second
+  // ledger being re-created after the 28/08 stock take cleared it, so it earns a
+  // test rather than trust in one middleware line.
+  const off = spawn(process.execPath, ['server/index.js'], {
+    cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, PORT: String(PORT + 1), NODE_ENV: 'test',
+      SM_SHOPIFY_SYNC_ENABLED: 'false', SA_TECH_STOCK_ENABLED: 'false' },
+  });
+  try {
+    let ready = false;
+    for (let i = 0; i < 120 && !ready; i++) {
+      try { ready = (await fetch(`http://127.0.0.1:${PORT + 1}/api/health`)).ok; } catch { /* booting */ }
+      if (!ready) await new Promise((r) => setTimeout(r, 500));
+    }
+    if (!ready) throw new Error('the second server did not boot');
+    const call = (path, method = 'POST') => fetch(`http://127.0.0.1:${PORT + 1}/api/sa${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'transfer', items: [{ productId: TAG, quantity: 1 }] }),
+      signal: AbortSignal.timeout(20000),
+    });
+    for (const path of ['/tech-stock/transfer', '/tech-stock/remove', '/tech-stock/return',
+      '/tech-stock/return-input', '/tech-stock/batch']) {
+      const r = await call(path);
+      check(r.status === 410, `${path} refuses`, `HTTP ${r.status}`);
+    }
+    const cfg = await call(`/tech-stock/${encodeURIComponent(TAG)}/config`, 'PUT');
+    check(cfg.status === 410, '/tech-stock/:id/config refuses', `HTTP ${cfg.status}`);
+    // Reading stays open on purpose: what they held must remain visible.
+    const read = await fetch(`http://127.0.0.1:${PORT + 1}/api/sa/tech-stock`,
+      { headers: { Authorization: `Bearer ${token()}` } });
+    check(read.ok, 'but reading the history still works', `HTTP ${read.status}`);
+  } finally {
+    try { off.kill('SIGKILL'); } catch { /* gone */ }
+  }
 
   if (failed) {
     console.log('\n--- server log ---');

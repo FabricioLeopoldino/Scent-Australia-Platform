@@ -5470,6 +5470,27 @@ async function runStartupMigrations() {
 // ========================================================================
 const TECH_ROLES = ['technician', 'admin', 'root'];
 
+// Tech Stock retired by the owner, 31/08/2026. The screen is gone, but the six
+// write endpoints below would still answer, and any one of them re-creates the
+// second ledger the 28/08 stock take was applied to close — 255 L was folded
+// into the count and those balances cleared. One caller left running, or one
+// bookmarked page, would quietly start it again.
+//
+// Reading stays open: GET /tech-stock still answers, so the history of what the
+// technicians held remains visible. Only the writes refuse.
+//
+// TO RESTORE: set SA_TECH_STOCK_ENABLED=true. Deliberately an environment
+// variable and not a code change, so bringing it back is a decision somebody
+// makes on purpose rather than a line that quietly reappears in a merge.
+const TECH_STOCK_ENABLED = process.env.SA_TECH_STOCK_ENABLED === 'true';
+function techStockRetired(req, res, next) {
+  if (TECH_STOCK_ENABLED) return next();
+  return res.status(410).json({
+    error: 'Tech Stock was retired on 31/08/2026. Fragrance is held as one number per oil; '
+         + 'use Returns to put stock back.',
+  });
+}
+
 // GET /api/tech-stock — list all OILS with main stock + tech stock + total
 router.get('/tech-stock', async (req, res) => {
   try {
@@ -5499,7 +5520,7 @@ router.get('/tech-stock', async (req, res) => {
 });
 
 // POST /api/tech-stock/transfer — move qty from main stock to tech stock (atomic)
-router.post('/tech-stock/transfer', async (req, res) => {
+router.post('/tech-stock/transfer', techStockRetired, async (req, res) => {
   if (!TECH_ROLES.includes(req.user.role)) {
     return res.status(403).json({ error: 'Not authorised' });
   }
@@ -5584,7 +5605,7 @@ router.post('/tech-stock/transfer', async (req, res) => {
 });
 
 // POST /api/tech-stock/remove — consume qty from tech stock (used in service)
-router.post('/tech-stock/remove', async (req, res) => {
+router.post('/tech-stock/remove', techStockRetired, async (req, res) => {
   if (!TECH_ROLES.includes(req.user.role)) {
     return res.status(403).json({ error: 'Not authorised' });
   }
@@ -5648,7 +5669,7 @@ router.post('/tech-stock/remove', async (req, res) => {
 });
 
 // POST /api/tech-stock/return — return qty from tech back to main stock
-router.post('/tech-stock/return', async (req, res) => {
+router.post('/tech-stock/return', techStockRetired, async (req, res) => {
   if (!TECH_ROLES.includes(req.user.role)) {
     return res.status(403).json({ error: 'Not authorised' });
   }
@@ -5725,7 +5746,7 @@ router.post('/tech-stock/return', async (req, res) => {
 });
 
 // POST /api/tech-stock/return-input — technician returns oil directly to tech stock
-router.post('/tech-stock/return-input', async (req, res) => {
+router.post('/tech-stock/return-input', techStockRetired, async (req, res) => {
   if (!TECH_ROLES.includes(req.user.role)) return res.status(403).json({ error: 'Not authorised' });
   const { productId, quantity, notes } = req.body;
   const qty = parseFloat(quantity);
@@ -5786,7 +5807,7 @@ router.post('/tech-stock/return-input', async (req, res) => {
 // This is one route of many. 22 of the 25 places that write a stock movement in
 // this file still record nobody. Listed for the owner rather than changed in
 // bulk - some of those paths have no user at all.
-router.post('/tech-stock/batch', async (req, res) => {
+router.post('/tech-stock/batch', techStockRetired, async (req, res) => {
   if (!TECH_ROLES.includes(req.user.role)) return res.status(403).json({ error: 'Not authorised' });
   const { action, items, notes } = req.body;
   if (!['transfer', 'remove', 'return', 'return-input'].includes(action)) {
@@ -5933,7 +5954,7 @@ router.post('/tech-stock/batch', async (req, res) => {
 });
 
 // PUT /api/tech-stock/:productId/config — root sets target_quantity and/or is_tech_active
-router.put('/tech-stock/:productId/config', async (req, res) => {
+router.put('/tech-stock/:productId/config', techStockRetired, async (req, res) => {
   if (req.user.role !== 'root') return res.status(403).json({ error: 'Only root can configure tech stock' });
   const { productId } = req.params;
   const { target_quantity, is_tech_active } = req.body;

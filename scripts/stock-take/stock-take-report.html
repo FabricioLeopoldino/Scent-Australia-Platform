@@ -1,0 +1,1702 @@
+<title>Fragrance Stock Take</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --paper:#f3f4f6; --card:#ffffff; --ink:#16181d; --ink-2:#5b6068; --line:#dfe2e7;
+    --amber:#8a5a00; --amber-bg:#fbf1dc; --amber-line:#d9a94a;
+    --found:#0f6b45; --found-bg:#e3f2ea;
+    --missing:#a52218; --missing-bg:#fbe7e5;
+    --shadow:0 1px 2px rgba(20,24,32,.05);
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --paper:#111318; --card:#181b21; --ink:#e8eaee; --ink-2:#969ba5; --line:#282c34;
+    --amber:#e0b75f; --amber-bg:#241d0d; --amber-line:#6d5520;
+    --found:#5cc894; --found-bg:#0e2a1f;
+    --missing:#ef8b81; --missing-bg:#2c1512;
+    --shadow:0 1px 2px rgba(0,0,0,.4);
+  }}
+  :root[data-theme="dark"]{
+    --paper:#111318; --card:#181b21; --ink:#e8eaee; --ink-2:#969ba5; --line:#282c34;
+    --amber:#e0b75f; --amber-bg:#241d0d; --amber-line:#6d5520;
+    --found:#5cc894; --found-bg:#0e2a1f;
+    --missing:#ef8b81; --missing-bg:#2c1512;
+    --shadow:0 1px 2px rgba(0,0,0,.4);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font:16px/1.65 "IBM Plex Sans",ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+       -webkit-font-smoothing:antialiased}
+  .wrap{max-width:1140px;margin:0 auto;padding:56px 24px 100px;display:flex;flex-direction:column;gap:0}
+  .eyebrow{font:500 12px/1 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.16em;
+           text-transform:uppercase;color:var(--ink-2);margin:0 0 14px}
+  h1{font:600 clamp(32px,5vw,46px)/1.08 Fraunces,Georgia,serif;letter-spacing:-.02em;
+     margin:0 0 10px;text-wrap:balance}
+  .lede{color:var(--ink-2);margin:0 0 40px;font-size:17px;max-width:62ch}
+  h2{font:600 21px/1.3 Fraunces,Georgia,serif;letter-spacing:-.01em;margin:52px 0 4px}
+  .h2sub{color:var(--ink-2);font-size:14px;margin:0 0 18px}
+
+  .totals{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
+  .t{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px;
+     box-shadow:var(--shadow)}
+  .t .v{font:600 30px/1.1 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:-.03em;
+        font-variant-numeric:tabular-nums}
+  .t .k{color:var(--ink-2);font-size:13.5px;margin-top:7px;line-height:1.45}
+  .found{color:var(--found)} .missing{color:var(--missing)}
+
+  .notes{display:flex;flex-direction:column;gap:12px;margin-top:28px}
+  .note{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--line);
+        border-radius:8px;padding:16px 20px;font-size:15px;line-height:1.6}
+  .note.caution{background:var(--amber-bg);border-left-color:var(--amber-line)}
+  .note b{font-weight:600}
+  .note.caution b{color:var(--amber)}
+
+  .tools{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:0 0 12px}
+  input[type=search]{flex:1;min-width:200px;background:var(--card);color:var(--ink);
+    border:1px solid var(--line);border-radius:8px;padding:9px 13px;font:400 14px/1.4 inherit}
+  input[type=search]:focus-visible,button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+  button{background:var(--card);color:var(--ink-2);border:1px solid var(--line);border-radius:8px;
+    padding:9px 15px;font:500 13px/1.4 inherit;cursor:pointer;
+    transition:color .15s,border-color .15s,background .15s}
+  button:hover{color:var(--ink);border-color:var(--ink-2)}
+  button[aria-pressed=true]{color:var(--ink);border-color:var(--ink);background:var(--paper)}
+
+  .scroll{overflow-x:auto;background:var(--card);border:1px solid var(--line);
+          border-radius:10px;box-shadow:var(--shadow)}
+  table{border-collapse:collapse;width:100%;font-size:14px}
+  th{position:sticky;top:0;z-index:1;background:var(--card);border-bottom:1px solid var(--line);
+     font:600 11px/1 "IBM Plex Mono",ui-monospace,monospace;letter-spacing:.12em;
+     text-transform:uppercase;color:var(--ink-2);padding:13px 14px;text-align:left;white-space:nowrap}
+  th.r{text-align:right}
+  td{padding:10px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
+  tbody tr:last-child td{border-bottom:0}
+  td.n{text-align:right;font-family:"IBM Plex Mono",ui-monospace,monospace;
+       font-variant-numeric:tabular-nums;font-size:13px}
+  td.code{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12px;color:var(--ink-2)}
+  td.nm{white-space:normal;min-width:210px}
+  td.was,td.tech{color:var(--ink-2)}
+  td.count{font-weight:600}
+  td.up{color:var(--found)} td.down{color:var(--missing)} td.flat{color:var(--ink-2)}
+  .pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11.5px;font-weight:500;
+        border:1px solid transparent}
+  .pill.hold{background:var(--amber-bg);color:var(--amber);border-color:var(--amber-line)}
+  .pill.below{background:var(--missing-bg);color:var(--missing)}
+  .pill.ok{background:transparent;color:var(--ink-2);border-color:var(--line)}
+  tr[data-state=held] td{background:color-mix(in srgb,var(--amber-bg) 60%,transparent)}
+  tr[data-state=neg] td{background:color-mix(in srgb,var(--missing-bg) 55%,transparent)}
+  tr.hidden{display:none}
+  .empty{padding:26px;text-align:center;color:var(--ink-2);font-size:14px}
+
+  footer{margin-top:56px;padding-top:22px;border-top:1px solid var(--line);
+         color:var(--ink-2);font-size:13.5px;line-height:1.7;max-width:70ch}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Scent Australia · Fragrance Library</p>
+  <h1>Fragrance Stock Take</h1>
+  <p class="lede">Counted 28 August 2026, applied 31 August 2026. Every one of the
+    168 fragrances on the sheet, what the system held, what was found on the shelf,
+    and where it stands now.</p>
+
+  <div class="totals">
+    <div class="t"><div class="v found">+381.5</div>
+      <div class="k">litres found that the system did not have</div></div>
+    <div class="t"><div class="v missing">-989.1</div>
+      <div class="k">litres the system held and the shelf did not</div></div>
+    <div class="t"><div class="v missing">−223</div>
+      <div class="k">litres of technician stock, retired into the count</div></div>
+    <div class="t"><div class="v">-830.6</div>
+      <div class="k">net change to the library</div></div>
+  </div>
+
+  <div class="notes">
+    <div class="note"><b>The count is the truth as at the day it was taken.</b>
+      Between the Friday count and the Monday it went in there were real sales and production,
+      so each figure is the counted amount carried forward by whatever moved after the count.
+      Writing the counted number straight in would have erased those movements.</div>
+
+    <div class="note caution"><b>2 held back and not adjusted.</b>
+      The warehouse contradicted the sheet for these: Milagrito has around 180&nbsp;kg in the
+      coldroom that the count does not appear to include, and Myrrh &amp; Tonka was reported
+      correct in the system. Both keep their existing figures, and their technician stock,
+      until somebody recounts them.</div>
+
+    <div class="note caution"><b>4 sit below zero.</b>
+      More was consumed after the count than the count found. No figure has been invented to
+      tidy them away — either the count is wrong or the consumption is:
+      EVE, Rosemary &amp; Cinnamon Blend, Santal, Mahogany &amp; Soft Floral, Grey Vetiver.</div>
+  </div>
+
+  <h2>Every fragrance</h2>
+  <p class="h2sub">Litres. “Was” is the balance before the adjustment, “Tech” the separate
+    technician balance folded into the count.</p>
+
+  <div class="tools">
+    <input type="search" id="find" placeholder="Find a fragrance, code or supplier code"
+           aria-label="Find a fragrance">
+    <button type="button" data-filter="all" aria-pressed="true">All 168</button>
+    <button type="button" data-filter="moved" aria-pressed="false">Changed</button>
+    <button type="button" data-filter="attention" aria-pressed="false">Needs a person</button>
+  </div>
+
+  <div class="scroll"><table>
+    <thead><tr>
+      <th>Code</th><th>Fragrance</th><th class="r">Was</th><th class="r">Counted</th>
+      <th class="r">Now</th><th class="r">Change</th><th class="r">Tech</th><th></th>
+    </tr></thead>
+    <tbody id="rows"><tr data-state="moved"
+      data-find="frag_0053 elevated tokyo (aman haru) fia231877">
+    <td class="code">FRAG_0053</td>
+    <td class="nm">Elevated Tokyo (Aman Haru)</td>
+    <td class="n was">181.8</td>
+    <td class="n count">80</td>
+    <td class="n now">80</td>
+    <td class="n down">-101.8</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0078 jardin de carthage lux0639">
+    <td class="code">FRAG_0078</td>
+    <td class="nm">Jardin de Carthage</td>
+    <td class="n was">241.9</td>
+    <td class="n count">166</td>
+    <td class="n now">151.3</td>
+    <td class="n down">-90.6</td>
+    <td class="n tech">20</td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0057 feu de camp fia242164">
+    <td class="code">FRAG_0057</td>
+    <td class="nm">Feu de Camp</td>
+    <td class="n was">184.1</td>
+    <td class="n count">130</td>
+    <td class="n now">130</td>
+    <td class="n down">-54.1</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0137 santal 33 style a (black) fia211503">
+    <td class="code">FRAG_0137</td>
+    <td class="nm">Santal 33 Style A (Black)</td>
+    <td class="n was">306.6</td>
+    <td class="n count">299</td>
+    <td class="n now">254.1</td>
+    <td class="n down">-52.5</td>
+    <td class="n tech">10</td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0161 white tea lux0593">
+    <td class="code">FRAG_0161</td>
+    <td class="nm">White Tea</td>
+    <td class="n was">180.9</td>
+    <td class="n count">140</td>
+    <td class="n now">135</td>
+    <td class="n down">-45.9</td>
+    <td class="n tech">17</td>
+    <td class="tag"></td></tr><tr data-state="neg"
+      data-find="frag_0050 eve slc1946">
+    <td class="code">FRAG_0050</td>
+    <td class="nm">EVE</td>
+    <td class="n was">34</td>
+    <td class="n count">10</td>
+    <td class="n now">-9.9</td>
+    <td class="n down">-43.9</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill below">below zero</span></td></tr><tr data-state="moved"
+      data-find="frag_0045 dream lux1073">
+    <td class="code">FRAG_0045</td>
+    <td class="nm">Dream</td>
+    <td class="n was">282.9</td>
+    <td class="n count">250</td>
+    <td class="n now">239.2</td>
+    <td class="n down">-43.7</td>
+    <td class="n tech">1</td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0099 miami strong fia222066">
+    <td class="code">FRAG_0099</td>
+    <td class="nm">Miami Strong</td>
+    <td class="n was">152.4</td>
+    <td class="n count">190</td>
+    <td class="n now">186.6</td>
+    <td class="n up">+34.3</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0021 bergamot and oakmoss (creed) fia213666">
+    <td class="code">FRAG_0021</td>
+    <td class="nm">Bergamot and Oakmoss (Creed)</td>
+    <td class="n was">155.8</td>
+    <td class="n count">128.5</td>
+    <td class="n now">122.5</td>
+    <td class="n down">-33.3</td>
+    <td class="n tech">1</td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0120 querces lux0736">
+    <td class="code">FRAG_0120</td>
+    <td class="nm">Querces</td>
+    <td class="n was">200.9</td>
+    <td class="n count">170</td>
+    <td class="n now">168.2</td>
+    <td class="n down">-32.7</td>
+    <td class="n tech">20</td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0101 miami woods fia242633">
+    <td class="code">FRAG_0101</td>
+    <td class="nm">Miami Woods</td>
+    <td class="n was">89.4</td>
+    <td class="n count">121</td>
+    <td class="n now">118</td>
+    <td class="n up">+28.6</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0030 concerto lux0706">
+    <td class="code">FRAG_0030</td>
+    <td class="nm">Concerto</td>
+    <td class="n was">125.7</td>
+    <td class="n count">121</td>
+    <td class="n now">98.3</td>
+    <td class="n down">-27.4</td>
+    <td class="n tech">8</td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0118 pepperwood fia223424">
+    <td class="code">FRAG_0118</td>
+    <td class="nm">Pepperwood</td>
+    <td class="n was">194.7</td>
+    <td class="n count">170</td>
+    <td class="n now">167.3</td>
+    <td class="n down">-27.4</td>
+    <td class="n tech">27</td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0132 special santal slc2775  or special area blue drum">
+    <td class="code">FRAG_0132</td>
+    <td class="nm">Special Santal</td>
+    <td class="n was">28</td>
+    <td class="n count">28</td>
+    <td class="n now">54.5</td>
+    <td class="n up">+26.5</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0136 sensual woods lux864">
+    <td class="code">FRAG_0136</td>
+    <td class="nm">Sensual Woods</td>
+    <td class="n was">159.1</td>
+    <td class="n count">138</td>
+    <td class="n now">132.8</td>
+    <td class="n down">-26.3</td>
+    <td class="n tech">30</td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0014 baccarat rouge ( jasmin and dark woods) slc0778">
+    <td class="code">FRAG_0014</td>
+    <td class="nm">Baccarat Rouge ( Jasmin and Dark woods)</td>
+    <td class="n was">93.2</td>
+    <td class="n count">80</td>
+    <td class="n now">68</td>
+    <td class="n down">-25.2</td>
+    <td class="n tech">14</td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0025 bushwood fia223425">
+    <td class="code">FRAG_0025</td>
+    <td class="nm">Bushwood</td>
+    <td class="n was">109</td>
+    <td class="n count">86</td>
+    <td class="n now">85</td>
+    <td class="n down">-24</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0037 country linen lux1188">
+    <td class="code">FRAG_0037</td>
+    <td class="nm">Country Linen</td>
+    <td class="n was">72.2</td>
+    <td class="n count">49</td>
+    <td class="n now">48.6</td>
+    <td class="n down">-23.6</td>
+    <td class="n tech">7</td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0103 new hope fia223464">
+    <td class="code">FRAG_0103</td>
+    <td class="nm">New Hope</td>
+    <td class="n was">31</td>
+    <td class="n count">37</td>
+    <td class="n now">52.4</td>
+    <td class="n up">+21.4</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0065 ginger flower lux0362">
+    <td class="code">FRAG_0065</td>
+    <td class="nm">Ginger Flower</td>
+    <td class="n was">98</td>
+    <td class="n count">77</td>
+    <td class="n now">77</td>
+    <td class="n down">-21</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0054 figuier  lux0438">
+    <td class="code">FRAG_0054</td>
+    <td class="nm">Figuier </td>
+    <td class="n was">27.1</td>
+    <td class="n count">27</td>
+    <td class="n now">7</td>
+    <td class="n down">-20.1</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0017 black orchid fia223423">
+    <td class="code">FRAG_0017</td>
+    <td class="nm">Black Orchid</td>
+    <td class="n was">68.4</td>
+    <td class="n count">51</td>
+    <td class="n now">51</td>
+    <td class="n down">-17.4</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0069 grape chupa chup fia222907">
+    <td class="code">FRAG_0069</td>
+    <td class="nm">Grape Chupa Chup</td>
+    <td class="n was">101.6</td>
+    <td class="n count">85</td>
+    <td class="n now">85</td>
+    <td class="n down">-16.6</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0029 caju &amp; lime lux1545">
+    <td class="code">FRAG_0029</td>
+    <td class="nm">Caju &amp; Lime</td>
+    <td class="n was">125.3</td>
+    <td class="n count">118</td>
+    <td class="n now">110</td>
+    <td class="n down">-15.3</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0140 santal and white tea fia241193">
+    <td class="code">FRAG_0140</td>
+    <td class="nm">Santal and White Tea</td>
+    <td class="n was">81.8</td>
+    <td class="n count">67</td>
+    <td class="n now">67</td>
+    <td class="n down">-14.8</td>
+    <td class="n tech">14</td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0168 white tea &amp; bamboo fia242839">
+    <td class="code">FRAG_0168</td>
+    <td class="nm">White Tea &amp; Bamboo</td>
+    <td class="n was">45.4</td>
+    <td class="n count">60</td>
+    <td class="n now">60</td>
+    <td class="n up">+14.6</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0041 cologne fh20376931">
+    <td class="code">FRAG_0041</td>
+    <td class="nm">Cologne</td>
+    <td class="n was">14.3</td>
+    <td class="n count">0</td>
+    <td class="n now">0</td>
+    <td class="n down">-14.3</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0160 french vanilla (vanilla bourbon) lux0637">
+    <td class="code">FRAG_0160</td>
+    <td class="nm">French Vanilla (Vanilla Bourbon)</td>
+    <td class="n was">26.2</td>
+    <td class="n count">40</td>
+    <td class="n now">40</td>
+    <td class="n up">+13.8</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0134 signature fia260650">
+    <td class="code">FRAG_0134</td>
+    <td class="nm">Signature</td>
+    <td class="n was">19</td>
+    <td class="n count">32</td>
+    <td class="n now">32</td>
+    <td class="n up">+13</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0058 linen &amp; fig fia223463">
+    <td class="code">FRAG_0058</td>
+    <td class="nm">Linen &amp; Fig</td>
+    <td class="n was">106</td>
+    <td class="n count">95</td>
+    <td class="n now">93</td>
+    <td class="n down">-13</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0149 the blanc lux628">
+    <td class="code">FRAG_0149</td>
+    <td class="nm">The Blanc</td>
+    <td class="n was">17</td>
+    <td class="n count">15</td>
+    <td class="n now">5</td>
+    <td class="n down">-12</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0150 tabac noir sfa1375">
+    <td class="code">FRAG_0150</td>
+    <td class="nm">Tabac Noir</td>
+    <td class="n was">29.3</td>
+    <td class="n count">29</td>
+    <td class="n now">41.3</td>
+    <td class="n up">+12</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0158 vetiver, water lily + sandalwood fia230295">
+    <td class="code">FRAG_0158</td>
+    <td class="nm">Vetiver, Water Lily + Sandalwood</td>
+    <td class="n was">17</td>
+    <td class="n count">37</td>
+    <td class="n now">5</td>
+    <td class="n down">-12</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0084 kookai signature fia250770">
+    <td class="code">FRAG_0084</td>
+    <td class="nm">Kookai Signature</td>
+    <td class="n was">90.8</td>
+    <td class="n count">80</td>
+    <td class="n now">79</td>
+    <td class="n down">-11.8</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0126 review fia241706">
+    <td class="code">FRAG_0126</td>
+    <td class="nm">Review</td>
+    <td class="n was">13</td>
+    <td class="n count">0</td>
+    <td class="n now">1.5</td>
+    <td class="n down">-11.5</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0003 adventure lux1100">
+    <td class="code">FRAG_0003</td>
+    <td class="nm">Adventure</td>
+    <td class="n was">74.2</td>
+    <td class="n count">69.5</td>
+    <td class="n now">63</td>
+    <td class="n down">-11.2</td>
+    <td class="n tech">9</td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0102 noel fia250025">
+    <td class="code">FRAG_0102</td>
+    <td class="nm">Noel</td>
+    <td class="n was">47</td>
+    <td class="n count">45</td>
+    <td class="n now">58</td>
+    <td class="n up">+11</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0002 allure slc2600">
+    <td class="code">FRAG_0002</td>
+    <td class="nm">Allure</td>
+    <td class="n was">47.1</td>
+    <td class="n count">48</td>
+    <td class="n now">58</td>
+    <td class="n up">+10.9</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0040 citrus bushwood b fia231263">
+    <td class="code">FRAG_0040</td>
+    <td class="nm">Citrus Bushwood B</td>
+    <td class="n was">82.2</td>
+    <td class="n count">93</td>
+    <td class="n now">93</td>
+    <td class="n up">+10.8</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0124 resurrection (essential oil) fia243524">
+    <td class="code">FRAG_0124</td>
+    <td class="nm">Resurrection (Essential Oil)</td>
+    <td class="n was">7.5</td>
+    <td class="n count">15</td>
+    <td class="n now">18.1</td>
+    <td class="n up">+10.6</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0018 burberry hero slc2431">
+    <td class="code">FRAG_0018</td>
+    <td class="nm">Burberry Hero</td>
+    <td class="n was">28</td>
+    <td class="n count">27</td>
+    <td class="n now">38</td>
+    <td class="n up">+10</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="neg"
+      data-find="frag_0121 rosemary &amp; cinnamon blend ebsamrc2a">
+    <td class="code">FRAG_0121</td>
+    <td class="nm">Rosemary &amp; Cinnamon Blend</td>
+    <td class="n was">3.5</td>
+    <td class="n count">0</td>
+    <td class="n now">-5.8</td>
+    <td class="n down">-9.3</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill below">below zero</span></td></tr><tr data-state="moved"
+      data-find="frag_0061 floral drop  fia250658">
+    <td class="code">FRAG_0061</td>
+    <td class="nm">Floral Drop </td>
+    <td class="n was">29.3</td>
+    <td class="n count">38.5</td>
+    <td class="n now">38.5</td>
+    <td class="n up">+9.3</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0006 australian bush ">
+    <td class="code">FRAG_0006</td>
+    <td class="nm">Australian Bush</td>
+    <td class="n was">23.3</td>
+    <td class="n count">32.5</td>
+    <td class="n now">32.5</td>
+    <td class="n up">+9.2</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0039 coco mademoiselle fh20376880 | fia211500">
+    <td class="code">FRAG_0039</td>
+    <td class="nm">Coco Mademoiselle</td>
+    <td class="n was">29</td>
+    <td class="n count">20</td>
+    <td class="n now">20</td>
+    <td class="n down">-9</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0116 patisserie lux696">
+    <td class="code">FRAG_0116</td>
+    <td class="nm">Patisserie</td>
+    <td class="n was">132.7</td>
+    <td class="n count">138</td>
+    <td class="n now">124</td>
+    <td class="n down">-8.7</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0044 cyrnos fia213958">
+    <td class="code">FRAG_0044</td>
+    <td class="nm">Cyrnos</td>
+    <td class="n was">11</td>
+    <td class="n count">19.5</td>
+    <td class="n now">19.5</td>
+    <td class="n up">+8.5</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0016 blue bergamot 6133475">
+    <td class="code">FRAG_0016</td>
+    <td class="nm">Blue Bergamot</td>
+    <td class="n was">11.3</td>
+    <td class="n count">3</td>
+    <td class="n now">3</td>
+    <td class="n down">-8.3</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0020 blonde woods &amp; cashmere aa171829">
+    <td class="code">FRAG_0020</td>
+    <td class="nm">Blonde Woods &amp; Cashmere</td>
+    <td class="n was">51.6</td>
+    <td class="n count">44</td>
+    <td class="n now">44</td>
+    <td class="n down">-7.6</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0141 sandalwood b fia231155">
+    <td class="code">FRAG_0141</td>
+    <td class="nm">Sandalwood B</td>
+    <td class="n was">124.7</td>
+    <td class="n count">132</td>
+    <td class="n now">132</td>
+    <td class="n up">+7.4</td>
+    <td class="n tech">10</td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0145 sandalwood &amp; hint of jasmin fia243577">
+    <td class="code">FRAG_0145</td>
+    <td class="nm">Sandalwood &amp; Hint of Jasmin</td>
+    <td class="n was">19</td>
+    <td class="n count">25</td>
+    <td class="n now">26</td>
+    <td class="n up">+7</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0011 aqua positano fia241035">
+    <td class="code">FRAG_0011</td>
+    <td class="nm">Aqua Positano</td>
+    <td class="n was">38.3</td>
+    <td class="n count">45</td>
+    <td class="n now">45</td>
+    <td class="n up">+6.8</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0042 campfire fia230279">
+    <td class="code">FRAG_0042</td>
+    <td class="nm">Campfire</td>
+    <td class="n was">16</td>
+    <td class="n count">19.5</td>
+    <td class="n now">22.5</td>
+    <td class="n up">+6.5</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0074 home department fia250611">
+    <td class="code">FRAG_0074</td>
+    <td class="nm">Home Department</td>
+    <td class="n was">7</td>
+    <td class="n count">7</td>
+    <td class="n now">12.9</td>
+    <td class="n up">+5.9</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0156 terre fia250461">
+    <td class="code">FRAG_0156</td>
+    <td class="nm">Terre</td>
+    <td class="n was">24.1</td>
+    <td class="n count">30</td>
+    <td class="n now">30</td>
+    <td class="n up">+5.9</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0034 christmas night xmas pudding  wo0028199 -20267 ">
+    <td class="code">FRAG_0034</td>
+    <td class="nm">Christmas Night Xmas Pudding</td>
+    <td class="n was">31.7</td>
+    <td class="n count">32</td>
+    <td class="n now">37.4</td>
+    <td class="n up">+5.7</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0085 kiwi coconut vanilla fia230965">
+    <td class="code">FRAG_0085</td>
+    <td class="nm">Kiwi Coconut Vanilla</td>
+    <td class="n was">30.5</td>
+    <td class="n count">25</td>
+    <td class="n now">25</td>
+    <td class="n down">-5.5</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="neg"
+      data-find="frag_0143 santal, mahogany &amp; soft floral fia252221">
+    <td class="code">FRAG_0143</td>
+    <td class="nm">Santal, Mahogany &amp; Soft Floral</td>
+    <td class="n was">1</td>
+    <td class="n count">0</td>
+    <td class="n now">-4.5</td>
+    <td class="n down">-5.5</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill below">below zero</span></td></tr><tr data-state="moved"
+      data-find="frag_0165 waterplants lux0737">
+    <td class="code">FRAG_0165</td>
+    <td class="nm">Waterplants</td>
+    <td class="n was">15.2</td>
+    <td class="n count">10</td>
+    <td class="n now">10</td>
+    <td class="n down">-5.2</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0095 mahogany fig lux1281">
+    <td class="code">FRAG_0095</td>
+    <td class="nm">Mahogany Fig</td>
+    <td class="n was">64.1</td>
+    <td class="n count">60</td>
+    <td class="n now">59</td>
+    <td class="n down">-5.1</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0013 bois secret lux0929">
+    <td class="code">FRAG_0013</td>
+    <td class="nm">Bois Secret</td>
+    <td class="n was">37.3</td>
+    <td class="n count">33</td>
+    <td class="n now">32.3</td>
+    <td class="n down">-5</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0036 clinique happy lux1186">
+    <td class="code">FRAG_0036</td>
+    <td class="nm">Clinique Happy</td>
+    <td class="n was">16</td>
+    <td class="n count">13</td>
+    <td class="n now">11</td>
+    <td class="n down">-5</td>
+    <td class="n tech">15</td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0106 new cbd perth d3 fia251440">
+    <td class="code">FRAG_0106</td>
+    <td class="nm">New CBD Perth d3</td>
+    <td class="n was">25</td>
+    <td class="n count">30</td>
+    <td class="n now">30</td>
+    <td class="n up">+5</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0001 armani woods fia231902">
+    <td class="code">FRAG_0001</td>
+    <td class="nm">Armani Woods</td>
+    <td class="n was">4</td>
+    <td class="n count">9</td>
+    <td class="n now">8.9</td>
+    <td class="n up">+4.9</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0059 flower bomb fia213960">
+    <td class="code">FRAG_0059</td>
+    <td class="nm">Flower Bomb</td>
+    <td class="n was">13.3</td>
+    <td class="n count">18</td>
+    <td class="n now">18</td>
+    <td class="n up">+4.7</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0019 blue ice fia221772">
+    <td class="code">FRAG_0019</td>
+    <td class="nm">Blue Ice</td>
+    <td class="n was">40.3</td>
+    <td class="n count">37</td>
+    <td class="n now">36</td>
+    <td class="n down">-4.3</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0163 wild lily &amp; spring moss lux1234">
+    <td class="code">FRAG_0163</td>
+    <td class="nm">Wild Lily &amp; Spring Moss</td>
+    <td class="n was">14.2</td>
+    <td class="n count">10</td>
+    <td class="n now">10</td>
+    <td class="n down">-4.2</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0007 australian bush &amp; eucalyptus fia242846">
+    <td class="code">FRAG_0007</td>
+    <td class="nm">Australian Bush &amp; Eucalyptus</td>
+    <td class="n was">20</td>
+    <td class="n count">16</td>
+    <td class="n now">16</td>
+    <td class="n down">-4</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0010 avocado &amp; mint lux0783">
+    <td class="code">FRAG_0010</td>
+    <td class="nm">Avocado &amp; Mint</td>
+    <td class="n was">11</td>
+    <td class="n count">7</td>
+    <td class="n now">7</td>
+    <td class="n down">-4</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0051 eo blend (essential oil ) fia242843">
+    <td class="code">FRAG_0051</td>
+    <td class="nm">EO Blend (Essential Oil )</td>
+    <td class="n was">5</td>
+    <td class="n count">9</td>
+    <td class="n now">9</td>
+    <td class="n up">+4</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0151 tropical cruise sfa1209">
+    <td class="code">FRAG_0151</td>
+    <td class="nm">Tropical Cruise</td>
+    <td class="n was">26</td>
+    <td class="n count">20</td>
+    <td class="n now">30</td>
+    <td class="n up">+4</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0122 rosewater slc2644">
+    <td class="code">FRAG_0122</td>
+    <td class="nm">Rosewater</td>
+    <td class="n was">5</td>
+    <td class="n count">4</td>
+    <td class="n now">1.1</td>
+    <td class="n down">-3.9</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0157 ultimate leather sfa1227">
+    <td class="code">FRAG_0157</td>
+    <td class="nm">Ultimate Leather</td>
+    <td class="n was">5</td>
+    <td class="n count">7</td>
+    <td class="n now">8.9</td>
+    <td class="n up">+3.9</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0162 white tea &amp; ginger flowers slc1564">
+    <td class="code">FRAG_0162</td>
+    <td class="nm">White Tea &amp; Ginger Flowers</td>
+    <td class="n was">93.9</td>
+    <td class="n count">94</td>
+    <td class="n now">90</td>
+    <td class="n down">-3.9</td>
+    <td class="n tech">6</td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0147 the rouge sfa1416">
+    <td class="code">FRAG_0147</td>
+    <td class="nm">The Rouge</td>
+    <td class="n was">5.6</td>
+    <td class="n count">9</td>
+    <td class="n now">9</td>
+    <td class="n up">+3.4</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0128 rottnest island summertime b fia241283">
+    <td class="code">FRAG_0128</td>
+    <td class="nm">Rottnest Island Summertime B</td>
+    <td class="n was">7</td>
+    <td class="n count">12</td>
+    <td class="n now">10.4</td>
+    <td class="n up">+3.4</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0083 zen garden lux0928">
+    <td class="code">FRAG_0083</td>
+    <td class="nm">Zen Garden</td>
+    <td class="n was">94.4</td>
+    <td class="n count">0</td>
+    <td class="n now">91.1</td>
+    <td class="n down">-3.3</td>
+    <td class="n tech">13</td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0015 beach party lux1189">
+    <td class="code">FRAG_0015</td>
+    <td class="nm">Beach Party</td>
+    <td class="n was">108.8</td>
+    <td class="n count">115</td>
+    <td class="n now">112</td>
+    <td class="n up">+3.2</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0129 summer vacay fia241782">
+    <td class="code">FRAG_0129</td>
+    <td class="nm">Summer Vacay</td>
+    <td class="n was">10.8</td>
+    <td class="n count">14</td>
+    <td class="n now">14</td>
+    <td class="n up">+3.2</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0008 amalfi coast ">
+    <td class="code">FRAG_0008</td>
+    <td class="nm">Amalfi Coast</td>
+    <td class="n was">3</td>
+    <td class="n count">0</td>
+    <td class="n now">0</td>
+    <td class="n down">-3</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0022 blue grass fia231317">
+    <td class="code">FRAG_0022</td>
+    <td class="nm">Blue Grass</td>
+    <td class="n was">48</td>
+    <td class="n count">48</td>
+    <td class="n now">51</td>
+    <td class="n up">+3</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0043 coast fia250654">
+    <td class="code">FRAG_0043</td>
+    <td class="nm">Coast</td>
+    <td class="n was">10</td>
+    <td class="n count">13</td>
+    <td class="n now">13</td>
+    <td class="n up">+3</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0088 lotus zen lux1335">
+    <td class="code">FRAG_0088</td>
+    <td class="nm">Lotus Zen</td>
+    <td class="n was">28.9</td>
+    <td class="n count">29</td>
+    <td class="n now">31.9</td>
+    <td class="n up">+3</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0089 lacoste original slc3015">
+    <td class="code">FRAG_0089</td>
+    <td class="nm">Lacoste Original</td>
+    <td class="n was">24</td>
+    <td class="n count">21</td>
+    <td class="n now">21</td>
+    <td class="n down">-3</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0142 santal, mahogany &amp; sandalwood fia241192">
+    <td class="code">FRAG_0142</td>
+    <td class="nm">Santal, Mahogany &amp; Sandalwood</td>
+    <td class="n was">2</td>
+    <td class="n count">5</td>
+    <td class="n now">5</td>
+    <td class="n up">+3</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0110 orchidee narco lux1129">
+    <td class="code">FRAG_0110</td>
+    <td class="nm">Orchidee Narco</td>
+    <td class="n was">23.1</td>
+    <td class="n count">26</td>
+    <td class="n now">26</td>
+    <td class="n up">+2.9</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0159 vetiver d'hiver fia221547">
+    <td class="code">FRAG_0159</td>
+    <td class="nm">Vetiver D'Hiver</td>
+    <td class="n was">17.9</td>
+    <td class="n count">15</td>
+    <td class="n now">15</td>
+    <td class="n down">-2.9</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0056 fierce type ">
+    <td class="code">FRAG_0056</td>
+    <td class="nm">Fierce Type</td>
+    <td class="n was">10.9</td>
+    <td class="n count">10</td>
+    <td class="n now">8.1</td>
+    <td class="n down">-2.8</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="neg"
+      data-find="frag_0072 grey vetiver ">
+    <td class="code">FRAG_0072</td>
+    <td class="nm">Grey Vetiver</td>
+    <td class="n was">1.8</td>
+    <td class="n count">1</td>
+    <td class="n now">-1</td>
+    <td class="n down">-2.8</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill below">below zero</span></td></tr><tr data-state="moved"
+      data-find="frag_0127 rock n roll lux0906a">
+    <td class="code">FRAG_0127</td>
+    <td class="nm">Rock N Roll</td>
+    <td class="n was">21.2</td>
+    <td class="n count">24</td>
+    <td class="n now">24</td>
+    <td class="n up">+2.8</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0167 whiskey bar fia213959">
+    <td class="code">FRAG_0167</td>
+    <td class="nm">Whiskey Bar</td>
+    <td class="n was">10.7</td>
+    <td class="n count">8</td>
+    <td class="n now">8</td>
+    <td class="n down">-2.7</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0086 london (blue drum -bell) 6132618">
+    <td class="code">FRAG_0086</td>
+    <td class="nm">London (BLUE DRUM -Bell)</td>
+    <td class="n was">2.6</td>
+    <td class="n count">0</td>
+    <td class="n now">0</td>
+    <td class="n down">-2.6</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0096 mahogany wood lux0710">
+    <td class="code">FRAG_0096</td>
+    <td class="nm">Mahogany Wood</td>
+    <td class="n was">69.4</td>
+    <td class="n count">73</td>
+    <td class="n now">72</td>
+    <td class="n up">+2.6</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0031 crossfit fia260033">
+    <td class="code">FRAG_0031</td>
+    <td class="nm">Crossfit</td>
+    <td class="n was">18.6</td>
+    <td class="n count">21.5</td>
+    <td class="n now">21.1</td>
+    <td class="n up">+2.5</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0073 hermes country sfa1683">
+    <td class="code">FRAG_0073</td>
+    <td class="nm">Hermes Country</td>
+    <td class="n was">20</td>
+    <td class="n count">17.5</td>
+    <td class="n now">17.5</td>
+    <td class="n down">-2.5</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0049 eucalyptus citriodora ">
+    <td class="code">FRAG_0049</td>
+    <td class="nm">Eucalyptus Citriodora</td>
+    <td class="n was">10.3</td>
+    <td class="n count">40</td>
+    <td class="n now">12.5</td>
+    <td class="n up">+2.2</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0104 native b fia223766">
+    <td class="code">FRAG_0104</td>
+    <td class="nm">Native B</td>
+    <td class="n was">33.3</td>
+    <td class="n count">35.5</td>
+    <td class="n now">35.5</td>
+    <td class="n up">+2.2</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0152 tea time slc2631">
+    <td class="code">FRAG_0152</td>
+    <td class="nm">Tea Time</td>
+    <td class="n was">8</td>
+    <td class="n count">8</td>
+    <td class="n now">10.2</td>
+    <td class="n up">+2.2</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0071 golden garden fia250769">
+    <td class="code">FRAG_0071</td>
+    <td class="nm">Golden Garden</td>
+    <td class="n was">28.1</td>
+    <td class="n count">26</td>
+    <td class="n now">26</td>
+    <td class="n down">-2.1</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0062 green ">
+    <td class="code">FRAG_0062</td>
+    <td class="nm">Green</td>
+    <td class="n was">1</td>
+    <td class="n count">3</td>
+    <td class="n now">3</td>
+    <td class="n up">+2</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0125 rose diptyque fia231309">
+    <td class="code">FRAG_0125</td>
+    <td class="nm">Rose Diptyque</td>
+    <td class="n was">17</td>
+    <td class="n count">15</td>
+    <td class="n now">15</td>
+    <td class="n down">-2</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0133 sea salt ">
+    <td class="code">FRAG_0133</td>
+    <td class="nm">Sea Salt</td>
+    <td class="n was">8</td>
+    <td class="n count">10</td>
+    <td class="n now">10</td>
+    <td class="n up">+2</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0138 santal 66 (blue) - kirri 6132781">
+    <td class="code">FRAG_0138</td>
+    <td class="nm">Santal 66 (Blue) - KIRRI</td>
+    <td class="n was">2</td>
+    <td class="n count">0</td>
+    <td class="n now">0</td>
+    <td class="n down">-2</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0012 baies  fia213481">
+    <td class="code">FRAG_0012</td>
+    <td class="nm">Baies </td>
+    <td class="n was">16.9</td>
+    <td class="n count">15</td>
+    <td class="n now">15</td>
+    <td class="n down">-1.9</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0028 christmas b fia251174">
+    <td class="code">FRAG_0028</td>
+    <td class="nm">Christmas B</td>
+    <td class="n was">6.9</td>
+    <td class="n count">8</td>
+    <td class="n now">8.6</td>
+    <td class="n up">+1.7</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0046 denim fia224008">
+    <td class="code">FRAG_0046</td>
+    <td class="nm">Denim</td>
+    <td class="n was">12.7</td>
+    <td class="n count">11</td>
+    <td class="n now">11</td>
+    <td class="n down">-1.7</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0113 oud fia250823">
+    <td class="code">FRAG_0113</td>
+    <td class="nm">Oud</td>
+    <td class="n was">35.3</td>
+    <td class="n count">37</td>
+    <td class="n now">37</td>
+    <td class="n up">+1.7</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0075 isopropyl myristate (ipm) fia251436">
+    <td class="code">FRAG_0075</td>
+    <td class="nm">Isopropyl Myristate (IPM)</td>
+    <td class="n was">71.3</td>
+    <td class="n count">73</td>
+    <td class="n now">73</td>
+    <td class="n up">+1.7</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0130 saffron fia260780">
+    <td class="code">FRAG_0130</td>
+    <td class="nm">Saffron</td>
+    <td class="n was">19.6</td>
+    <td class="n count">18</td>
+    <td class="n now">18</td>
+    <td class="n down">-1.6</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0105 noir  fia213480">
+    <td class="code">FRAG_0105</td>
+    <td class="nm">Noir </td>
+    <td class="n was">47.4</td>
+    <td class="n count">50</td>
+    <td class="n now">49</td>
+    <td class="n up">+1.6</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0146 tf ambitious  lux 750 	">
+    <td class="code">FRAG_0146</td>
+    <td class="nm">TF Ambitious </td>
+    <td class="n was">5.6</td>
+    <td class="n count">5</td>
+    <td class="n now">4</td>
+    <td class="n down">-1.6</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0123 rainstorm ">
+    <td class="code">FRAG_0123</td>
+    <td class="nm">Rainstorm</td>
+    <td class="n was">3.6</td>
+    <td class="n count">5</td>
+    <td class="n now">5</td>
+    <td class="n up">+1.4</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0026 by the fireplace fia232061">
+    <td class="code">FRAG_0026</td>
+    <td class="nm">By The Fireplace</td>
+    <td class="n was">2.3</td>
+    <td class="n count">1</td>
+    <td class="n now">1</td>
+    <td class="n down">-1.3</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0004 ambrette, magnolia &amp; chamomile slc0803">
+    <td class="code">FRAG_0004</td>
+    <td class="nm">Ambrette, Magnolia &amp; Chamomile</td>
+    <td class="n was">23.1</td>
+    <td class="n count">22</td>
+    <td class="n now">22</td>
+    <td class="n down">-1.1</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0023 blondewood fia250463">
+    <td class="code">FRAG_0023</td>
+    <td class="nm">Blondewood</td>
+    <td class="n was">78</td>
+    <td class="n count">78</td>
+    <td class="n now">77</td>
+    <td class="n down">-1</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0024 b natural fia250716">
+    <td class="code">FRAG_0024</td>
+    <td class="nm">B Natural</td>
+    <td class="n was">0</td>
+    <td class="n count">0</td>
+    <td class="n now">1</td>
+    <td class="n up">+1</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0109 orange grass sfa1578">
+    <td class="code">FRAG_0109</td>
+    <td class="nm">Orange Grass</td>
+    <td class="n was">9</td>
+    <td class="n count">10</td>
+    <td class="n now">10</td>
+    <td class="n up">+1</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0111 orange b fia231256">
+    <td class="code">FRAG_0111</td>
+    <td class="nm">Orange B</td>
+    <td class="n was">21</td>
+    <td class="n count">20</td>
+    <td class="n now">20</td>
+    <td class="n down">-1</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0153 the star azure fia250835">
+    <td class="code">FRAG_0153</td>
+    <td class="nm">The Star Azure</td>
+    <td class="n was">1</td>
+    <td class="n count">2</td>
+    <td class="n now">2</td>
+    <td class="n up">+1</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0154 tuberose vanille fia241278">
+    <td class="code">FRAG_0154</td>
+    <td class="nm">Tuberose Vanille</td>
+    <td class="n was">19</td>
+    <td class="n count">20</td>
+    <td class="n now">20</td>
+    <td class="n up">+1</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0108 oz design signature lux1726">
+    <td class="code">FRAG_0108</td>
+    <td class="nm">Oz Design Signature</td>
+    <td class="n was">25.1</td>
+    <td class="n count">26</td>
+    <td class="n now">26</td>
+    <td class="n up">+1</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0032 coconut lime punch  lux1036">
+    <td class="code">FRAG_0032</td>
+    <td class="nm">Coconut Lime Punch </td>
+    <td class="n was">79.3</td>
+    <td class="n count">81</td>
+    <td class="n now">80.2</td>
+    <td class="n up">+0.9</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0033 chai tea ">
+    <td class="code">FRAG_0033</td>
+    <td class="nm">Chai Tea</td>
+    <td class="n was">20.1</td>
+    <td class="n count">20</td>
+    <td class="n now">21</td>
+    <td class="n up">+0.9</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0114 premiere slc2486">
+    <td class="code">FRAG_0114</td>
+    <td class="nm">Premiere</td>
+    <td class="n was">56.1</td>
+    <td class="n count">57</td>
+    <td class="n now">57</td>
+    <td class="n up">+0.9</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0093 lemongrass and ginger fia242434">
+    <td class="code">FRAG_0093</td>
+    <td class="nm">Lemongrass and Ginger</td>
+    <td class="n was">29.4</td>
+    <td class="n count">30</td>
+    <td class="n now">28.6</td>
+    <td class="n down">-0.8</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0005 australian bush lemon myrtle lux1220">
+    <td class="code">FRAG_0005</td>
+    <td class="nm">Australian Bush Lemon Myrtle</td>
+    <td class="n was">11.3</td>
+    <td class="n count">12</td>
+    <td class="n now">12</td>
+    <td class="n up">+0.7</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0064 green tea and lemongrass lux13377">
+    <td class="code">FRAG_0064</td>
+    <td class="nm">Green Tea and Lemongrass</td>
+    <td class="n was">14.7</td>
+    <td class="n count">14</td>
+    <td class="n now">14</td>
+    <td class="n down">-0.7</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0164 w hotel lux29228">
+    <td class="code">FRAG_0164</td>
+    <td class="nm">W Hotel</td>
+    <td class="n was">31.7</td>
+    <td class="n count">31</td>
+    <td class="n now">31</td>
+    <td class="n down">-0.7</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0063 green tea lux0748">
+    <td class="code">FRAG_0063</td>
+    <td class="nm">Green Tea</td>
+    <td class="n was">29.6</td>
+    <td class="n count">29</td>
+    <td class="n now">29</td>
+    <td class="n down">-0.6</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0055 fresh coffe wo0026464">
+    <td class="code">FRAG_0055</td>
+    <td class="nm">Fresh Coffe</td>
+    <td class="n was">9</td>
+    <td class="n count">9</td>
+    <td class="n now">8.5</td>
+    <td class="n down">-0.5</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0107 orange &amp; bergamot lux0598">
+    <td class="code">FRAG_0107</td>
+    <td class="nm">Orange &amp; Bergamot</td>
+    <td class="n was">17</td>
+    <td class="n count">17.5</td>
+    <td class="n now">17.5</td>
+    <td class="n up">+0.5</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0090 leather &amp; woods fia230899">
+    <td class="code">FRAG_0090</td>
+    <td class="nm">Leather &amp; Woods</td>
+    <td class="n was">29.6</td>
+    <td class="n count">30</td>
+    <td class="n now">30</td>
+    <td class="n up">+0.5</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0047 desert flower fia250462">
+    <td class="code">FRAG_0047</td>
+    <td class="nm">Desert Flower</td>
+    <td class="n was">82.4</td>
+    <td class="n count">84</td>
+    <td class="n now">82</td>
+    <td class="n down">-0.4</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0148 teak &amp; neroli ">
+    <td class="code">FRAG_0148</td>
+    <td class="nm">Teak &amp; Neroli</td>
+    <td class="n was">6.4</td>
+    <td class="n count">6</td>
+    <td class="n now">6</td>
+    <td class="n down">-0.4</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0087 la vie est belle fh20376936">
+    <td class="code">FRAG_0087</td>
+    <td class="nm">La Vie Est Belle</td>
+    <td class="n was">16.7</td>
+    <td class="n count">17</td>
+    <td class="n now">17</td>
+    <td class="n up">+0.3</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0091 lemongrass and persian lime ">
+    <td class="code">FRAG_0091</td>
+    <td class="nm">Lemongrass and Persian Lime</td>
+    <td class="n was">14.3</td>
+    <td class="n count">14</td>
+    <td class="n now">14</td>
+    <td class="n down">-0.3</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0135 sugar cookie lux13933">
+    <td class="code">FRAG_0135</td>
+    <td class="nm">Sugar Cookie</td>
+    <td class="n was">12.3</td>
+    <td class="n count">12</td>
+    <td class="n now">12</td>
+    <td class="n down">-0.3</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0166 waterfall lux0637">
+    <td class="code">FRAG_0166</td>
+    <td class="nm">Waterfall</td>
+    <td class="n was">206.7</td>
+    <td class="n count">107</td>
+    <td class="n now">207</td>
+    <td class="n up">+0.3</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0077 intense air fia250553">
+    <td class="code">FRAG_0077</td>
+    <td class="nm">Intense Air</td>
+    <td class="n was">84.7</td>
+    <td class="n count">85</td>
+    <td class="n now">85</td>
+    <td class="n up">+0.3</td>
+    <td class="n tech">1</td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0081 jasmine sambac &amp; marigold lux1027">
+    <td class="code">FRAG_0081</td>
+    <td class="nm">Jasmine Sambac &amp; Marigold</td>
+    <td class="n was">8.8</td>
+    <td class="n count">9</td>
+    <td class="n now">9</td>
+    <td class="n up">+0.2</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0092 light blue fia250554">
+    <td class="code">FRAG_0092</td>
+    <td class="nm">Light Blue</td>
+    <td class="n was">36.8</td>
+    <td class="n count">37</td>
+    <td class="n now">37</td>
+    <td class="n up">+0.2</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0115 park hyatt peony (hyatt peony) wo0031095 (29234)">
+    <td class="code">FRAG_0115</td>
+    <td class="nm">Park Hyatt Peony (Hyatt Peony)</td>
+    <td class="n was">58.8</td>
+    <td class="n count">63</td>
+    <td class="n now">59</td>
+    <td class="n up">+0.2</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0117 peppermint lux0774">
+    <td class="code">FRAG_0117</td>
+    <td class="nm">Peppermint</td>
+    <td class="n was">11.2</td>
+    <td class="n count">11</td>
+    <td class="n now">11</td>
+    <td class="n down">-0.2</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0119 porsche fia232165">
+    <td class="code">FRAG_0119</td>
+    <td class="nm">Porsche</td>
+    <td class="n was">5.9</td>
+    <td class="n count">6</td>
+    <td class="n now">6</td>
+    <td class="n up">+0.1</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="moved"
+      data-find="frag_0139 serpentine comme des fia221947">
+    <td class="code">FRAG_0139</td>
+    <td class="nm">Serpentine Comme Des</td>
+    <td class="n was">44.1</td>
+    <td class="n count">44</td>
+    <td class="n now">44</td>
+    <td class="n down">-0.1</td>
+    <td class="n tech"></td>
+    <td class="tag"></td></tr><tr data-state="same"
+      data-find="frag_0009 australian bamboo grass lux0400">
+    <td class="code">FRAG_0009</td>
+    <td class="nm">Australian Bamboo grass</td>
+    <td class="n was">13</td>
+    <td class="n count">13</td>
+    <td class="n now">13</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0027 fig tree  fia223441">
+    <td class="code">FRAG_0027</td>
+    <td class="nm">Fig Tree </td>
+    <td class="n was">11.3</td>
+    <td class="n count">16</td>
+    <td class="n now">11.3</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0035 christmas cedar ">
+    <td class="code">FRAG_0035</td>
+    <td class="nm">Christmas Cedar</td>
+    <td class="n was">16</td>
+    <td class="n count">16</td>
+    <td class="n now">16</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0038 coffe airfreshener  fia220415">
+    <td class="code">FRAG_0038</td>
+    <td class="nm">Coffe Airfreshener </td>
+    <td class="n was">20</td>
+    <td class="n count">20</td>
+    <td class="n now">20</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0048 eucalyptus ">
+    <td class="code">FRAG_0048</td>
+    <td class="nm">Eucalyptus</td>
+    <td class="n was">0</td>
+    <td class="n count">0</td>
+    <td class="n now">0</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0052 elevated lotus blossom + lemon fia231877">
+    <td class="code">FRAG_0052</td>
+    <td class="nm">Elevated Lotus Blossom + Lemon</td>
+    <td class="n was">5</td>
+    <td class="n count">5</td>
+    <td class="n now">5</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0060 fig, jasmine &amp; santal fia220519">
+    <td class="code">FRAG_0060</td>
+    <td class="nm">Fig, Jasmine &amp; Santal</td>
+    <td class="n was">19</td>
+    <td class="n count">19</td>
+    <td class="n now">19</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0066 givenchy gentlemen  fia222191">
+    <td class="code">FRAG_0066</td>
+    <td class="nm">Givenchy Gentlemen </td>
+    <td class="n was">15</td>
+    <td class="n count">15</td>
+    <td class="n now">15</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0067 gingerbread a fia252391">
+    <td class="code">FRAG_0067</td>
+    <td class="nm">Gingerbread A</td>
+    <td class="n was">2</td>
+    <td class="n count">2</td>
+    <td class="n now">2</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0068 gypsy water fia213584">
+    <td class="code">FRAG_0068</td>
+    <td class="nm">Gypsy Water</td>
+    <td class="n was">30</td>
+    <td class="n count">30</td>
+    <td class="n now">30</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0070 garden symphony fia241471">
+    <td class="code">FRAG_0070</td>
+    <td class="nm">Garden Symphony</td>
+    <td class="n was">1</td>
+    <td class="n count">1</td>
+    <td class="n now">1</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0076 inspiration - new hope sfa1226/2">
+    <td class="code">FRAG_0076</td>
+    <td class="nm">Inspiration - NEW HOPE</td>
+    <td class="n was">18</td>
+    <td class="n count">18</td>
+    <td class="n now">18</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0079 jm jasmin &amp; mint sfa1367">
+    <td class="code">FRAG_0079</td>
+    <td class="nm">JM Jasmin &amp; Mint</td>
+    <td class="n was">0</td>
+    <td class="n count">0</td>
+    <td class="n now">0</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0080 japanese honeysuckle ">
+    <td class="code">FRAG_0080</td>
+    <td class="nm">Japanese Honeysuckle</td>
+    <td class="n was">7</td>
+    <td class="n count">7</td>
+    <td class="n now">7</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0082 jpg le beau fia250842">
+    <td class="code">FRAG_0082</td>
+    <td class="nm">JPG Le Beau</td>
+    <td class="n was">1</td>
+    <td class="n count">1</td>
+    <td class="n now">1</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="held"
+      data-find="frag_0094 myrrh &amp; tonka lux1423">
+    <td class="code">FRAG_0094</td>
+    <td class="nm">Myrrh &amp; Tonka</td>
+    <td class="n was">260.8</td>
+    <td class="n count">126</td>
+    <td class="n now">260.8</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill hold">held</span></td></tr><tr data-state="held"
+      data-find="frag_0097 milagrito lux0710">
+    <td class="code">FRAG_0097</td>
+    <td class="nm">Milagrito</td>
+    <td class="n was">217.1</td>
+    <td class="n count">85</td>
+    <td class="n now">217.1</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill hold">held</span></td></tr><tr data-state="same"
+      data-find="frag_0098 matiere noire fh20376949">
+    <td class="code">FRAG_0098</td>
+    <td class="nm">Matiere Noire</td>
+    <td class="n was">20</td>
+    <td class="n count">20</td>
+    <td class="n now">20</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0100 moonlight patchouli fia250555">
+    <td class="code">FRAG_0100</td>
+    <td class="nm">Moonlight Patchouli</td>
+    <td class="n was">6</td>
+    <td class="n count">6</td>
+    <td class="n now">6</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0144 sandalwood fig &amp; jasmine fia243579">
+    <td class="code">FRAG_0144</td>
+    <td class="nm">Sandalwood Fig &amp; Jasmine</td>
+    <td class="n was">3</td>
+    <td class="n count">3</td>
+    <td class="n now">3</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0155 the star lobby fia250836">
+    <td class="code">FRAG_0155</td>
+    <td class="nm">The Star Lobby</td>
+    <td class="n was">10</td>
+    <td class="n count">10</td>
+    <td class="n now">10</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0169 wonderwood fia222036">
+    <td class="code">FRAG_0169</td>
+    <td class="nm">Wonderwood</td>
+    <td class="n was">10</td>
+    <td class="n count">10</td>
+    <td class="n now">10</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr><tr data-state="same"
+      data-find="frag_0170 zwt fia223912">
+    <td class="code">FRAG_0170</td>
+    <td class="nm">ZWT</td>
+    <td class="n was">27</td>
+    <td class="n count">27</td>
+    <td class="n now">27</td>
+    <td class="n flat">·</td>
+    <td class="n tech"></td>
+    <td class="tag"><span class="pill ok">agreed</span></td></tr></tbody>
+  </table>
+  <div class="empty" id="none" style="display:none">Nothing matches that.</div></div>
+
+  <footer>
+    Read from the platform ledger rather than from the count sheet, so it records what happened
+    and not what was planned. Every line here has a matching entry in the fragrance history,
+    naming the counted figure and the balance before and after.
+  </footer>
+</div>
+
+<script>
+  const rows = [...document.querySelectorAll('#rows tr')];
+  const find = document.getElementById('find');
+  const none = document.getElementById('none');
+  const buttons = [...document.querySelectorAll('[data-filter]')];
+  let mode = 'all';
+
+  function apply() {
+    const q = find.value.trim().toLowerCase();
+    let shown = 0;
+    for (const r of rows) {
+      const state = r.dataset.state;
+      const passMode = mode === 'all'
+        || (mode === 'moved' && (state === 'moved' || state === 'neg'))
+        || (mode === 'attention' && (state === 'held' || state === 'neg'));
+      const passText = !q || r.dataset.find.includes(q);
+      const show = passMode && passText;
+      r.classList.toggle('hidden', !show);
+      if (show) shown++;
+    }
+    none.style.display = shown ? 'none' : '';
+  }
+  find.addEventListener('input', apply);
+  for (const b of buttons) {
+    b.addEventListener('click', () => {
+      mode = b.dataset.filter;
+      buttons.forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      apply();
+    });
+  }
+</script>
