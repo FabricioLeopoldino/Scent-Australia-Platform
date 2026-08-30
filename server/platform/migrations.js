@@ -191,5 +191,9 @@ export async function runCrossSchemaMigrations() {
     END$$;
   `);
   await platformPool.query(`ALTER TABLE sa.products ADD COLUMN IF NOT EXISTS exclusivity VARCHAR(10)`);
+  // Why a manual adjustment happened, as a value that can be grouped rather than
+  // free text (2026-08-31). The note stays: the reason says WHAT KIND, the note
+  // says the particulars. See shared/stock-reasons.js for why this matters.
+  await platformPool.query(`ALTER TABLE sa.transactions ADD COLUMN IF NOT EXISTS reason VARCHAR(20)`);
   console.log('[platform-db] Cross-schema migrations complete (transfer + Fragrance Library types in sa CHECK; sa.products.exclusivity present).');
 }

@@ -115,6 +115,9 @@ const GUARDED = /--apply|--commit|CLEANUP_DATABASE_URL|assertStoreNotLive|ROLLBA
     // its movements, its tech-stock row and its batch receipts, then counts what
     // is left and fails if anything is.
     'regression-tech-stock-author.js',
+    // Added 2026-08-31. Writes to SA: creates one oil, removes it and every
+    // transaction it caused, then counts what is left and fails if anything is.
+    'regression-stock-reason.js',
   ];
 
   const unguarded = [];

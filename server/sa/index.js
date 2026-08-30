@@ -10,6 +10,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 import express from 'express';
+import { isValidReason, reasonLabel } from '../../shared/stock-reasons.js';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import multer from 'multer';
@@ -1106,14 +1107,43 @@ router.post('/stock/adjust', async (req, res) => {
   try {
     await client.query('BEGIN');
     
-    const { productId, quantity, type, note, userId } = req.body;
-    
+    const { productId, quantity, type, note, reason, operatorIds } = req.body;
+
     if (!productId || !quantity || !type) {
       throw new Error('Missing required fields: productId, quantity, type');
     }
-    
+
     if (!['add', 'remove'].includes(type)) {
       throw new Error('Type must be either "add" or "remove"');
+    }
+
+    // The reason is what turns "how much did technicians use last month" into a
+    // question with an answer. Validated here rather than trusted from the
+    // screen: a reason that accepts anything is the free-text box wearing a new
+    // name. See shared/stock-reasons.js.
+    if (!isValidReason(type, reason)) {
+      throw Object.assign(new Error('Choose why the stock is being adjusted'), { status: 400 });
+    }
+    const noteText = String(note || '').trim();
+    // "Other" with no note records nothing at all, which is worse than the free
+    // text this replaced.
+    if (reason === 'other' && !noteText) {
+      throw Object.assign(new Error('Say why, when the reason is Other'), { status: 400 });
+    }
+
+    // Who physically did it, from the operator list — separate from the login,
+    // because Gustavo and Wanderson work through somebody else's account. Same
+    // list and same reasoning as stock returns (owner, 18/08/2026).
+    let opIds = Array.isArray(operatorIds) ? operatorIds.map(Number).filter(Boolean) : [];
+    let opNames = [];
+    if (opIds.length) {
+      const found = await client.query(
+        `SELECT id, name FROM sa.warehouse_operators WHERE id = ANY($1::int[]) AND active`, [opIds]);
+      if (found.rows.length !== opIds.length) {
+        throw Object.assign(new Error('One or more operators are unknown or inactive'), { status: 400 });
+      }
+      opIds = found.rows.map((r) => r.id);
+      opNames = found.rows.map((r) => r.name);
     }
     
     const productResult = await client.query(
@@ -1146,8 +1176,9 @@ router.post('/stock/adjust', async (req, res) => {
     // Create transaction record
     await client.query(
       `INSERT INTO transactions
-       (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes, user_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+       (product_id, product_code, product_name, category, type, quantity, unit, balance_after,
+        notes, user_id, reason, operator_ids)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         productId,
         product.productCode || product.tag,
@@ -1157,8 +1188,16 @@ router.post('/stock/adjust', async (req, res) => {
         adjustQuantity,
         product.unit || 'units',
         newStock,
-        note || `Manual ${type} adjustment`,
-        userId || null
+        // The note carries the particulars beside the reason, and the operator
+        // names are resolved server-side so the note and the array cannot
+        // disagree — the same rule the returns route follows.
+        [reasonLabel(type, reason), noteText, opNames.length ? `By: ${opNames.join(' / ')}` : '']
+          .filter(Boolean).join(' — '),
+        // req.user, never the client's claim about who it is. The previous
+        // version took userId straight from the request body.
+        req.user.id,
+        reason,
+        opIds.length ? opIds : null
       ]
     );
 
@@ -1175,6 +1214,10 @@ router.post('/stock/adjust', async (req, res) => {
     });
   } catch (error) {
     await client.query('ROLLBACK');
+    // A validation failure is the person's to fix, so it says what is wrong.
+    // Anything else stays opaque, as it should.
+    if (error.status === 400) return res.status(400).json({ error: error.message });
+    console.error('POST /stock/adjust error:', error.message);
     res.status(500).json({ error: 'Internal server error' });
   } finally {
     client.release();

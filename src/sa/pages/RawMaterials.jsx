@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useToast } from '../components/Toast';
 import { getStockStatus, isLowStock, isReorderSoon } from '../utils/stockStatus';
+import OperatorPicker from '../components/OperatorPicker';
+import { reasonsFor } from '../../../shared/stock-reasons.js';
 
 export default function RawMaterials({ user }) {
   const showToast = useToast();
@@ -11,6 +13,19 @@ export default function RawMaterials({ user }) {
   const [adjustQuantity, setAdjustQuantity] = useState('');
   const [adjustNote, setAdjustNote] = useState('');
   const [adjustType, setAdjustType] = useState('add');
+  // The same question the stock screen and the returns form ask. Raw materials
+  // go the same way as fragrance did if nobody records why they moved.
+  const [adjustReason, setAdjustReason] = useState('');
+  const [adjustOperators, setAdjustOperators] = useState([]);
+  const [operators, setOperators] = useState([]);
+  const [adjustBy, setAdjustBy] = useState('');
+
+  useEffect(() => {
+    fetch('/api/warehouse-operators')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => setOperators(Array.isArray(d) ? d : []))
+      .catch(() => setOperators([]));
+  }, []);
 
   useEffect(() => {
     fetchProducts();
@@ -52,8 +67,9 @@ export default function RawMaterials({ user }) {
           productId: adjustingProduct.id,
           quantity: parseFloat(adjustQuantity),
           type: adjustType,
-          note: adjustNote || `Manual ${adjustType === 'add' ? 'addition' : 'removal'} of raw material`,
-          userId: user?.id || null
+          note: adjustNote,
+          reason: adjustReason,
+          operatorIds: adjustOperators,
         })
       });
 
@@ -62,9 +78,13 @@ export default function RawMaterials({ user }) {
         setAdjustingProduct(null);
         setAdjustQuantity('');
         setAdjustNote('');
+        setAdjustReason('');
+        setAdjustOperators([]);
+        setAdjustBy('');
         fetchProducts();
       } else {
-        showToast('Failed to adjust stock', 'error');
+        const err = await res.json().catch(() => ({}));
+        showToast(err.error || 'Failed to adjust stock', 'error');
       }
     } catch (error) {
       console.error('Error adjusting stock:', error);
@@ -209,7 +229,26 @@ export default function RawMaterials({ user }) {
             </div>
 
             <div className="form-group">
-              <label>Note (optional)</label>
+              <label>Why *</label>
+              <select className="input" value={adjustReason}
+                      onChange={(e) => setAdjustReason(e.target.value)}>
+                <option value="">Choose a reason…</option>
+                {reasonsFor(adjustType).map((r) => (
+                  <option key={r.id} value={r.id}>{r.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <OperatorPicker
+              operators={operators}
+              selected={adjustOperators}
+              onChange={setAdjustOperators}
+              label="Who did it"
+              fallbackValue={adjustBy}
+              onFallbackChange={setAdjustBy} />
+
+            <div className="form-group">
+              <label>Note{adjustReason === 'other' ? ' *' : ' (optional)'}</label>
               <textarea
                 value={adjustNote}
                 onChange={(e) => setAdjustNote(e.target.value)}

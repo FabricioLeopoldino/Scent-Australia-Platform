@@ -7,6 +7,8 @@ import MlHelper from '../components/MlHelper';
 import { LiquidMetalButton } from '../components/LiquidMetalButton';
 import ConfirmModal from '../components/ConfirmModal';
 import { isLowStock } from '../utils/stockStatus';
+import OperatorPicker from '../components/OperatorPicker';
+import { reasonsFor } from '../../../shared/stock-reasons.js';
 
 export default function StockManagement({ user }) {
   const showToast = useToast();
@@ -18,6 +20,12 @@ export default function StockManagement({ user }) {
   const [type, setType] = useState('add');
   const [quantity, setQuantity] = useState('');
   const [notes, setNotes] = useState('');
+  // Why, and who. Free text answered neither: "tech oil" was typed five times on
+  // 27 August and nobody could total it. See shared/stock-reasons.js.
+  const [reason, setReason] = useState('');
+  const [operatorIds, setOperatorIds] = useState([]);
+  const [operators, setOperators] = useState([]);
+  const [returnedBy, setReturnedBy] = useState('');
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -27,6 +35,15 @@ export default function StockManagement({ user }) {
 
   const [safetyMap, setSafetyMap] = useState({});
   const [submitting, setSubmitting] = useState(false);
+
+  // Fails softly: if the list cannot be read the picker offers a name field, the
+  // way it did before. A stock adjustment must not be blocked by one lookup.
+  useEffect(() => {
+    fetch('/api/warehouse-operators')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => setOperators(Array.isArray(d) ? d : []))
+      .catch(() => setOperators([]));
+  }, []);
 
   useEffect(() => {
     fetchProducts();
@@ -83,7 +100,8 @@ export default function StockManagement({ user }) {
           quantity: parseInt(quantity),
           type,
           note: notes,
-          userId: user?.id || null
+          reason,
+          operatorIds,
         })
       });
 
@@ -91,6 +109,9 @@ export default function StockManagement({ user }) {
         setShowModal(false);
         setQuantity('');
         setNotes('');
+        setReason('');
+        setOperatorIds([]);
+        setReturnedBy('');
         showToast(`Stock ${type === 'add' ? 'added' : 'removed'} successfully!`, 'success');
         fetchProducts(); // background refresh — don't await
       } else {
@@ -356,6 +377,8 @@ export default function StockManagement({ user }) {
                               setType('add');
                               setQuantity('');
                               setNotes('');
+                              setReason('');
+                              setOperatorIds([]);
                             }}
                             style={{ fontSize: '12px', padding: '6px 16px' }}
                           >
@@ -466,7 +489,25 @@ export default function StockManagement({ user }) {
               </div>
 
               <div className="form-group">
-                <label>Notes (optional)</label>
+                <label>Why *</label>
+                <select className="input" value={reason} onChange={(e) => setReason(e.target.value)}>
+                  <option value="">Choose a reason…</option>
+                  {reasonsFor(type).map((r) => (
+                    <option key={r.id} value={r.id}>{r.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <OperatorPicker
+                operators={operators}
+                selected={operatorIds}
+                onChange={setOperatorIds}
+                label="Who did it"
+                fallbackValue={returnedBy}
+                onFallbackChange={setReturnedBy} />
+
+              <div className="form-group">
+                <label>Notes{reason === 'other' ? ' *' : ' (optional)'}</label>
                 <textarea
                   className="input"
                   value={notes}
