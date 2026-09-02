@@ -167,6 +167,7 @@ function CreateUserModal({ onClose, onCreated }) {
   const [name, setName] = useState('');
   const [role, setRole] = useState('user');
   const [modules, setModules] = useState(['SA']);
+  const [isWarehouseOperator, setIsWarehouseOperator] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -182,7 +183,7 @@ function CreateUserModal({ onClose, onCreated }) {
       const res = await fetch('/api/platform/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, role, modules }),
+        body: JSON.stringify({ name, role, modules, is_warehouse_operator: isWarehouseOperator }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) onCreated({ name: data.user.name, password: data.tempPassword });
@@ -218,6 +219,12 @@ function CreateUserModal({ onClose, onCreated }) {
               </label>
             ))}
           </div>
+        </div>
+        <div className="form-group">
+          <label style={{ fontSize: 13, display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+            <input type="checkbox" checked={isWarehouseOperator} onChange={(e) => setIsWarehouseOperator(e.target.checked)} />
+            Warehouse operator — appears in Returns and stock pickers
+          </label>
         </div>
         {error && <div className="form-error">{error}</div>}
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 18 }}>

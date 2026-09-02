@@ -122,6 +122,10 @@ const GUARDED = /--apply|--commit|CLEANUP_DATABASE_URL|assertStoreNotLive|ROLLBA
     // production order. Removes all of it in dependency order and restores the
     // component's stock via a ledger row, then counts what is left.
     'regression-major-client-quick-order.js',
+    // Added 2026-09-02. Writes to platform.users (+ its sa/sm mirrors) and
+    // sa.warehouse_operators. Removes every row it created, in dependency
+    // order, and fails if anything is left behind.
+    'regression-warehouse-operator-on-create.js',
   ];
 
   const unguarded = [];

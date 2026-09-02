@@ -56,8 +56,9 @@ export default function OperatorPicker({ operators, selected, onChange, label, f
         })}
       </div>
       <div style={{ fontSize: 11, color: 'rgba(232,234,242,0.4)', marginTop: 6 }}>
-        Tap everyone who did the work. Someone missing? They need adding to the
-        operator list — do not put the name in the notes.
+        Tap everyone who did the work. Someone missing? If they have a login,
+        ask an admin to tick "Warehouse operator" on their account — otherwise
+        ask Fabricio to add them. Don't put the name in the notes instead.
       </div>
     </div>
   );

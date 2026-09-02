@@ -69,7 +69,11 @@ const BASELINE = {
   //   Santal, Mahogany & Soft Floral -4.5 L · Grey Vetiver -1.0 L
   // Not cleared to zero: no figure is invented, and the owner is having those
   // four recounted.
-  sa_negatives: 25,
+  // 26 from 02/09: the ScentPro Wifi Medium Diffuser (SCENT_MACHINES_00002) was
+  // corrected to 0 on 31/08 (a +7 add) and a real Shopify sale on 02/09 sold one
+  // more against zero stock. Second time this exact model has done this — it
+  // carries no safety stock and Shopify does not stop selling it at zero.
+  sa_negatives: 26,
   oils_no_minimum: 22,        // MUSE oils that can never raise a warning
 };
 

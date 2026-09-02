@@ -200,7 +200,7 @@ router.get('/users', requireRole('root'), async (_req, res) => {
 
 router.post('/users', requireRole('root'), async (req, res) => {
   try {
-    const { name, role, modules } = req.body || {};
+    const { name, role, modules, is_warehouse_operator } = req.body || {};
     if (!name?.trim()) return res.status(400).json({ error: 'Name required' });
     if (!VALID_ROLES.includes(role)) return res.status(400).json({ error: 'Invalid role' });
 
@@ -222,7 +222,24 @@ router.post('/users', requireRole('root'), async (req, res) => {
     await mirrorUserToSa(user, hash);
     await mirrorUserToSm(user, hash);
 
-    await auditLog(req.user.id, 'user_created', 'user', user.id, { name: user.name, role, modules: finalModules });
+    // Warehouse operator, from the same form (2026-09-02). "Who did this return"
+    // used to need a separate, undiscoverable step — a name typed straight into
+    // sa.warehouse_operators by hand, which is how a new hire's first day ran
+    // into a dead end today. ON CONFLICT (name) links rather than duplicates:
+    // Gustavo and Wanderson are already in that table with no login, by name
+    // only, and the day either of them gets an account here, ticking this same
+    // box attaches it to their existing record instead of creating a second
+    // "Gustavo".
+    if (is_warehouse_operator) {
+      await platformPool.query(
+        `INSERT INTO sa.warehouse_operators (name, user_id, active)
+         VALUES ($1, $2, true)
+         ON CONFLICT (name) DO UPDATE SET user_id = EXCLUDED.user_id, active = true`,
+        [user.name, user.id]
+      );
+    }
+
+    await auditLog(req.user.id, 'user_created', 'user', user.id, { name: user.name, role, modules: finalModules, is_warehouse_operator: !!is_warehouse_operator });
     res.status(201).json({ user: publicUser(user, finalModules), tempPassword });
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ error: 'A user with this name already exists' });
