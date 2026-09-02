@@ -118,6 +118,10 @@ const GUARDED = /--apply|--commit|CLEANUP_DATABASE_URL|assertStoreNotLive|ROLLBA
     // Added 2026-08-31. Writes to SA: creates one oil, removes it and every
     // transaction it caused, then counts what is left and fails if anything is.
     'regression-stock-reason.js',
+    // Added 2026-09-02. Writes to SM: one disposable client, two masters and one
+    // production order. Removes all of it in dependency order and restores the
+    // component's stock via a ledger row, then counts what is left.
+    'regression-major-client-quick-order.js',
   ];
 
   const unguarded = [];

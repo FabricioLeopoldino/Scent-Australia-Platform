@@ -748,7 +748,6 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
   const [components, setComponents] = useState([])
   const [labels, setLabels]         = useState({}) // clientId → labels[]
   const [readyFormulas, setReadyFormulas] = useState({}) // fragranceId|oilId → rf[]
-  const [clientProducts, setClientProducts] = useState([]) // products linked to selected major client
   const [fgProducts, setFgProducts] = useState([]) // dynamic FINISHED_GOOD products (no client)
 
   const [clientId, setClientId]     = useState(editingOrder?.client_id ? String(editingOrder.client_id) : '')
@@ -804,7 +803,6 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
     loadFgProducts()
     if (editingOrder?.client_id) {
       loadLabels(String(editingOrder.client_id))
-      if (editingOrder.order_type === 'LARGE_CLIENT') loadClientProducts(editingOrder.client_id)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -878,10 +876,6 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
     const res = await axios.get('/api/products', { ...api(), params: { category: 'COMPONENT' } })
     setComponents(res.data)
   }
-  async function loadClientProducts(cId) {
-    const res = await axios.get('/api/products', { ...api(), params: { client_id: cId } })
-    setClientProducts(res.data)
-  }
   async function loadFgProducts() {
     try {
       const res = await axios.get('/api/products', { ...api(), params: { category: 'FINISHED_GOOD' } })
@@ -926,6 +920,42 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
   function addLine() { setLines(prev => [...prev, { ...EMPTY_LINE, _id: Date.now() }]) }
   function removeLine(idx) { setLines(prev => prev.filter((_, i) => i !== idx)) }
 
+  // Same auto-fill rule the manual Master dropdown uses (oil_pct, and the
+  // fragrance when the master has exactly one linked to it) — one definition,
+  // so a client's own products fill in the same way whether picked one at a
+  // time or added together below.
+  function lineFromMaster(pt, seq) {
+    const oilPct = pt.is_pure_oil ? 100 : (pt.default_oil_pct ?? 25)
+    const allowed = Array.isArray(pt.fragrance_ids) ? pt.fragrance_ids : []
+    return {
+      ...EMPTY_LINE, _id: Date.now() + seq,
+      product_type: pt.key, oil_pct: oilPct,
+      fragrance_id: allowed.length === 1 ? allowed[0] : '',
+    }
+  }
+
+  // The Coco Republic case: a PO lists several of the client's own products at
+  // once (Temple Candle, Temple Alfresco, Temple Room Spray, Temple Reed
+  // Diffuser), each needing its own line. One click adds all of them —
+  // pre-filled exactly as picking each by hand would — leaving only the
+  // quantities to type.
+  function addClientProductLines(products) {
+    setLines(prev => {
+      const already = new Set(prev.map(l => l.product_type).filter(Boolean))
+      const fresh = products.filter(pt => !already.has(pt.key))
+        .map((pt, i) => lineFromMaster(pt, i))
+      if (!fresh.length) return prev
+      // A single still-blank starter line is a fresh order that hasn't been
+      // touched yet — replace it rather than leaving an empty line behind.
+      const base = (prev.length === 1 && !prev[0].product_type && !prev[0].quantity) ? [] : prev
+      return [...base, ...fresh]
+    })
+    products.forEach(pt => {
+      const allowed = Array.isArray(pt.fragrance_ids) ? pt.fragrance_ids : []
+      if (allowed.length === 1) loadReadyFormula(allowed[0])
+    })
+  }
+
   // When fragrance changes on a line, load ready formula
   function onFragranceChange(idx, fragId) {
     setLine(idx, { fragrance_id: fragId, use_ready_formula: false, ready_formula_id: '' })
@@ -939,7 +969,6 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
     setShowClientDrop(false)
     if (client.is_large_client) {
       setOrderType('LARGE_CLIENT')
-      loadClientProducts(client.id)
     } else {
       setOrderType('STANDARD')
       setClientProducts([])
@@ -1220,7 +1249,28 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
 
         {/* Line Items */}
         <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: 'rgba(232,234,242,0.5)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 14 }}>Line Items</div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'rgba(232,234,242,0.5)', textTransform: 'uppercase', letterSpacing: 0.5 }}>Line Items</div>
+            {(() => {
+              // A repeat order for a Major Client — Coco Republic's PO, say — lists
+              // several of the client's own products at once. This adds one line per
+              // registered product in a single click, pre-filled exactly as picking
+              // each by hand would, leaving only the quantities to fill in.
+              if (orderType !== 'LARGE_CLIENT' || !clientId) return null
+              const clientMasters = productTypes.filter(p => p.segment === 'MAJOR' && p.client_id === parseInt(clientId))
+              if (!clientMasters.length) return null
+              return (
+                <button
+                  type="button"
+                  onClick={() => addClientProductLines(clientMasters)}
+                  style={{ background: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.4)', color: '#a78bfa',
+                           borderRadius: 8, padding: '6px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+                >
+                  + Add all {clientSearch || 'client'} products ({clientMasters.length})
+                </button>
+              )
+            })()}
+          </div>
 
           {lines.map((line, idx) => {
             const pt = productTypes.find(p => p.key === line.product_type)
@@ -1259,15 +1309,18 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
                       value={line.product_type}
                       onChange={v => {
                         const npt = productTypes.find(p => p.key === v)
-                        const oilPct = npt?.is_pure_oil ? 100 : (npt?.default_oil_pct ?? 25)
+                        // lineFromMaster carries product_type/oil_pct, and the fragrance
+                        // ONLY when the master has exactly one linked — same rule as below.
+                        const patch = npt ? lineFromMaster(npt, 0) : { product_type: v }
+                        delete patch._id
                         const allowed = Array.isArray(npt?.fragrance_ids) ? npt.fragrance_ids : []
-                        const patch = { product_type: v, oil_pct: oilPct }
-                        // Auto-set fragrance for MUSE/MAJOR masters: lock to the single linked one,
-                        // or clear if the current pick is no longer valid for this master.
-                        if (allowed.length === 1) {
-                          patch.fragrance_id = allowed[0]
-                        } else if (allowed.length > 1 && line.fragrance_id && !allowed.includes(parseInt(line.fragrance_id))) {
-                          patch.fragrance_id = ''
+                        if (allowed.length !== 1) {
+                          // Not a single-fragrance master: leave whatever was already
+                          // picked alone, unless it no longer fits this one.
+                          delete patch.fragrance_id
+                          if (allowed.length > 1 && line.fragrance_id && !allowed.includes(parseInt(line.fragrance_id))) {
+                            patch.fragrance_id = ''
+                          }
                         }
                         setLine(idx, patch)
                         if (patch.fragrance_id) onFragranceChange(idx, patch.fragrance_id)
