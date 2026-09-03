@@ -73,7 +73,15 @@ const BASELINE = {
   // corrected to 0 on 31/08 (a +7 add) and a real Shopify sale on 02/09 sold one
   // more against zero stock. Second time this exact model has done this — it
   // carries no safety stock and Shopify does not stop selling it at zero.
-  sa_negatives: 26,
+  // 25 from 03/09: applied Payal's 28/08 diffuser stocktake (7 products —
+  // ScentPro/Smart, ScentTower, ScentLite, the HVAC with the air-pressure
+  // switch), which had never reached the platform. Fixed by the same
+  // count-plus-moved-since method as the fragrance count, because a partial
+  // manual correction on 31/08 had already made the same mistake the first
+  // fragrance attempt did — it wrote Friday's count straight in on Monday,
+  // erasing the real sales in between. SCENT_MACHINES_00002 came OFF the
+  // negatives list (-1 -> 1); nothing else on the SA list was touched.
+  sa_negatives: 25,
   oils_no_minimum: 22,        // MUSE oils that can never raise a warning
 };
 
