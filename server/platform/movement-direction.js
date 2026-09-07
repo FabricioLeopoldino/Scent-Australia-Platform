@@ -125,3 +125,69 @@ export const BUSINESS_SQL = (col = 't.type') =>
   `CASE ${Object.entries(BUSINESS).map(([k, v]) => `WHEN ${col} = '${k}' THEN '${v.replace(/'/g, "''")}'`).join(' ')} ELSE ${col} END`;
 
 export { BUSINESS };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A movement recorded in `sa` that ANOTHER business caused.
+//
+// WHY (2026-09-08). The owner filtered History & Activity by MUSE and found no
+// fragrance at all. It was not a data fault: the report tags a row by the
+// SCHEMA it sits in, and every oil movement sits in `sa`, so every one of them
+// read "SA" — all 5,825. Filtering MUSE showed the finished product leaving and
+// never the oil that made it, which is the half that costs money.
+//
+// His rule, and it is the right one: **show a movement wherever the stock
+// actually moved.** The oil leaves SA's shelf, so it must stay visible in SA;
+// the business that caused it must see it too. So these rows belong to BOTH,
+// and the label says so — "SA · MUSE" is two facts, not a contradiction.
+//
+// A movement that only ever touches one side is untouched by this and already
+// behaved correctly: a Travel Spray sale moves only MUSE stock, a B2B oil sale
+// only SA's.
+//
+// Keyed on the transaction type because the type already carries the answer —
+// `SEGMENT_MAP` in sm/services/fragrance-library.js chooses it at write time.
+// No new column, no backfill. Kept beside BUSINESS for the same reason BUSINESS
+// is kept beside the direction map: they are read together, and a rule split
+// across two files becomes two rules that disagree.
+const ALSO_VISIBLE_IN = {
+  muse_production:     'MUSE',
+  muse_reversal:       'MUSE',
+  sm_std_production:   'Scented Merchandise',
+  sm_std_reversal:     'Scented Merchandise',
+  sm_major_production: 'Scented Merchandise',
+  sm_major_reversal:   'Scented Merchandise',
+};
+
+/** The second system a movement is visible in, or null when it is only its own. */
+export function alsoVisibleIn(type) {
+  return ALSO_VISIBLE_IN[String(type || '').trim()] || null;
+}
+
+/**
+ * The system label for a row that lives in `sa`: 'SA', or 'SA · <other>' when
+ * another business caused it. Composite on purpose — the CSV then states both.
+ */
+export const SA_SYSTEM_SQL = (col = 't.type') =>
+  `CASE ${Object.entries(ALSO_VISIBLE_IN)
+    .map(([k, v]) => `WHEN ${col} = '${k}' THEN 'SA · ${v}'`).join(' ')} ELSE 'SA' END`;
+
+/** Does a row's (possibly composite) system label satisfy a filter choice? */
+export function systemMatches(rowSystem, wanted) {
+  const s = String(rowSystem || '');
+  return s === wanted || s.split(' · ').includes(wanted);
+}
+
+/**
+ * The `sa` transaction types a given system can see, for pushing the filter
+ * INTO the query. Filtering in JS after a LIMIT silently truncates: on 8 Sep
+ * the cross-system rows sat at positions 19..2601 of sa ordered by date, and
+ * the screen asks for 2000 — so the oldest were being dropped before the JS
+ * filter ever saw them. 'SM' means both of its halves.
+ */
+export function typesVisibleIn(system) {
+  const want = system === 'SM' ? ['MUSE', 'Scented Merchandise'] : [system];
+  return Object.entries(ALSO_VISIBLE_IN).filter(([, v]) => want.includes(v)).map(([k]) => k);
+}
+
+export { ALSO_VISIBLE_IN };
+

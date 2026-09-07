@@ -1,7 +1,7 @@
 import express from 'express';
 import { saPool, smPool, platformPool } from '../db.js';
 import { requireRole } from './auth.js';
-import { DIRECTION_SQL, BUSINESS_SQL } from './movement-direction.js';
+import { DIRECTION_SQL, BUSINESS_SQL, SA_SYSTEM_SQL, systemMatches, typesVisibleIn } from './movement-direction.js';
 
 const router = express.Router();
 
@@ -27,14 +27,17 @@ function txFilters(base, { from, to, type, search }, params) {
   if (from)   { params.push(from);   q += ` AND (t.created_at AT TIME ZONE 'Australia/Sydney')::date >= $${params.length}::date`; }
   if (to)     { params.push(to);     q += ` AND (t.created_at AT TIME ZONE 'Australia/Sydney')::date <= $${params.length}::date`; }
   if (type)   { params.push(type);   q += ` AND t.type = $${params.length}`; }
-  if (search) { params.push(`%${search}%`); q += ` AND (t.product_name ILIKE $${params.length} OR t.product_code ILIKE $${params.length})`; }
+  // Notes included deliberately: the Shopify order number ("Shopify Order
+  // #1032.1") exists ONLY in the note, so without this, searching the very
+  // number printed on the row finds nothing (owner, 8 Sep).
+  if (search) { params.push(`%${search}%`); q += ` AND (t.product_name ILIKE $${params.length} OR t.product_code ILIKE $${params.length} OR t.notes ILIKE $${params.length})`; }
   return q;
 }
 
 const SA_TX = `
   SELECT t.id::text AS id, t.created_at, COALESCE(u.name, 'System') AS performed_by,
          t.type, t.category, t.product_name, t.product_code,
-         t.quantity, t.unit, t.balance_after, t.notes, 'SA' AS system,
+         t.quantity, t.unit, t.balance_after, t.notes, ${SA_SYSTEM_SQL()} AS system,
          ${DIRECTION_SQL()} AS direction
   FROM transactions t LEFT JOIN users u ON t.user_id = u.id
   WHERE 1=1`;
@@ -52,13 +55,30 @@ const SM_TX = `
 
 async function fetchHistory({ system, from, to, type, search, limit }) {
   const lim = cap(limit, 2000, 10000);
-  const wantSA = !system || system === 'ALL' || system === 'SA';
+  // sa is read for MUSE and Scented too: the oil they consume is recorded
+  // there, and skipping it is what made the MUSE filter show no fragrance.
+  const wantSA = !system || system === 'ALL' || system === 'SA'
+    || system === 'SM' || system === 'MUSE' || system === 'Scented Merchandise';
   const wantSM = !system || system === 'ALL' || system === 'SM' || system === 'MUSE' || system === 'Scented Merchandise';
   const jobs = [];
-  if (wantSA) { const p = []; jobs.push(saPool.query(txFilters(SA_TX, { from, to, type, search }, p) + ` ORDER BY t.created_at DESC LIMIT ${lim}`, p).then(r => r.rows)); }
+  if (wantSA) {
+    const p = [];
+    let q = txFilters(SA_TX, { from, to, type, search }, p);
+    // When only the other business is asked for, narrow sa IN THE QUERY. Doing
+    // it in JS after the LIMIT drops the oldest cross-system rows before the
+    // filter runs — on 8 Sep they sat at positions 19..2601 and the screen asks
+    // for 2000, so some were already invisible.
+    if (system && system !== 'ALL' && system !== 'SA') {
+      p.push(typesVisibleIn(system));
+      q += ` AND t.type = ANY($${p.length}::text[])`;
+    }
+    jobs.push(saPool.query(q + ` ORDER BY t.created_at DESC LIMIT ${lim}`, p).then(r => r.rows));
+  }
   if (wantSM) { const p = []; jobs.push(smPool.query(txFilters(SM_TX, { from, to, type, search }, p) + ` ORDER BY t.created_at DESC LIMIT ${lim}`, p).then(r => r.rows)); }
   let rows = (await Promise.all(jobs)).flat();
-  if (system && system !== 'ALL' && system !== 'SM') rows = rows.filter(r => r.system === system);  // 'SM' keeps both Scented + MUSE  // MUSE/Scented split
+  // 'SM' keeps both Scented + MUSE; a composite 'SA · MUSE' satisfies either half.
+  if (system && system !== 'ALL' && system !== 'SM') rows = rows.filter(r => systemMatches(r.system, system));
+  else if (system === 'SM') rows = rows.filter(r => r.system !== 'SA');  // sa-only rows are not SM's
   rows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   return rows.slice(0, lim);
 }

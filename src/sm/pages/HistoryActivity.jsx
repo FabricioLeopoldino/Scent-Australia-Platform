@@ -13,6 +13,14 @@ function api() { return { headers: { Authorization: `Bearer ${localStorage.getIt
 // Backend: /api/platform/history|activity (+ /export). Admin/root only.
 const SYS_COLOR = { SA: '#60a5fa', 'Scented Merchandise': '#4ade80', MUSE: '#fbbf24', Platform: '#a78bfa' }
 
+// A movement can belong to two systems at once — oil leaves SA's shelf BECAUSE
+// of a MUSE sale, and the label says "SA · MUSE". Colour it by the business
+// that caused it (the second half), because that is the part the SA-only rows
+// around it do not have. Without this the rows this feature exists to surface
+// would be the only grey ones on the screen.
+const sysColour = (system) =>
+  SYS_COLOR[system] || SYS_COLOR[String(system || '').split(' · ').pop()] || '#94a3b8'
+
 // The two tabs do not cover the same systems. Stock movements only ever belong
 // to SA or SM — the platform schema has no transactions table. Audit events do
 // include platform-level ones (sign-ins, module access, password changes,
@@ -71,7 +79,7 @@ function readable(raw) {
 }
 
 function SysBadge({ system }) {
-  const c = SYS_COLOR[system] || '#94a3b8'
+  const c = sysColour(system)
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 700, color: c, whiteSpace: 'nowrap' }}>
       <span style={{ width: 6, height: 6, borderRadius: '50%', background: c, flexShrink: 0 }} />
