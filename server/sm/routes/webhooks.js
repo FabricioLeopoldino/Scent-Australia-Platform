@@ -151,6 +151,11 @@ async function planLinesFromShopifyOrder(tq, body) {
       oil_pct: parseFloat(v.default_oil_pct) || 25,
       quantity: Math.ceil(need),
       variant_name: v.name,
+      // Same shape() already used for the unmatched alarm — a matched line
+      // (has a SKU) used to drop this on the floor entirely. Metallic Foil,
+      // an uploaded label, a chosen finish: none of it is a component, all of
+      // it is something a human needs to read before producing the line.
+      properties: shape(li).properties,
     });
   }
   return { toProduce, unmatched, fromStock };
@@ -199,11 +204,13 @@ async function createProductionOrderFromShopify(body, shopifyOrderId) {
       const dbLine = (await tq(
         `INSERT INTO production_order_lines
            (production_order_id, line_number, product_type, fragrance_id, oil_id,
-            variant_name, oil_pct, quantity, unit_price, is_candle, needs_packing)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,$9,true) RETURNING *`,
+            variant_name, oil_pct, quantity, unit_price, is_candle, needs_packing,
+            customer_properties)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,$9,true,$10) RETURNING *`,
         [ord.id, i + 1, line.product_type, line.fragrance_id, line.oil_id,
          line.variant_name, line.oil_pct, line.quantity,
-         ['CANDLE_240G', 'CANDLE_400G'].includes(line.product_type)]
+         ['CANDLE_240G', 'CANDLE_400G'].includes(line.product_type),
+         line.properties ? JSON.stringify(line.properties) : null]
       )).rows[0];
       // Same BOM builder the manual path uses — without it the order would
       // start and debit nothing.

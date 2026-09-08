@@ -126,6 +126,11 @@ const GUARDED = /--apply|--commit|CLEANUP_DATABASE_URL|assertStoreNotLive|ROLLBA
     // sa.warehouse_operators. Removes every row it created, in dependency
     // order, and fails if anything is left behind.
     'regression-warehouse-operator-on-create.js',
+    // Added 2026-09-09. Writes one disposable SM product plus whatever
+    // production_orders/lines/components the webhook creates from it. Deletes
+    // in dependency order (components, lines, orders, transactions, product),
+    // then the audit_log and webhook_processed rows it caused.
+    'regression-atelier-line-properties.js',
   ];
 
   const unguarded = [];

@@ -4,7 +4,7 @@ import axios from 'axios'
 import { useToast } from '../SMModule.jsx'
 import SearchSelect from '../components/SearchSelect.jsx'
 import { fmt, fmtDate } from '../utils/date.js'
-import { LineFlags, lineScent } from '../components/LineMeta.jsx'
+import { LineFlags, lineScent, CustomerProperties } from '../components/LineMeta.jsx'
 import GlowingEffect from '../components/GlowingEffect.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
@@ -512,6 +512,8 @@ export default function ManufacturingQueue() {
                               <StepPill label="Done" done={isDone} />
                             </div>
                           </div>
+
+                          <CustomerProperties line={line} />
 
                           {/* BOM components */}
                           {line.components?.length > 0 && (

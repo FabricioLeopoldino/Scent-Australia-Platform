@@ -162,6 +162,16 @@ async function runStartupMigrations() {
   // name once; omitted, the code falls back to auto-concatenation with the
   // OIL's name (same graceful default as before, just no longer the only option).
   await query(`ALTER TABLE production_order_lines ADD COLUMN IF NOT EXISTS variant_name TEXT`)
+  // What the customer actually asked for on an Atelier order — Shopify line
+  // item properties, e.g. Metallic Foil, an uploaded label file, the finish
+  // chosen. Never modelled as a component: order #1024 (18 Aug) showed
+  // "Standard" and "Metallic foil" sharing the SAME variant_id, so no SKU will
+  // ever exist to resolve it — foil is applied to the label/packaging by
+  // whoever prints them, not a different physical vessel. Before this, a
+  // matched order (has a SKU) dropped every property on the way into
+  // production_order_lines; only an UNmatched order kept them, in the alarm
+  // row, because nobody read the choice past ingestion (found 2026-09-09).
+  await query(`ALTER TABLE production_order_lines ADD COLUMN IF NOT EXISTS customer_properties JSONB`)
   // The MUSE variant (the actual sellable sm.products row) is identified by
   // (master_product_id, oil_id) going forward, parallel to the legacy
   // (master_product_id, fragrance_id) pairing — same cross-schema FK pattern

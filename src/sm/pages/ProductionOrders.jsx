@@ -6,7 +6,7 @@ import { useToast } from '../SMModule.jsx'
 import ConfirmModal from '../components/ConfirmModal.jsx'
 import SearchSelect from '../components/SearchSelect.jsx'
 import { fmtDate as fmt } from '../utils/date.js'
-import { LineFlags, lineScent } from '../components/LineMeta.jsx'
+import { LineFlags, lineScent, CustomerProperties } from '../components/LineMeta.jsx'
 import GlowingEffect from '../components/GlowingEffect.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
@@ -676,6 +676,7 @@ function OrderDetail({ order, onRefresh, productTypes = [] }) {
             {(() => { const pt = productTypes.find(p => p.key === line.product_type); return pt && !pt.is_candle && !pt.is_pure_oil && <span style={{ fontSize: 11, color: 'rgba(232,234,242,0.4)' }}>@ {line.oil_pct}% oil</span> })()}
             <LineFlags line={line} style={{ marginLeft: 'auto' }} />
           </div>
+          <CustomerProperties line={line} />
           {line.components && line.components.length > 0 && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {line.components.map((comp, ci) => (
