@@ -217,8 +217,25 @@ export default function Statement() {
           <Row label="Received" value={`+ ${fmt(data.received, unit)}`} sub={litres(data.received, unit)} color="#4ade80" />
           <Row label="Used" value={`− ${fmt(data.used, unit)}`} sub={litres(data.used, unit)} color="#f87171" />
           <div style={{ height: 1, background: 'rgba(255,255,255,0.1)', margin: '10px 0' }} />
+          {/* A period that reaches today: "Closing balance" is checked
+              against the live shelf (shelf_at_end === stock_now). A period
+              that ended before today: checked against the ledger's OWN
+              balance at `to` instead, never against today's stock_now — a
+              closed period is correct to differ from today's shelf, and
+              showing today's number here made every one look broken the
+              moment anything sold afterwards.
+              reaches_today, not `data.period.to` being present, decides
+              which — `to` typed as today's own date still reaches today, and
+              keying this off "to present" showed "Ledger balance, {date}"
+              beside a number that was actually the live shelf (code review,
+              this same day). One flag, computed once on the server. */}
           <Row label="Closing balance" value={fmt(data.closing, unit)} sub={litres(data.closing, unit)} strong />
-          <Row label="Stock on the shelf" value={fmt(data.product.stock_now, unit)} sub={litres(data.product.stock_now, unit)} />
+          <Row label={data.reaches_today ? 'Stock on the shelf' : `Ledger balance, ${data.period.to}`}
+            value={fmt(data.shelf_at_end, unit)} sub={litres(data.shelf_at_end, unit)} />
+          {!data.reaches_today && data.shelf_at_end !== data.product.stock_now && (
+            <Row label="Stock on the shelf today" value={fmt(data.product.stock_now, unit)}
+              sub={litres(data.product.stock_now, unit)} />
+          )}
 
           {/* The audit property. A statement that does not balance is not a
               report, it is a rumour — so it says which it is. */}
@@ -230,8 +247,10 @@ export default function Statement() {
               : <AlertTriangle size={15} color="#f87171" style={{ flexShrink: 0, marginTop: 1 }} />}
             <div style={{ fontSize: 11.5, color: 'rgba(232,234,242,0.85)', lineHeight: 1.5 }}>
               {data.reconciles
-                ? 'The statement balances: opening plus movements equals the stock on the shelf.'
-                : `Out by ${fmt(Math.abs(data.closing - data.product.stock_now), unit)}. Stock changed without a movement being recorded — most often a bulk correction made directly, or history that predates the platform.`}
+                ? (data.reaches_today
+                    ? 'The statement balances: opening plus movements equals the stock on the shelf.'
+                    : 'The statement balances: opening plus movements equals the ledger\'s own balance at the end of this period.')
+                : `Out by ${fmt(Math.abs(data.closing - data.shelf_at_end), unit)}. Stock changed without a movement being recorded — most often a bulk correction made directly, or history that predates the platform.`}
             </div>
           </div>
         </div>

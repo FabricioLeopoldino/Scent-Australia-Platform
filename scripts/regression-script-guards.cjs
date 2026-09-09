@@ -131,6 +131,12 @@ const GUARDED = /--apply|--commit|CLEANUP_DATABASE_URL|assertStoreNotLive|ROLLBA
     // in dependency order (components, lines, orders, transactions, product),
     // then the audit_log and webhook_processed rows it caused.
     'regression-atelier-line-properties.js',
+    // Added 2026-09-09 (previously a read-only suite). One disposable SA
+    // product and its single transaction, needed to prove a real ledger-vs-
+    // shelf mismatch is still caught — no real product currently drifts, so
+    // the only way to exercise that path is to build one that does. Deletes
+    // the transaction then the product, and fails if the row is still there.
+    'regression-statement.js',
   ];
 
   const unguarded = [];

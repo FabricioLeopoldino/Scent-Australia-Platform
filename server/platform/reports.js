@@ -187,6 +187,25 @@ const POOL_FOR = { SA: () => saPool, SM: () => smPool };
 const STOCK_COL = { SA: '"currentStock"', SM: 'current_stock' };
 const CODE_COL  = { SA: '"productCode"', SM: 'product_code' };
 
+// The last recorded balance at or around a date — one query, used for both the
+// window's opening (before `from`) and its closing (at or before `to`). Code
+// review caught these as two hand-written copies that would drift if one were
+// fixed without the other (a timezone or tie-break change, say). `inclusive`
+// is the one real difference: opening wants strictly BEFORE `from` — a
+// movement ON that day belongs to the period, not before it — while closing
+// wants AT OR BEFORE `to`, since a movement on the last day of a period is
+// still part of it.
+async function lastBalanceAsOf(pool, code, date, { inclusive, requireNonNull = false } = {}) {
+  const op = inclusive ? '<=' : '<';
+  const notNull = requireNonNull ? 'AND balance_after IS NOT NULL' : '';
+  const r = await pool.query(
+    `SELECT balance_after::float b FROM transactions
+      WHERE product_code = $1 ${notNull}
+        AND (created_at AT TIME ZONE 'Australia/Sydney')::date ${op} $2::date
+      ORDER BY created_at DESC, id DESC LIMIT 1`, [code, date]);
+  return r.rows[0];
+}
+
 router.get('/statement', requireRole('root', 'admin'), async (req, res) => {
   try {
     const schema = String(req.query.schema || 'SA').toUpperCase();
@@ -196,6 +215,20 @@ router.get('/statement', requireRole('root', 'admin'), async (req, res) => {
     if (!code) return res.status(400).json({ error: 'code required' });
     const pool = POOL_FOR[schema]();
 
+    // Whether the window reaches today decides what "reconciles" is FOR, not
+    // whether `to` happens to be present. Typing today's own date into `to`
+    // is a bounded query by the crude test, and comparing it against the
+    // ledger's own last row (rather than the live shelf) would silently stop
+    // catching the fault this flag exists for — stock changed by something
+    // that bypassed the ledger entirely — the moment someone picks "today" as
+    // an end date instead of leaving it blank. Read from Postgres, in Sydney
+    // time, the same way every other date on this endpoint is compared —
+    // never from a local Date, which is how a wrong hour was quoted to the
+    // owner once already (see memory: audit-timestamps-are-utc-naive).
+    const reachesToday = !to || Boolean((await pool.query(
+      `SELECT $1::date >= (now() AT TIME ZONE 'Australia/Sydney')::date AS reaches`, [to]
+    )).rows[0].reaches);
+
     const prod = (await pool.query(
       `SELECT name, unit, ${STOCK_COL[schema]}::float AS stock FROM products WHERE ${CODE_COL[schema]} = $1`,
       [code])).rows[0];
@@ -204,10 +237,7 @@ router.get('/statement', requireRole('root', 'admin'), async (req, res) => {
     // Opening: the balance the ledger last recorded before the window. Read, not
     // computed — sa.transactions carries balance_after on every row, so there is
     // no need to replay history and no chance of drifting from it.
-    const openRow = from ? (await pool.query(
-      `SELECT balance_after::float b FROM transactions
-        WHERE product_code = $1 AND (created_at AT TIME ZONE 'Australia/Sydney')::date < $2::date
-        ORDER BY created_at DESC, id DESC LIMIT 1`, [code, from])).rows[0] : null;
+    const openRow = from ? await lastBalanceAsOf(pool, code, from, { inclusive: false }) : null;
 
     // When nothing precedes the window, the opening is NOT zero — it is whatever
     // the product held before its first recorded movement, which is that
@@ -296,6 +326,52 @@ router.get('/statement', requireRole('root', 'admin'), async (req, res) => {
       : 0;
     const closing = opening + ins - outs;
 
+    // What "reconciles" must compare against depends on whether the window
+    // reaches today. Comparing a BOUNDED period (a `to` in the past) against
+    // the CURRENT shelf made every closed period read as broken the moment
+    // anything sold afterwards — found 2026-09-09 asking for FRAG_0032 up to
+    // 31 August: closing computed 80,200, matched the ledger's own
+    // balance_after for that date exactly, and still came back reconciles:
+    // false, because five real sales happened in September. The arithmetic
+    // was never wrong; the reference point was.
+    //
+    // A bounded period (reachesToday === false) reconciles against the
+    // ledger's OWN balance_after at `to` — read directly, the same way
+    // `openRow` reads the one before `from`. That still catches the fault
+    // this flag exists for: a gap or a corrupt row breaking the delta chain
+    // between `opening` and here. A period reaching today is the one case
+    // that can catch a DIFFERENT fault — stock changed by something that
+    // bypassed the ledger entirely — and for that the current shelf is still
+    // the only honest answer, whether `to` was left blank or typed as today.
+    const closeRow = reachesToday ? null
+      : await lastBalanceAsOf(pool, code, to, { inclusive: true, requireNonNull: true });
+    // No row found means one of two different things, and they need opposite
+    // fallbacks:
+    //   nothing exists before/at `to` at all (asked about a product before it
+    //     ever moved) — `moves` is filtered by the same `to`, so it is
+    //     necessarily empty too, closing === opening by construction, and
+    //     `opening` IS the honest shelf: nothing happened, there is nothing to
+    //     fail to reconcile. Tried `?? prod.stock` first and it was wrong —
+    //     FRAG_0328 asked with to=2026-06-01, before it existed, came back
+    //     closing 0 vs today's 13,000 and a false alarm that nothing caused.
+    //   every row up to `to` has a null balance_after (the six LBL_ products'
+    //     single first-ever row) — `opening` is no longer independent here,
+    //     since a hidden non-zero movement could still be hiding behind
+    //     signed_fallback. Unreachable today (every one of those six gets a
+    //     real balance the same day, so closeRow always finds it in
+    //     practice) — kept as a known, named gap rather than solved for,
+    //     because the fix that closes it correctly would need to walk the
+    //     delta chain forward from the nearest real balance, and nothing in
+    //     six products' worth of real data can exercise it to prove that
+    //     code path actually works.
+    // `opening` is the right fallback ONLY for a genuinely bounded window that
+    // found nothing before `to` — a window reaching today must keep comparing
+    // against the real shelf, and collapsing both "closeRow is null" causes
+    // into one fallback broke exactly that: it made every full-history
+    // statement compare against `opening` instead of `prod.stock`, which is
+    // wrong the instant anything has ever moved.
+    const shelfAtEnd = reachesToday ? prod.stock : (closeRow?.b ?? opening);
+
     res.json({
       product: { schema, code, name: prod.name, unit: prod.unit, stock_now: prod.stock },
       period: { from: from || null, to: to || null },
@@ -305,8 +381,18 @@ router.get('/statement', requireRole('root', 'admin'), async (req, res) => {
       received: ins,
       used: outs,
       closing,
-      // The audit property: the ledger must add up to the shelf.
-      reconciles: Math.abs(closing - prod.stock) < 0.001,
+      // What "reconciles" was actually checked against — NOT always
+      // stock_now above. The UI must show this one next to `closing`, or a
+      // bounded period reads as broken the moment anything sells afterwards.
+      shelf_at_end: shelfAtEnd,
+      // Whether shelf_at_end IS stock_now — never re-derived from `to` being
+      // present, which is the mistake that put "Ledger balance, {date}" on
+      // screen next to a number that was actually today's live stock (code
+      // review, this same day). One computation, read by both ends.
+      reaches_today: reachesToday,
+      // The audit property: the ledger must add up to itself at `to`, or to
+      // the shelf when the window reaches today.
+      reconciles: Math.abs(closing - shelfAtEnd) < 0.001,
       movements: moves,
     });
   } catch (e) { console.error('[platform/statement]', e.message); res.status(500).json({ error: 'Failed to build statement' }); }
