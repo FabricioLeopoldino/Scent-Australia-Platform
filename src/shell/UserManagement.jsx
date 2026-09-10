@@ -46,6 +46,18 @@ export default function UserManagement({ currentUser, onBack }) {
     }
   }
 
+  async function toggleWarehouseOperator(user) {
+    const next = !user.is_warehouse_operator;
+    const res = await fetch(`/api/platform/users/${user.id}/warehouse-operator`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: next }),
+    });
+    if (res.ok) {
+      setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, is_warehouse_operator: next } : u)));
+    }
+  }
+
   async function resetPassword(user) {
     const res = await fetch(`/api/platform/users/${user.id}/reset-password`, { method: 'POST' });
     const data = await res.json().catch(() => ({}));
@@ -87,12 +99,13 @@ export default function UserManagement({ currentUser, onBack }) {
               <th>Name</th>
               <th>Role</th>
               <th>Module access</th>
+              <th title="Appears in Returns and stock pickers">Warehouse operator</th>
               <th style={{ textAlign: 'right' }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={4} style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)' }}>Loading...</td></tr>
+              <tr><td colSpan={5} style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)' }}>Loading...</td></tr>
             ) : (
               users.map((u) => (
                 <tr key={u.id}>
@@ -116,6 +129,15 @@ export default function UserManagement({ currentUser, onBack }) {
                         </label>
                       ))}
                     </div>
+                  </td>
+                  <td>
+                    <label style={{ fontSize: 12, display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={u.is_warehouse_operator}
+                        onChange={() => toggleWarehouseOperator(u)}
+                      />
+                    </label>
                   </td>
                   <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <button className="btn btn-ghost" title="Reset password" onClick={() => resetPassword(u)}>

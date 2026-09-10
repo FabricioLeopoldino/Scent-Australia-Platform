@@ -97,6 +97,7 @@ function publicUser(row, modules) {
     active: row.active,
     must_change_password: row.must_change_password === true,
     modules,
+    is_warehouse_operator: row.is_warehouse_operator === true,
   };
 }
 
@@ -185,9 +186,11 @@ router.get('/users', requireRole('root'), async (_req, res) => {
   try {
     const users = await platformPool.query(
       `SELECT u.*, COALESCE(json_agg(um.module ORDER BY um.module)
-              FILTER (WHERE um.module IS NOT NULL), '[]') AS modules
+              FILTER (WHERE um.module IS NOT NULL), '[]') AS modules,
+              COALESCE(bool_or(wo.active), false) AS is_warehouse_operator
        FROM platform.users u
        LEFT JOIN platform.user_modules um ON um.user_id = u.id
+       LEFT JOIN sa.warehouse_operators wo ON wo.user_id = u.id
        GROUP BY u.id
        ORDER BY u.id`
     );
@@ -263,6 +266,49 @@ router.put('/users/:id/modules', requireRole('root'), async (req, res) => {
     res.json({ success: true, modules: finalModules });
   } catch (e) {
     console.error('[users/modules]', e.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Ticking the box after account creation — the gap surfaced 2026-09-10:
+// "Warehouse operator" only ever existed on the CREATE form, so an existing
+// login had no self-service path at all, the exact dead end the checkbox was
+// built to close, just for the case of an account made before this existed.
+//
+// Same linking rule as creation, so re-ticking someone never duplicates them:
+// if this account is already linked to a sa.warehouse_operators row, flip
+// its `active` flag; otherwise upsert by NAME, which is what catches a
+// pre-existing no-login row sharing this person's name (Gustavo, Wanderson)
+// instead of creating a second one.
+//
+// Turning it OFF deactivates, never deletes — their past picks in Returns
+// must stay attributable to them.
+router.put('/users/:id/warehouse-operator', requireRole('root'), async (req, res) => {
+  try {
+    const userId = parseInt(req.params.id);
+    const active = !!req.body?.active;
+    const target = await platformPool.query(`SELECT id, name FROM platform.users WHERE id = $1`, [userId]);
+    if (!target.rows.length) return res.status(404).json({ error: 'User not found' });
+    const user = target.rows[0];
+
+    const existing = await platformPool.query(
+      `SELECT id FROM sa.warehouse_operators WHERE user_id = $1`, [userId]);
+    if (existing.rows.length) {
+      await platformPool.query(
+        `UPDATE sa.warehouse_operators SET active = $1 WHERE user_id = $2`, [active, userId]);
+    } else if (active) {
+      await platformPool.query(
+        `INSERT INTO sa.warehouse_operators (name, user_id, active)
+         VALUES ($1, $2, true)
+         ON CONFLICT (name) DO UPDATE SET user_id = EXCLUDED.user_id, active = true`,
+        [user.name, userId]);
+    }
+    // active:false with no existing row: already off, nothing to write.
+
+    await auditLog(req.user.id, 'warehouse_operator_changed', 'user', userId, { name: user.name, active });
+    res.json({ success: true, active });
+  } catch (e) {
+    console.error('[users/warehouse-operator]', e.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
