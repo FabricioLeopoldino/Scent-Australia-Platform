@@ -196,8 +196,18 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
             ))}
           </div>
 
+          {/* The answer first. Everything below it is the working — a person
+              deciding a purchase order should not have to assemble it from
+              three scenario tiles and two order columns that disagree. */}
+          <RecommendationPanel
+            rec={product.recommendation}
+            unit={product.unit || 'L'}
+            safeOrder={product.safeOrder}
+            suggestedOrder={product.suggestedOrder}
+          />
+
           {/* Demand streams breakdown */}
-          <div style={{ marginBottom: 16, padding: '14px 16px', background: 'rgba(255,255,255,0.04)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)' }}>
+          <div style={{ marginTop: 16, marginBottom: 16, padding: '14px 16px', background: 'rgba(255,255,255,0.04)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)' }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: '#cbd5e1', marginBottom: 10 }}>Demand Streams</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
               <div style={{ textAlign: 'center' }}>
@@ -648,7 +658,7 @@ export default function ReplenishmentDashboard({ user }) {
           [subtitle],
           [`Generated: ${dateStr} ${timeStr}   |   Products: ${rows.length}   |   Critical: ${rows.filter(p => p.safetyStatus === 'Critical').length}   |   Attention: ${rows.filter(p => p.safetyStatus === 'Attention').length}   |   Safe: ${rows.filter(p => p.safetyStatus === 'Safe').length}`],
           [],
-          ['Product Code', 'Product Name', 'Category', 'Supplier', 'Real Stock (L)', 'Safety Stock (L)', 'Avg Daily (L/d)', 'Sold 30d (L)', 'Forecast 120d (L)', 'Forecast Daily (L/d)', 'Projected Daily (L/d)', 'Projected Days', 'Days of Stock', 'Gap (d)', 'Safety Status', 'Order Qty', 'Lead Time (d)'],
+          ['Product Code', 'Product Name', 'Category', 'Supplier', 'Real Stock (L)', 'Safety Stock (L)', 'Avg Daily (L/d)', 'Sold 30d (L)', 'Forecast 120d (L)', 'Forecast Daily (L/d)', 'Projected Daily (L/d)', 'Projected Days', 'Days of Stock', 'Gap (d)', 'Safety Status', 'Order Qty', 'Lead Time (d)', 'Recommendation', 'Recommended Qty', 'Why'],
           ...rows.map(p => [
             p.productCode || '',
             p.name || '',
@@ -667,11 +677,18 @@ export default function ReplenishmentDashboard({ user }) {
             p.safetyStatus || '',
             p.safetyStatus !== 'Safe' && p.suggestedOrder > 0 ? p.suggestedOrder : '',
             p.leadTime ?? 30,
+            // The corrected answer, alongside the older columns rather than
+            // replacing them — see RecommendationCell for why they differ.
+            p.recommendation?.action === 'order' ? 'Order'
+              : p.recommendation?.action === 'hold' ? 'No order'
+              : p.recommendation?.action === 'count_first' ? 'Count first' : '',
+            p.recommendation?.action === 'order' ? p.recommendation.litres : '',
+            p.recommendation?.note || '',
           ])
         ]);
-        // 17 columns — one entry per header
-        ws['!cols'] = [{ wch: 14 }, { wch: 36 }, { wch: 18 }, { wch: 20 }, { wch: 14 }, { wch: 15 }, { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 20 }, { wch: 15 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 13 }, { wch: 14 }];
-        ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 16 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: 16 } }, { s: { r: 2, c: 0 }, e: { r: 2, c: 16 } }];
+        // 20 columns — one entry per header
+        ws['!cols'] = [{ wch: 14 }, { wch: 36 }, { wch: 18 }, { wch: 20 }, { wch: 14 }, { wch: 15 }, { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 20 }, { wch: 15 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 13 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 60 }];
+        ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 19 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: 19 } }, { s: { r: 2, c: 0 }, e: { r: 2, c: 19 } }];
         return ws;
       };
 
@@ -912,11 +929,16 @@ export default function ReplenishmentDashboard({ user }) {
               <th style={{ ...thStyle, textAlign: 'right' }}><Tooltip text="Lead time in days from supplier settings.">Lead (d)</Tooltip></th>
               <th style={thStyle}>Supplier</th>
               <th style={thStyle}><Tooltip text="Confidence based on retail history depth. High = 25+ days. Hover for detail.">Confidence</Tooltip></th>
+              <th style={{ ...thStyle, textAlign: 'right', background: 'rgba(59,130,246,0.10)', color: '#93c5fd' }}>
+                <Tooltip text="What to actually order. Unlike Order Exp./Safe, this does not add the two demand streams together — since every order now goes through Shopify, the Salesforce forecast and recorded sales are largely the same demand counted twice, so it takes the larger of the two. Covers lead time + buffer.">
+                  Recommendation
+                </Tooltip>
+              </th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 ? (
-              <tr><td colSpan={15} style={{ textAlign: 'center', padding: 48, color: '#94a3b8' }}>No products found for the selected filters.</td></tr>
+              <tr><td colSpan={16} style={{ textAlign: 'center', padding: 48, color: '#94a3b8' }}>No products found for the selected filters.</td></tr>
             ) : (
               filtered.map(p => (
                 <tr key={p.id} style={{ background: rowBg(p), borderLeft: rowBorderLeft(p) }}>
@@ -961,6 +983,9 @@ export default function ReplenishmentDashboard({ user }) {
                   <td style={{ ...tdStyle, color: 'rgba(232,234,242,0.45)', maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.supplier || '—'}</td>
                   <td style={tdStyle}>
                     <ConfidenceBadge confidence={p.dataConfidence} spikesRemoved={p.spikesRemoved || 0} cleanDays={p.cleanDays || 0} />
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: 'right', background: 'rgba(59,130,246,0.07)' }}>
+                    <RecommendationCell rec={p.recommendation} unit={p.unit} />
                   </td>
                 </tr>
               ))
@@ -1018,6 +1043,7 @@ function ImportReport({ result, onDismiss }) {
     ['inactive_product',  'product is not active',        (p) => `${p.code} (${p.status}) — ${p.litres} L`],
     ['duplicate_in_file', 'code appears twice',           (p) => `${p.code} — also on row ${p.firstSeenRow}`],
     ['unreadable_value',  'value is text, not a number',  (p) => `${p.code} — "${p.value}" was read as ${p.readAs}`],
+    ['negative_value',    'value is negative',            (p) => `${p.code} — "${p.value}"`],
   ].filter(([k]) => (r.problems?.[k] || []).length) : [];
 
   return (
@@ -1065,6 +1091,114 @@ function ImportReport({ result, onDismiss }) {
         <div style={{ fontSize: 11.5, color: 'rgba(232,234,242,0.45)', marginTop: 6 }}>
           Also skipped or blank: {r.notedCount} row{r.notedCount === 1 ? '' : 's'} with no code
           or no value — normal in this export.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── What to actually order ───────────────────────────────────────────────────
+//
+// WHY (2026-09-11). The owner asked the practical question: the manager needs
+// to raise a PO, can she trust this screen? The audit that day answered
+// direction yes, quantity no — and the two reasons were both measurable.
+//
+// The two existing columns are LEFT EXACTLY AS THEY WERE. This one sits beside
+// them with the corrected arithmetic, so nothing a planner already reads
+// silently changes underneath them, and the gap between old and new is visible
+// rather than something to work out by subtracting two screens.
+//
+//   Order Exp. / Order Safe   add retail + forecast. Since every order —
+//                             including the B2B service ones — now goes through
+//                             Shopify, those are largely the SAME demand
+//                             counted twice: ~16,300 L suggested against
+//                             ~12,000 L real, portfolio-wide.
+//   Order Safe also           assumes the single biggest day of the month
+//                             repeats every day for the whole lead time.
+//                             FRAG_0030 consumes 91 L a month; it asked for 582.
+//   Recommendation            takes the LARGER of the two streams, not the sum.
+//
+// Three actions, because "order 0 L" and "we have no idea" are different
+// answers and a purchasing decision should not have to guess which it is.
+function RecommendationCell({ rec, unit }) {
+  if (!rec) return <span style={{ color: 'rgba(232,234,242,0.25)' }}>—</span>;
+
+  // Plain `title`, not the Tooltip component: that one appends a grey "?"
+  // badge to whatever it wraps, which is right on a column header and wrong on
+  // every row of a table — 281 question marks down one column (code review).
+  if (rec.action === 'count_first') {
+    return (
+      <span title={rec.note || 'Nothing to calculate from. Count it before ordering.'}
+        style={{ fontSize: 11, fontWeight: 700, color: 'rgba(232,234,242,0.45)', cursor: 'help' }}>
+        count first
+      </span>
+    );
+  }
+  if (rec.action === 'hold') {
+    return (
+      <span title={`Stock already covers ${rec.coversDays} days at ${rec.dailyRate} ${unit}/day. ${rec.note}`}
+        style={{ fontSize: 11, fontWeight: 700, color: '#4ade80', cursor: 'help' }}>
+        no order
+      </span>
+    );
+  }
+  return (
+    <span title={`${rec.dailyRate} ${unit}/day × ${rec.coversDays} days, less what is on hand and on the way. ${rec.note}${rec.vsSafeOrder > 0 ? ` Order Safe asks for ${rec.vsSafeOrder} ${unit} more.` : ''}`}
+      style={{ fontSize: 12.5, fontWeight: 800, color: '#93c5fd', cursor: 'help' }}>
+      {rec.litres.toLocaleString()} {unit}
+    </span>
+  );
+}
+
+// The same recommendation, with its reasoning shown rather than hidden in a
+// tooltip — the modal is where somebody goes to decide, not to scan.
+function RecommendationPanel({ rec, unit, safeOrder, suggestedOrder }) {
+  if (!rec) return null;
+  const CONF = {
+    high: 'solid — 25+ days of sales history',
+    medium: 'reasonable — 15 to 24 days of sales history',
+    low: 'thin — only 5 to 14 days of sales history',
+    very_low: 'very thin — fewer than 5 days of sales history',
+    forecast_only: 'no sales history at all; the contract is the only signal',
+    no_data: 'nothing to calculate from',
+  };
+  const headline = rec.action === 'order' ? `Order ${rec.litres.toLocaleString()} ${unit}`
+    : rec.action === 'hold' ? 'No order needed'
+    : 'Count this one before ordering';
+
+  return (
+    <div style={{ marginTop: 16, padding: '14px 16px', borderRadius: 10,
+      background: 'rgba(59,130,246,0.09)', border: '1px solid rgba(59,130,246,0.3)' }}>
+      <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase', color: '#93c5fd', marginBottom: 6 }}>
+        Recommendation
+      </div>
+      <div style={{ fontSize: 19, fontWeight: 800, color: '#e8eaf2', marginBottom: 8 }}>{headline}</div>
+
+      {rec.action !== 'count_first' && (
+        <div style={{ fontSize: 12.5, color: 'rgba(232,234,242,0.8)', lineHeight: 1.7 }}>
+          <div>Based on <strong>{rec.dailyRate} {unit}/day</strong>, covering <strong>{rec.coversDays} days</strong> (lead time plus buffer).</div>
+          <div style={{ marginTop: 4 }}>{rec.note}</div>
+          <div style={{ marginTop: 4, color: 'rgba(232,234,242,0.55)' }}>
+            Confidence: {CONF[rec.confidence] || rec.confidence}.
+          </div>
+        </div>
+      )}
+      {rec.action === 'count_first' && (
+        <div style={{ fontSize: 12.5, color: 'rgba(232,234,242,0.8)', lineHeight: 1.7 }}>
+          {rec.note} A physical count is the only thing that will change that —
+          a demand rate of zero cannot be told apart from no signal at all.
+        </div>
+      )}
+
+      {/* Why this differs from the two columns beside it. Stated, not implied —
+          somebody who has been reading Order Safe for months deserves to know
+          what changed and by how much, rather than finding a smaller number. */}
+      {rec.action === 'order' && rec.vsSafeOrder > 0 && (
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(59,130,246,0.25)', fontSize: 11.5, color: 'rgba(232,234,242,0.6)', lineHeight: 1.6 }}>
+          <strong>Order Safe says {safeOrder?.toLocaleString()} {unit}</strong> — {rec.vsSafeOrder.toLocaleString()} {unit} more.
+          That column adds the Salesforce forecast on top of recorded sales, and
+          assumes the busiest day of the month repeats daily. Since B2B orders now
+          go through Shopify too, those are largely the same demand counted twice.
         </div>
       )}
     </div>

@@ -3850,7 +3850,7 @@ router.post('/forecast/import', upload.single('file'), async (req, res) => {
       let inserted = 0, skipped = 0;
       // Reported back so the person importing can fix the SOURCE file, which is
       // the only place these can actually be fixed.
-      const problems = { blank_code: [], unknown_product: [], inactive_product: [], zero_value: [], duplicate_in_file: [], unreadable_value: [] };
+      const problems = { blank_code: [], unknown_product: [], inactive_product: [], zero_value: [], duplicate_in_file: [], unreadable_value: [], negative_value: [] };
       const seen = new Map();
 
       for (let i = 0; i < dataRows.length; i++) {
@@ -3895,7 +3895,13 @@ router.post('/forecast/import', upload.single('file'), async (req, res) => {
         }
         // Not also "zero": a cell that could not be read is a broken cell, and
         // calling it a legitimate 0.00 in the footnote would excuse it.
-        if (!(forecast > 0) && !textButNotANumber) {
+        // A negative forecast is a source error, not a quiet zero. It lands in
+        // the database as-is and then coerces to 0 everywhere downstream, so
+        // calling it "normal in this export" in the footnote would excuse the
+        // one value nobody could have meant (code review, 11 Sep).
+        if (forecast < 0) {
+          problems.negative_value.push({ row: rowNumber, code: productCode, value: rawForecast });
+        } else if (!(forecast > 0) && !textButNotANumber) {
           problems.zero_value.push({ row: rowNumber, code: productCode, value: rawForecast });
         }
         if (seen.has(productCode))     problems.duplicate_in_file.push({ row: rowNumber, code: productCode, firstSeenRow: seen.get(productCode) });
@@ -3920,7 +3926,7 @@ router.post('/forecast/import', upload.single('file'), async (req, res) => {
       //
       // Needs attention = the four that mean a number the plan will use is
       // wrong or invisible. Noted = recorded in full, but never sets the tone.
-      const ATTENTION = ['unknown_product', 'inactive_product', 'duplicate_in_file', 'unreadable_value'];
+      const ATTENTION = ['unknown_product', 'inactive_product', 'duplicate_in_file', 'unreadable_value', 'negative_value'];
       const attentionRows = ATTENTION.flatMap((k) => problems[k]);
       // Flags and ROWS differ: one row can carry two problems at once (a code
       // no product knows AND no usable number), so counting flags as rows would
@@ -4517,6 +4523,72 @@ router.get('/dashboard/replenishment', async (req, res) => {
         ? Math.max(0, (conservativeAdjusted * (leadTime + ORDER_BUFFER_DAYS)) - effectiveStock)
         : 0;
 
+      // ════════════════════════════════════════════════════════════════════
+      // RECOMMENDATION — the one line somebody raising a PO can act on
+      //
+      // WHY (2026-09-11). The owner's question was the practical one: the
+      // manager needs to order oil, can she trust this screen? The audit that
+      // day said direction yes, quantity no. Two reasons, both measured:
+      //
+      //   · the two streams are ADDED, and since every order (including the
+      //     B2B service ones) now goes through Shopify, the Salesforce
+      //     forecast and the recorded sales are largely the same demand
+      //     counted twice — portfolio-wide that is ~16,300 L suggested against
+      //     ~12,000 L real
+      //   · "Order Safe" is a worst-case ceiling, not advice: it assumes the
+      //     single biggest day of the month repeats every day for the whole
+      //     lead time. FRAG_0030 consumes 91 L a month and it suggested 582 L
+      //
+      // This does NOT change either existing number — they stay exactly as
+      // they were, and a planner comparing screens will see no drift. It adds
+      // the honest answer beside them, on the corrected arithmetic: the two
+      // streams are the SAME demand measured two ways, so take the larger, not
+      // the sum.
+      // Trend-adjusted, so retail is compared with the contract on the same
+      // footing the Expected scenario already uses.
+      const trendedRetail = demand.retailDailyAvg * (demand.trendMultiplier || 1);
+      // Capped at the conservative rate. Without the cap the recommendation can
+      // legitimately exceed the buy-safe ceiling — trendedRetail carries a
+      // multiplier of up to 1.25 while `conservative` uses the UNtrended peak,
+      // so a steadily rising product with little day-to-day variance overtakes
+      // it. Recommending more than the worst case is not something this column
+      // should ever do, and the tooltip says as much (code review, 11 Sep).
+      const correctedDaily = Math.min(Math.max(trendedRetail, demand.b2bDaily), conservative);
+      const recommendedRaw = correctedDaily > 0
+        ? Math.max(0, (correctedDaily * (leadTime + ORDER_BUFFER_DAYS)) - effectiveStock)
+        : 0;
+
+      // Which stream is actually driving it, so the number can be argued with.
+      // Compared on the TRENDED value, because that is the one that decided the
+      // number — using the raw average could name retail as the driver on a
+      // declining product where the contract is what actually set the figure.
+      const bothKnown = trendedRetail > 0 && demand.b2bDaily > 0;
+      const ratio = bothKnown ? trendedRetail / demand.b2bDaily : null;
+      const basis = correctedDaily <= 0 ? 'nothing_known'
+        : !bothKnown ? (demand.b2bDaily > 0 ? 'forecast_only' : 'sales_only')
+        : (ratio >= 0.8 && ratio <= 1.25) ? 'both_agree'
+        : ratio > 1.25 ? 'sales_above_contract'
+        : 'contract_above_sales';
+
+      // Rounded before deciding, not after: `litres` is rounded for display, so
+      // deciding on the raw value could print "Order 0 L" for a 300 mL
+      // shortfall. And no demand signal at all is "count first" whatever the
+      // confidence label says — a rate of zero cannot be told apart from
+      // silence, and "no order needed at 0 L/day" reads as fact when it is not.
+      const recommendedDisplay = Math.round(recommendedRaw / (p.unit === 'mL' ? 1000 : 1));
+      const action = correctedDaily <= 0 ? 'count_first'
+        : recommendedDisplay <= 0 ? 'hold'
+        : 'order';
+
+      const NOTE = {
+        both_agree:           'Shopify and the contract agree on this one — the figure is as solid as this screen gets.',
+        sales_above_contract: 'Driven by actual sales, which are running above the contracted volume.',
+        contract_above_sales: 'Driven by the contract; recorded sales are lower, so this may be servicing that has not been logged.',
+        forecast_only:        'No sales history — this rests entirely on the Salesforce contract.',
+        sales_only:           'No contract figure for this code — this rests entirely on recorded sales.',
+        nothing_known:        'No sales history and no contract figure — there is nothing to calculate an order from.',
+      };
+
       // Convert mL → L only for OILS (unit === 'mL')
       // RAW_MATERIALS, MACHINES_SPARES, SCENT_MACHINES use 'units' — no conversion
       const isML = p.unit === 'mL';
@@ -4549,6 +4621,19 @@ router.get('/dashboard/replenishment', async (req, res) => {
         // ── Order quantities
         suggestedOrder:      r0(suggestedOrderRaw / R),   // based on expected
         safeOrder:           r0(safeOrderRaw / R),        // based on conservative
+        // ── The one line to act on. Corrected arithmetic, stated plainly.
+        recommendation: {
+          action,                                   // order | hold | count_first
+          litres:      recommendedDisplay,          // in the product's display unit
+          dailyRate:   r3(correctedDaily / R),
+          coversDays:  leadTime + ORDER_BUFFER_DAYS,
+          basis,
+          confidence:  demand.dataConfidence,
+          note:        NOTE[basis],
+          // What the older columns say, so the gap is visible rather than
+          // something a reader has to work out by subtracting two screens.
+          vsSafeOrder: r0((safeOrderRaw - recommendedRaw) / R),
+        },
         // ── Backward compat (StockManagement uses these)
         avgDailyDemand:      r3(avgDailyDemand / R),
         totalSold30d:        r1(demand.totalSold30d / R),

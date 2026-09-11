@@ -38,6 +38,7 @@ const GHOST = `ZZFC_GHOST_${STAMP}`.slice(0, 20);   // no product will exist
 const DEAD = `ZZFC_DEAD_${STAMP}`.slice(0, 20);     // product exists, inactive
 const ZERO = `ZZFC_ZERO_${STAMP}`.slice(0, 20);     // product exists, forecast is 0
 const TEXTY = `ZZFC_TXT_${STAMP}`.slice(0, 20);     // product exists, value typed as text
+const NEG = `ZZFC_NEG_${STAMP}`.slice(0, 20);       // product exists, forecast is negative
 const XLSX_PATH = join(ROOT, `_regression_forecast_${STAMP}.xlsx`);
 
 const pool = new Pool({
@@ -55,7 +56,7 @@ try {
   // Four disposable products. ZERO and TEXTY exist and are active on purpose:
   // without them their rows would ALSO be unknown codes, and the categories
   // could not be told apart in the assertions below.
-  for (const [code, status] of [[GOOD, 'active'], [DEAD, 'inactive'], [ZERO, 'active'], [TEXTY, 'active']]) {
+  for (const [code, status] of [[GOOD, 'active'], [DEAD, 'inactive'], [ZERO, 'active'], [TEXTY, 'active'], [NEG, 'active']]) {
     await pool.query(
       `INSERT INTO products (id, tag, "productCode", name, category, unit, "currentStock", status)
        VALUES ($1,$1,$1,$2,'OILS','mL',0,$3)`, [code, `${code} probe`, status]);
@@ -73,6 +74,7 @@ try {
     [GOOD, 3.0],           // same code twice in one file
     [ZERO, 0],             // exists, but no usable number
     [TEXTY, '1,234.5'],    // typed as TEXT — parseFloat reads this as 1
+    [NEG, -5],             // negative: a source error, not a quiet zero
     ['', 5.0],             // no code at all
   ];
   // book_append_sheet mutates and returns undefined — build, then write.
@@ -113,7 +115,7 @@ try {
 
   console.log('\n1. The import runs and reports a count, as it always did');
   check(res.ok, 'the endpoint answers 200', `HTTP ${res.status} ${JSON.stringify(r).slice(0, 200)}`);
-  check(r.inserted === 6, 'six codes imported (the blank-code row is the only skip)', `inserted=${r.inserted}`);
+  check(r.inserted === 7, 'seven codes imported (the blank-code row is the only skip)', `inserted=${r.inserted}`);
   check(r.skipped === 1, 'one row skipped', `skipped=${r.skipped}`);
 
   console.log('\n2. It now also reports WHAT it could not do');
@@ -122,8 +124,8 @@ try {
   // duplicate, and a value typed as text. The blank row and the legitimate
   // zero are reported separately as "noted" — the real export carries both
   // every single time, and an alarm that is always on is one nobody reads.
-  check(r.problemCount === 4, 'four flags that actually need attention', `problemCount=${r.problemCount}`);
-  check(r.rowsFlagged === 4, 'across four distinct rows — the number the screen shows', `rowsFlagged=${r.rowsFlagged}`);
+  check(r.problemCount === 5, 'five flags that actually need attention', `problemCount=${r.problemCount}`);
+  check(r.rowsFlagged === 5, 'across five distinct rows — the number the screen shows', `rowsFlagged=${r.rowsFlagged}`);
   check(r.notedCount === 2, 'the blank row and the zero value are noted, not alarmed', `notedCount=${r.notedCount}`);
   const P = r.problems || {};
   check((P.unknown_product || []).some((x) => x.code === GHOST),
@@ -141,6 +143,13 @@ try {
   check((P.unreadable_value || []).some((x) => x.code === TEXTY && x.readAs === 1),
     'a value typed as text is named, with what it was actually read as',
     JSON.stringify(P.unreadable_value));
+  // A negative is neither a quiet zero nor unreadable — it parses fine and is
+  // simply impossible, so it gets named rather than excused in the footnote.
+  check((P.negative_value || []).some((x) => x.code === NEG),
+    'a negative forecast is named as a problem, not filed under "normal"',
+    JSON.stringify(P.negative_value));
+  check((P.zero_value || []).every((x) => x.code !== NEG),
+    'and it is NOT also counted as a legitimate zero');
 
   console.log('\n3. The row numbers point at the real spreadsheet rows');
   // The sheet is: row 1 blank, row 2 header, row 3 GOOD, row 4 GHOST, row 5
