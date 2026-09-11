@@ -151,8 +151,39 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
   const dailySales = detail?.dailySales || [];
   const maxVol = dailySales.length > 0 ? Math.max(...dailySales.map(d => d.volume_l)) : 1;
 
-  // Days of stock progress bar
-  const daysStock = product.daysOfStockActual;
+  // Days of stock progress bar.
+  //
+  // Reads the CORRECTED rate, not daysOfStockActual — 2026-09-11, on seeing the
+  // screen with the new Recommendation on it. The two were telling a manager
+  // opposite things at once: "Order 243 L, covering 81 days" directly above
+  // "⚠ Stock will run out before order arrives — reorder immediately!".
+  //
+  // The alarm was reading the Expected scenario, which adds the two demand
+  // streams and therefore counts B2B twice: 20.5 days against a 21-day lead
+  // time. On the corrected rate it is 40.2 days — comfortable. Seven of the
+  // twenty-five products showing that alarm were false in exactly this way,
+  // and they were the biggest ones.
+  //
+  // A number on a screen can sit next to a different number and let a person
+  // judge. An alarm cannot: it says DO SOMETHING NOW, and the recommendation
+  // beside it said the opposite. So this one moves; the Expected and Safe
+  // columns stay exactly as they are, and the disagreement is stated below
+  // rather than quietly disappearing.
+  const recRate = product.recommendation?.dailyRate ?? 0;
+  const daysStock = recRate > 0 ? Math.round((product.realStock / recRate) * 10) / 10
+    : product.daysOfStockActual;
+  const oldDaysStock = product.daysOfStockActual;
+  const alarmWasFalse = oldDaysStock < product.leadTime && daysStock >= product.leadTime;
+  // ONE source for "does this need an order": the recommendation's own action.
+  //
+  // The first version of this derived its own coverage test here — effective
+  // stock ÷ rate ≥ leadTime — and that quietly reintroduced the exact
+  // contradiction the whole change exists to remove: the recommendation orders
+  // to leadTime PLUS the buffer, so a product could read "Order 41 L" in the
+  // panel and "No new order needed" four lines below it. Two formulas for one
+  // question is how they disagree; code review caught it inside the fix.
+  const recAction = product.recommendation?.action;
+  const incomingCovers = recAction === 'hold';
   const safeTarget = 90;
   const pct = Math.min(100, Math.max(0, (daysStock / safeTarget) * 100));
   const barColor = daysStock < 45 ? '#dc2626' : daysStock <= 90 ? '#d97706' : '#16a34a';
@@ -258,9 +289,34 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
               <span style={{ color: 'rgba(232,234,242,0.45)' }}>▲ Lead time ({product.leadTime}d)</span>
               <span>90 days (Safe)</span>
             </div>
-            {daysStock < product.leadTime && daysStock > 0 && (
+            {daysStock < product.leadTime && daysStock > 0 && !incomingCovers && (
               <div style={{ marginTop: 8, padding: '6px 12px', background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 8, fontSize: 12, color: '#f87171', fontWeight: 600 }}>
                 ⚠️ Stock will run out before order arrives — reorder immediately!
+              </div>
+            )}
+            {/* "Reorder immediately" is wrong when a reorder is already on the
+                way. FRAG_0072 holds 0.7 L on the shelf and 20 L inbound: the
+                bar reads 8.4 days and fired the alarm, while the recommendation
+                correctly said no order was needed. The bar still shows what is
+                physically there, which is honest — the alarm is what had to
+                stop shouting. Found by the regression written for the first
+                contradiction, on the same afternoon. */}
+            {daysStock < product.leadTime && daysStock > 0 && incomingCovers && (
+              <div style={{ marginTop: 8, padding: '6px 12px', background: 'rgba(37,99,235,0.1)', border: '1px solid rgba(37,99,235,0.3)', borderRadius: 8, fontSize: 12, color: '#93c5fd', fontWeight: 600 }}>
+                Low on the shelf{product.incomingStock > 0
+                  ? `, but ${product.incomingStock.toLocaleString()} ${product.unit} is already on its way — that covers ${Math.round((product.realStock + product.incomingStock) / recRate)} days`
+                  : ' at today\'s rate, but the corrected demand still covers the lead time'}. No new order needed.
+              </div>
+            )}
+            {/* Said out loud rather than silently not firing: this alarm used to
+                appear here, and somebody who has seen it before deserves to know
+                why it stopped, not to wonder whether the screen is broken. */}
+            {alarmWasFalse && (
+              <div style={{ marginTop: 8, padding: '6px 12px', background: 'rgba(148,163,184,0.08)', border: '1px solid rgba(148,163,184,0.22)', borderRadius: 8, fontSize: 11.5, color: 'rgba(232,234,242,0.6)', lineHeight: 1.5 }}>
+                The older Expected figure puts this at {oldDaysStock} days and would
+                have called it urgent. It counts the Salesforce forecast on top of
+                recorded sales, and since B2B orders go through Shopify too, that is
+                largely the same demand twice.
               </div>
             )}
             {daysStock <= 0 && (

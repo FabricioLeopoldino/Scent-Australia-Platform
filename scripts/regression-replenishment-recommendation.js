@@ -140,7 +140,51 @@ try {
     countFirst.filter((p) => p.recommendation.basis !== 'nothing_known')
       .slice(0, 3).map((p) => `${p.productCode}: ${p.recommendation.basis}`).join(' | '));
 
-  console.log('\n6. Each recommendation explains itself');
+  console.log('\n6. The modal cannot contradict itself');
+  // Found by looking at the real screen, not by reading code: FRAG_0137 showed
+  // "Order 243 L, covering 81 days" with "⚠ Stock will run out before order
+  // arrives — reorder immediately!" directly beneath it. The alarm read the
+  // Expected scenario (20.5 days) while the recommendation read the corrected
+  // one (40.2). Seven of twenty-five alarms were false the same way.
+  //
+  // The alarm now reads the recommendation's rate, so this asserts the two can
+  // never disagree again: wherever the recommendation says stock outlasts the
+  // lead time, the days-of-stock figure the alarm fires on must agree.
+  // The screen now takes BOTH the alarm and the "already on its way" banner
+  // from recommendation.action, so what has to be true is that `action` itself
+  // is coherent — in both directions. The first version of this check only
+  // asserted the 'hold' side and was a tautology: 'hold' already means stock
+  // covers lead + buffer, so "covers lead time" followed for free and the check
+  // would have passed with the entire UI change deleted (code review).
+  //
+  // Coverage is EFFECTIVE stock: shelf plus what is already ordered. Written
+  // against physical stock alone at first, and it caught FRAG_0072 — 0.7 L on
+  // the shelf, 20 L inbound, recommendation correctly holding while the alarm
+  // shouted. The recommendation was right, the check was wrong, and the screen
+  // was wrong too, so all three were fixed.
+  const effectiveOf = (p) => p.realStock + (p.incomingStock || 0);
+  const needOf = (p) => p.recommendation.dailyRate * p.recommendation.coversDays;
+  const rated = oils.filter((p) => p.recommendation.dailyRate > 0);
+
+  // The slack belongs on ONE side only. `litres` is rounded to whole units, so
+  // a shortfall under half a unit displays as 0 and becomes 'hold' — that is
+  // the rounding, and it is fine. Allowing the same slack the other way marked
+  // every small need as already covered: FRAG_0314 needs 0.8 L, holds none, and
+  // asking for 1 L is exactly right.
+  const holdButShort = rated.filter((p) => p.recommendation.action === 'hold'
+    && effectiveOf(p) < needOf(p) - 1);
+  check(holdButShort.length === 0,
+    '"no order needed" is only said when stock plus inbound really covers the period',
+    holdButShort.slice(0, 3).map((p) => `${p.productCode}: ${effectiveOf(p).toFixed(1)} vs ${needOf(p).toFixed(1)} needed`).join(' | '));
+  // The direction that actually breaks a screen: ordering while already covered
+  // would put "Order N L" beside "No new order needed".
+  const orderButCovered = rated.filter((p) => p.recommendation.action === 'order'
+    && effectiveOf(p) >= needOf(p));
+  check(orderButCovered.length === 0,
+    'and an order is never recommended for something already covered',
+    orderButCovered.slice(0, 3).map((p) => `${p.productCode}: has ${effectiveOf(p).toFixed(1)}, needs ${needOf(p).toFixed(1)}, still asks ${p.recommendation.litres}`).join(' | '));
+
+  console.log('\n7. Each recommendation explains itself');
   check(ordering.every((p) => p.recommendation.note && p.recommendation.note.length > 20),
     'every order carries a plain-English reason');
   const agree = oils.filter((p) => p.recommendation.basis === 'both_agree');
