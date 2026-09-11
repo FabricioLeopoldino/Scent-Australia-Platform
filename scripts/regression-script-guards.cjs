@@ -137,6 +137,11 @@ const GUARDED = /--apply|--commit|CLEANUP_DATABASE_URL|assertStoreNotLive|ROLLBA
     // the only way to exercise that path is to build one that does. Deletes
     // the transaction then the product, and fails if the row is still there.
     'regression-statement.js',
+    // Added 2026-09-11. Four disposable SA products (active, inactive, one with
+    // a zero forecast, one whose value is typed as text) plus the forecast rows
+    // its own .xlsx import creates, all stamped imported_by='regression'.
+    // Deletes all of them and the temp spreadsheet, then counts what is left.
+    'regression-forecast-import-report.js',
   ];
 
   const unguarded = [];

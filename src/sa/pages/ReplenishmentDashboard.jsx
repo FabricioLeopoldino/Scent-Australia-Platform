@@ -541,6 +541,7 @@ export default function ReplenishmentDashboard({ user }) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [importing, setImporting] = useState(false);
+  const [importStage, setImportStage] = useState('');
   const [importResult, setImportResult] = useState(null);
   const [importedBy, setImportedBy] = useState('');
   const [showSupplierModal, setShowSupplierModal] = useState(false);
@@ -585,18 +586,31 @@ export default function ReplenishmentDashboard({ user }) {
     if (!file) return;
     if (!importedBy.trim()) { showToast('Please enter your name before uploading.', 'warning'); e.target.value = ''; return; }
     setImporting(true); setImportResult(null);
+    // Named steps rather than a spinner: the upload is one request that can sit
+    // for several seconds on a large sheet, and a button that only says
+    // "Importing..." leaves the person guessing whether it is still alive.
+    setImportStage(`Reading ${file.name}…`);
     localStorage.setItem('replenishment_imported_by', importedBy);
     const formData = new FormData();
     formData.append('file', file);
     formData.append('imported_by', importedBy);
     try {
+      setImportStage('Checking every code against the catalogue…');
       const res = await fetch('/api/forecast/import', { method: 'POST', body: formData });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Import failed');
-      setImportResult({ type: 'success', message: `✅ Imported ${json.inserted} products (${json.skipped} skipped). Date: ${new Date(json.importDate).toLocaleDateString('en-AU', { day: '2-digit', month: '2-digit', year: 'numeric' })}` });
+      // No stage message here on purpose: fetchData flips the page into its own
+      // full-screen loader, which unmounts this banner — a stage set here would
+      // never be seen by anybody.
       await fetchData();
-    } catch (err) { setImportResult({ type: 'error', message: `❌ ${err.message}` }); }
-    finally { setImporting(false); e.target.value = ''; }
+      setImportResult({
+        type: json.problemCount > 0 ? 'warning' : 'success',
+        message: `Imported ${json.inserted} products (${json.skipped} skipped) — ${new Date(json.importDate).toLocaleDateString('en-AU', { day: '2-digit', month: '2-digit', year: 'numeric' })}`,
+        report: json,
+      });
+    // No ❌ here — ImportReport renders the icon; prefixing doubles it.
+    } catch (err) { setImportResult({ type: 'error', message: err.message }); }
+    finally { setImporting(false); setImportStage(''); e.target.value = ''; }
   };
 
   const handleExportPrevious = async () => {
@@ -832,10 +846,17 @@ export default function ReplenishmentDashboard({ user }) {
         >
           📊 Export Report (.xlsx)
         </button>
-        {importResult && (
-          <div style={{ padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 500, background: importResult.type === 'success' ? 'rgba(22,163,74,0.1)' : 'rgba(220,38,38,0.1)', color: importResult.type === 'success' ? '#4ade80' : '#f87171', border: `1px solid ${importResult.type === 'success' ? 'rgba(22,163,74,0.3)' : 'rgba(220,38,38,0.3)'}` }}>
-            {importResult.message}
+        {/* While it runs: say which step, not just that something is happening. */}
+        {importing && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 500,
+            background: 'rgba(37,99,235,0.12)', color: '#93c5fd', border: '1px solid rgba(37,99,235,0.35)' }}>
+            <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', border: '2px solid rgba(147,197,253,0.35)', borderTopColor: '#93c5fd', animation: 'spin 0.8s linear infinite' }} />
+            {importStage || 'Processing…'}
+            <style>{'@keyframes spin{to{transform:rotate(360deg)}}'}</style>
           </div>
+        )}
+        {!importing && importResult && (
+          <ImportReport result={importResult} onDismiss={() => setImportResult(null)} />
         )}
       </div>
 
@@ -964,6 +985,87 @@ export default function ReplenishmentDashboard({ user }) {
           loading={detailLoading}
           onClose={() => { setSelectedProduct(null); setProductDetail(null); }}
         />
+      )}
+    </div>
+  );
+}
+
+// ── What the import actually did, including what it could not do ─────────────
+//
+// WHY (2026-09-11). The importer reported two numbers — inserted and skipped —
+// and nothing else, so a forecast landing on a code no product carries was
+// accepted in silence. The live table was found holding a row literally coded
+// "Not Found" worth 102.7 L/120d, three codes belonging to no product at all,
+// and six on inactive ones: 191.9 L of B2B demand that no plan could ever see.
+// None of it was anybody's mistake at import time — the screen simply never
+// said. The owner's words: "seria bom quando alguém faz import saber qual erro
+// e por quê".
+//
+// Reports, never blocks: a forecast can legitimately arrive before somebody
+// creates the product. The row is kept and named, and the person importing can
+// fix the source file, which is the only place it can actually be fixed.
+function ImportReport({ result, onDismiss }) {
+  const r = result.report;
+  const tone = result.type === 'error' ? { bg: 'rgba(220,38,38,0.1)', bd: 'rgba(220,38,38,0.3)', fg: '#f87171' }
+    : result.type === 'warning'        ? { bg: 'rgba(234,179,8,0.1)',  bd: 'rgba(234,179,8,0.35)', fg: '#fbbf24' }
+    :                                    { bg: 'rgba(22,163,74,0.1)',  bd: 'rgba(22,163,74,0.3)',  fg: '#4ade80' };
+
+  // Only these three mean demand went somewhere the plan cannot see it. A
+  // trailing "(blank)" row and a legitimate 0.00 forecast are normal in the
+  // real export and are reported below as a quiet footnote, never as an alarm.
+  const groups = r ? [
+    ['unknown_product',   'no product carries this code', (p) => `${p.code} — ${p.litres} L`],
+    ['inactive_product',  'product is not active',        (p) => `${p.code} (${p.status}) — ${p.litres} L`],
+    ['duplicate_in_file', 'code appears twice',           (p) => `${p.code} — also on row ${p.firstSeenRow}`],
+    ['unreadable_value',  'value is text, not a number',  (p) => `${p.code} — "${p.value}" was read as ${p.readAs}`],
+  ].filter(([k]) => (r.problems?.[k] || []).length) : [];
+
+  return (
+    <div style={{ padding: '10px 16px', borderRadius: 8, fontSize: 13, background: tone.bg, border: `1px solid ${tone.bd}`, maxWidth: 620 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: tone.fg, fontWeight: 600 }}>
+        <span>{result.type === 'error' ? '❌' : result.type === 'warning' ? '⚠️' : '✅'}</span>
+        <span>{result.message}</span>
+        <button onClick={onDismiss} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: tone.fg, cursor: 'pointer', fontSize: 16, lineHeight: 1 }} title="Dismiss">×</button>
+      </div>
+
+      {r && r.problemCount > 0 && (
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${tone.bd}` }}>
+          <div style={{ color: 'rgba(232,234,242,0.85)', marginBottom: 6 }}>
+            {/* rowsFlagged, not problemCount: one row can carry two problems. */}
+            <strong>{r.rowsFlagged ?? r.problemCount}</strong> row{(r.rowsFlagged ?? r.problemCount) === 1 ? '' : 's'} need a look
+            {r.litresUnreachable > 0 && (
+              <> — <strong>{r.litresUnreachable} L</strong> of forecast landed on codes the plan cannot reach</>
+            )}
+          </div>
+          {groups.map(([key, label, fmt]) => (
+            <div key={key} style={{ marginBottom: 5 }}>
+              <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4, color: 'rgba(232,234,242,0.45)' }}>
+                {label} ({r.problems[key].length})
+              </div>
+              <div style={{ fontSize: 12, color: 'rgba(232,234,242,0.8)', lineHeight: 1.6 }}>
+                {r.problems[key].slice(0, 6).map((p, i) => (
+                  <div key={i}>row {p.row}: {fmt(p)}</div>
+                ))}
+                {r.problems[key].length > 6 && (
+                  <div style={{ color: 'rgba(232,234,242,0.45)' }}>…and {r.problems[key].length - 6} more</div>
+                )}
+              </div>
+            </div>
+          ))}
+          <div style={{ fontSize: 11.5, color: 'rgba(232,234,242,0.5)', marginTop: 6 }}>
+            Nothing was rejected — every row was imported. Fix these in the source file
+            so the next import is clean.
+          </div>
+        </div>
+      )}
+
+      {/* Normal in every real export: the trailing "(blank)" row, and codes
+          that exist with no consumption. Worth stating, never worth alarming. */}
+      {r && r.notedCount > 0 && (
+        <div style={{ fontSize: 11.5, color: 'rgba(232,234,242,0.45)', marginTop: 6 }}>
+          Also skipped or blank: {r.notedCount} row{r.notedCount === 1 ? '' : 's'} with no code
+          or no value — normal in this export.
+        </div>
       )}
     </div>
   );

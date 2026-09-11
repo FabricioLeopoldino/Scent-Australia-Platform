@@ -3791,6 +3791,14 @@ router.post('/forecast/import', upload.single('file'), async (req, res) => {
 
     // ── Parse raw rows (no header auto-detection — file has blank row 1, header on row 2)
     const rawRows = utils.sheet_to_json(sheet, { header: 1, defval: null });
+    // Where the sheet's used range actually starts. A genuinely empty first row
+    // is NOT part of it — the real Salesforce export gives `!ref = "A2:…"`, so
+    // rawRows[0] is already the header and a row number counted from the array
+    // index alone comes out one too low. Code review caught this; verified
+    // against the installed xlsx before fixing.
+    const rowOrigin = (() => {
+      try { return utils.decode_range(sheet['!ref']).s.r; } catch { return 0; }
+    })();
 
     // Find the actual header row (first row that contains 'productCode' or 'product_code')
     let headerRowIndex = -1;
@@ -3824,14 +3832,33 @@ router.post('/forecast/import', upload.single('file'), async (req, res) => {
 
     const importedBy = req.body.imported_by || 'system';
     const importDate = new Date();
+
+    // Every code the platform knows, and whether it is still active. An import
+    // that lands a forecast on a code no product carries is demand that will
+    // never be planned for and never be seen: on 2026-09-11 the live table held
+    // a row literally coded "Not Found" worth 102.7 L/120d, plus three codes
+    // belonging to no product at all and six on inactive ones — 191.9 L of B2B
+    // demand invisible, none of it reported at import time because the importer
+    // only ever counted rows.
+    const known = new Map((await pool.query(
+      `SELECT "productCode" AS code, status FROM products`)).rows.map(r => [r.code, r.status]));
+
     const client = await pool.connect();
 
     try {
       await client.query('BEGIN');
       let inserted = 0, skipped = 0;
+      // Reported back so the person importing can fix the SOURCE file, which is
+      // the only place these can actually be fixed.
+      const problems = { blank_code: [], unknown_product: [], inactive_product: [], zero_value: [], duplicate_in_file: [], unreadable_value: [] };
+      const seen = new Map();
 
-      for (const row of dataRows) {
+      for (let i = 0; i < dataRows.length; i++) {
+        const row = dataRows[i];
         if (!row || row.every(c => c === null || c === '')) continue; // skip empty rows
+        // 1-based, as the spreadsheet shows it: range origin + header position
+        // + 1 to make it 1-based + 1 to step past the header itself.
+        const rowNumber = rowOrigin + headerRowIndex + 2 + i;
 
         const productCode = row[productCodeIdx] ? String(row[productCodeIdx]).trim() : '';
         const rawForecast = row[forecastIdx];
@@ -3841,8 +3868,38 @@ router.post('/forecast/import', upload.single('file'), async (req, res) => {
         // Skip blank/invalid product codes (e.g. "(blank)" row at end)
         if (!productCode || productCode === '' || productCode.toLowerCase() === '(blank)') {
           skipped++;
+          problems.blank_code.push({ row: rowNumber, value: rawForecast });
           continue;
         }
+
+        // Reported, never rejected: a forecast can legitimately arrive before
+        // somebody creates the product. Silence is the defect, not the row.
+        const status = known.get(productCode);
+        if (status === undefined)      problems.unknown_product.push({ row: rowNumber, code: productCode, litres: forecast });
+        else if (status !== 'active')  problems.inactive_product.push({ row: rowNumber, code: productCode, litres: forecast, status });
+        // The one silent loss the rest of this report would miss. A cell typed
+        // as TEXT goes through parseFloat, and "1,234.5" becomes 1 — a
+        // thousand-fold understatement that lands as a perfectly ordinary
+        // positive number, so no other bucket here would ever question it.
+        // Numbers arrive from xlsx as numbers and skip this entirely.
+        //
+        // Number(), not a format regex: parseFloat stops at the first character
+        // it cannot read, Number() refuses the whole string. That is exactly the
+        // difference being hunted — and it still accepts ".5", "+12", "12." and
+        // "1e3", which a stricter pattern would have flagged as broken on a
+        // perfectly good file (code review caught that).
+        const textButNotANumber = typeof rawForecast === 'string'
+          && rawForecast.trim() !== '' && Number.isNaN(Number(rawForecast.trim()));
+        if (textButNotANumber) {
+          problems.unreadable_value.push({ row: rowNumber, code: productCode, value: rawForecast, readAs: forecast });
+        }
+        // Not also "zero": a cell that could not be read is a broken cell, and
+        // calling it a legitimate 0.00 in the footnote would excuse it.
+        if (!(forecast > 0) && !textButNotANumber) {
+          problems.zero_value.push({ row: rowNumber, code: productCode, value: rawForecast });
+        }
+        if (seen.has(productCode))     problems.duplicate_in_file.push({ row: rowNumber, code: productCode, firstSeenRow: seen.get(productCode) });
+        else seen.set(productCode, rowNumber);
 
         await client.query(
           `INSERT INTO forecasts (product_code, forecast_120_days, import_date, imported_by) VALUES ($1, $2, $3, $4)`,
@@ -3854,7 +3911,33 @@ router.post('/forecast/import', upload.single('file'), async (req, res) => {
       await client.query('COMMIT');
       try { await fs.unlink(req.file.path); } catch (_) {}
 
-      res.json({ success: true, inserted, skipped, importDate: importDate.toISOString(), importedBy });
+      // TWO TIERS, because not everything unusual is wrong. The real export
+      // ends with a "(blank)" row every single time, and the brief that
+      // prompted this work notes 5 of 167 codes legitimately carry 0.00 (they
+      // exist, they simply have no consumption). Counting those as problems
+      // would light the warning on every honest import, and a warning that is
+      // always on is one nobody reads.
+      //
+      // Needs attention = the four that mean a number the plan will use is
+      // wrong or invisible. Noted = recorded in full, but never sets the tone.
+      const ATTENTION = ['unknown_product', 'inactive_product', 'duplicate_in_file', 'unreadable_value'];
+      const attentionRows = ATTENTION.flatMap((k) => problems[k]);
+      // Flags and ROWS differ: one row can carry two problems at once (a code
+      // no product knows AND no usable number), so counting flags as rows would
+      // overstate how much of the file needs looking at.
+      const problemCount = attentionRows.length;
+      const rowsFlagged = new Set(attentionRows.map((p) => p.row)).size;
+      const notedCount = problems.blank_code.length + problems.zero_value.length;
+      const litresUnreachable = [...problems.unknown_product, ...problems.inactive_product]
+        .reduce((n, p) => n + (p.litres || 0), 0);
+
+      res.json({
+        success: true, inserted, skipped,
+        importDate: importDate.toISOString(), importedBy,
+        problemCount, rowsFlagged, notedCount,
+        litresUnreachable: Math.round(litresUnreachable * 10) / 10,
+        problems,
+      });
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
@@ -4180,7 +4263,11 @@ router.get('/dashboard/replenishment', async (req, res) => {
         SELECT DISTINCT ON (product_code)
           product_code, forecast_120_days, import_date
         FROM forecasts
-        ORDER BY product_code, import_date DESC
+        -- id DESC breaks the tie: one file can legitimately carry the same code
+        -- twice (the importer now reports that), and both rows land with the
+        -- SAME import_date, so without this the plan picked whichever the
+        -- planner happened to return — arbitrary, and silently so.
+        ORDER BY product_code, import_date DESC, id DESC
       `),
       pool.query(`SELECT import_date, imported_by FROM forecasts ORDER BY import_date DESC LIMIT 1`),
       pool.query(`SELECT id, name, lead_time, notes FROM suppliers ORDER BY name`),
