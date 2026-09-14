@@ -129,8 +129,16 @@ function SAContent({ user, onSwitchModule, onLogout }) {
       <div style={{ padding: '24px 2rem', position: 'relative', zIndex: 1 }}>
         <Switch>
           <Route path="/"><Dashboard /></Route>
-          <Route path="/products"><ProductManagement user={user} /></Route>
-          <Route path="/fragrance-library"><ProductManagement user={user} libraryMode /></Route>
+          {/* The keys are load-bearing. Both routes render the SAME component,
+              so without them React reconciles one into the other and KEEPS ALL
+              ITS STATE across the switch — the filtered list, the search box,
+              the category chips, an open modal. Walking from Products to the
+              Fragrance Library left the previous page's rows on screen, spare
+              parts and all, until a hard refresh forced a remount. The owner hit
+              this often enough to report it as "sempre tenho que dar Hard
+              Refresh". A key makes them two pages again. */}
+          <Route path="/products"><ProductManagement key="products" user={user} /></Route>
+          <Route path="/fragrance-library"><ProductManagement key="fragrance-library" user={user} libraryMode /></Route>
           <Route path="/machines"><MachineInventory user={user} /></Route>
           <Route path="/returns"><ProductReturns user={user} /></Route>
           <Route path="/cold-room-map"><ColdRoomMap user={user} /></Route>

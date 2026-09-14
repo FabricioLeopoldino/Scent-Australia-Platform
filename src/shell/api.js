@@ -44,8 +44,20 @@ export function getActiveModule() {
 // API base for the active module ('SA' → '/api/sa'); platform APIs use '/api/platform'.
 export function apiBase(module) {
   const m = module || getActiveModule();
-  if (m === 'SA') return '/api/sa';
+  // FRAGLIB is a VIEW over SA, not a module of its own — the Fragrance Library
+  // tile opens /sa/fragrance-library, which is ProductManagement in oils-locked
+  // mode and calls bare fetch('/api/products').
+  //
+  // WHY THIS LINE EXISTS (2026-09-15). It was missing, so 'FRAGLIB' fell through
+  // to the platform base and every call on that page became
+  // /api/platform/products — a route that does not exist. Opening the Fragrance
+  // Library from its own tile 404'd the whole page, and it stayed broken for as
+  // long as FRAGLIB was the stored active module, because the fault lives in
+  // localStorage rather than in the page.
+  if (m === 'SA' || m === 'FRAGLIB') return '/api/sa';
   if (m === 'SM' || m === 'MUSE' || m === 'OPS') return '/api/sm'; // MUSE (D7) and OPS (D11) are views over SM
+  // REPORTS lands here deliberately: that tile opens the cross-system report,
+  // which calls /api/platform/* — already exempt from rewriting.
   return '/api/platform';
 }
 

@@ -102,9 +102,15 @@ export default function ProductManagement({ user, libraryMode = false }) {
     fetchProducts();
   }, []);
 
+  // libraryMode belongs in here even though the routes now carry keys and force
+  // a remount. It is what the filter actually branches on, and leaving it out is
+  // what let the Fragrance Library show the Products page's rows: the prop
+  // changed, the component re-rendered, and this effect did not re-run because
+  // nothing it watched had moved. Correct on its own terms, so the page cannot
+  // break again if someone removes the keys.
   useEffect(() => {
     filterProducts();
-  }, [products, categoryFilter, searchTerm, showIncomingOnly, showInactive]);
+  }, [products, categoryFilter, searchTerm, showIncomingOnly, showInactive, libraryMode]);
 
   // Compute next Tag/ProductCode suggestion when category changes (new product only)
   useEffect(() => {
