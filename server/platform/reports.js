@@ -3,6 +3,28 @@ import { saPool, smPool, platformPool } from '../db.js';
 import { requireRole } from './auth.js';
 import { DIRECTION_SQL, BUSINESS_SQL, SA_SYSTEM_SQL, systemMatches, typesVisibleIn } from './movement-direction.js';
 
+// ── Timestamps ───────────────────────────────────────────────────────────
+// WHY THIS EXISTS (2026-09-15). `created_at` is `timestamp WITHOUT time zone`
+// holding UTC, and server/index.js sets process.env.TZ='Australia/Sydney'. So
+// the pg driver parsed each value as if it were already Sydney local, and every
+// timestamp in this report came out TEN HOURS EARLY — on both the screen and
+// the CSV. A Fig Tree movement made at 10:17 in the morning read "12:17 am",
+// and because it crosses midnight it also showed on the wrong DAY.
+//
+// The date filters had the mirror of the same fault: `created_at AT TIME ZONE
+// 'Australia/Sydney'` INTERPRETS a naive timestamp as Sydney rather than
+// converting a UTC one to it. Asking for 11 September returned 0 rows; the real
+// answer was 139. The warehouse works 08:00–18:00 Sydney, which is 22:00–08:00
+// UTC, so every single movement landed on the previous day. The owner's words
+// for the report were "cheio de bugs", and this is most of them: one root cause
+// wearing three faces.
+//
+// Handing out an explicit UTC instant fixes both readers at once — the screen's
+// fmt() already appends nothing when it sees a Z, and the CSV's Date parse gets
+// the right moment. Nothing downstream has to know about the trap.
+const UTC_ISO = (col) => `to_char(${col}, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at`;
+
+
 const router = express.Router();
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -24,8 +46,8 @@ const cap = (v, def, max) => Math.min(parseInt(v) || def, max);
 // /transactions route. Mutates params, returns the extended query string.
 function txFilters(base, { from, to, type, search }, params) {
   let q = base;
-  if (from)   { params.push(from);   q += ` AND (t.created_at AT TIME ZONE 'Australia/Sydney')::date >= $${params.length}::date`; }
-  if (to)     { params.push(to);     q += ` AND (t.created_at AT TIME ZONE 'Australia/Sydney')::date <= $${params.length}::date`; }
+  if (from)   { params.push(from);   q += ` AND (t.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Australia/Sydney')::date >= $${params.length}::date`; }
+  if (to)     { params.push(to);     q += ` AND (t.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Australia/Sydney')::date <= $${params.length}::date`; }
   if (type)   { params.push(type);   q += ` AND t.type = $${params.length}`; }
   // Notes included deliberately: the Shopify order number ("Shopify Order
   // #1032.1") exists ONLY in the note, so without this, searching the very
@@ -35,7 +57,7 @@ function txFilters(base, { from, to, type, search }, params) {
 }
 
 const SA_TX = `
-  SELECT t.id::text AS id, t.created_at, COALESCE(u.name, 'System') AS performed_by,
+  SELECT t.id::text AS id, ${UTC_ISO('t.created_at')}, COALESCE(u.name, 'System') AS performed_by,
          t.type, t.category, t.product_name, t.product_code,
          t.quantity, t.unit, t.balance_after, t.notes, ${SA_SYSTEM_SQL()} AS system,
          ${DIRECTION_SQL()} AS direction
@@ -43,7 +65,7 @@ const SA_TX = `
   WHERE 1=1`;
 
 const SM_TX = `
-  SELECT t.id::text AS id, t.created_at, COALESCE(u.name, 'System') AS performed_by,
+  SELECT t.id::text AS id, ${UTC_ISO('t.created_at')}, COALESCE(u.name, 'System') AS performed_by,
          t.type, t.category, t.product_name, t.product_code,
          t.quantity, t.unit, t.balance_after, t.notes,
          CASE WHEN p.segment = 'MUSE' THEN 'MUSE' ELSE 'Scented Merchandise' END AS system,
@@ -93,21 +115,21 @@ async function fetchHistory({ system, from, to, type, search, limit }) {
 // of duplication that let the webhook topics and format lists drift apart.
 function auditFilters(base, { from, to, action, search }, params, nameExpr = 'al.entity_name') {
   let q = base;
-  if (from)   { params.push(from);   q += ` AND (al.created_at AT TIME ZONE 'Australia/Sydney')::date >= $${params.length}::date`; }
-  if (to)     { params.push(to);     q += ` AND (al.created_at AT TIME ZONE 'Australia/Sydney')::date <= $${params.length}::date`; }
+  if (from)   { params.push(from);   q += ` AND (al.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Australia/Sydney')::date >= $${params.length}::date`; }
+  if (to)     { params.push(to);     q += ` AND (al.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Australia/Sydney')::date <= $${params.length}::date`; }
   if (action) { params.push(action); q += ` AND al.action = $${params.length}`; }
   if (search) { params.push(`%${search}%`); q += ` AND (${nameExpr} ILIKE $${params.length} OR al.action ILIKE $${params.length})`; }
   return q;
 }
 
 const SA_AUDIT = `
-  SELECT al.id::text AS id, al.created_at, COALESCE(u.name, 'System') AS performed_by,
+  SELECT al.id::text AS id, ${UTC_ISO('al.created_at')}, COALESCE(u.name, 'System') AS performed_by,
          al.action, al.entity_type, al.entity_name, al.details::text AS details, 'SA' AS system
   FROM audit_log al LEFT JOIN users u ON al.user_id = u.id
   WHERE 1=1`;
 
 const SM_AUDIT = `
-  SELECT al.id::text AS id, al.created_at, COALESCE(u.name, 'System') AS performed_by,
+  SELECT al.id::text AS id, ${UTC_ISO('al.created_at')}, COALESCE(u.name, 'System') AS performed_by,
          al.action, al.entity_type, al.entity_name, al.details::text AS details,
          CASE WHEN al.details->>'segment' = 'MUSE' THEN 'MUSE' ELSE 'Scented Merchandise' END AS system
   FROM audit_log al LEFT JOIN users u ON al.user_id = u.id
@@ -124,7 +146,7 @@ const SM_AUDIT = `
 const PF_NAME = `COALESCE(al.details->>'name', al.details->>'fragrance', al.details->>'sm',
                           al.entity_type || ' #' || al.entity_id)`;
 const PF_AUDIT = `
-  SELECT al.id::text AS id, al.created_at, COALESCE(u.name, 'System') AS performed_by,
+  SELECT al.id::text AS id, ${UTC_ISO('al.created_at')}, COALESCE(u.name, 'System') AS performed_by,
          al.action, al.entity_type, ${PF_NAME} AS entity_name,
          al.details::text AS details, 'Platform' AS system
   FROM platform.audit_log al LEFT JOIN platform.users u ON al.user_id = u.id
@@ -157,7 +179,11 @@ function sendCsv(res, name, header, cols, rows, dateCol) {
   for (const r of rows) lines.push(cols.map(c => csvCell(c === dateCol ? syd(r[c]) : r[c])).join(','));
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${name}-${new Date().toISOString().slice(0, 10)}.csv"`);
-  res.send(lines.join('\r\n'));
+  // The leading BOM is what makes Excel read this as UTF-8. The charset in the
+  // header above does not reach it: a downloaded .csv is opened from disk, and
+  // Excel on Windows then assumes the system code page. Every em-dash in the
+  // notes — "Shopify Order #1035.1 — fulfilled" — arrived as "â€"".
+  res.send('﻿' + lines.join('\r\n'));
 }
 
 
@@ -201,7 +227,7 @@ async function lastBalanceAsOf(pool, code, date, { inclusive, requireNonNull = f
   const r = await pool.query(
     `SELECT balance_after::float b FROM transactions
       WHERE product_code = $1 ${notNull}
-        AND (created_at AT TIME ZONE 'Australia/Sydney')::date ${op} $2::date
+        AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Australia/Sydney')::date ${op} $2::date
       ORDER BY created_at DESC, id DESC LIMIT 1`, [code, date]);
   return r.rows[0];
 }
@@ -254,7 +280,7 @@ router.get('/statement', requireRole('root', 'admin'), async (req, res) => {
     const firstRow = openRow ? null : (await pool.query(
       `SELECT balance_after::float b, quantity::float q, ${DIRECTION_SQL('type')} AS direction
          FROM transactions WHERE product_code = $1
-           ${from ? "AND (created_at AT TIME ZONE 'Australia/Sydney')::date >= '" + String(from).replace(/'/g, '') + "'::date" : ''}
+           ${from ? "AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Australia/Sydney')::date >= '" + String(from).replace(/'/g, '') + "'::date" : ''}
         ORDER BY created_at ASC, id ASC LIMIT 1`, [code])).rows[0];
 
     // Whether the product has EVER been received is the thing worth flagging —
@@ -278,8 +304,8 @@ router.get('/statement', requireRole('root', 'admin'), async (req, res) => {
     // and `/t./g` would have mangled every word containing a t.
     const params = [code];
     let period = '';
-    if (from) { params.push(from); period += ` AND (e.created_at AT TIME ZONE 'Australia/Sydney')::date >= $${params.length}::date`; }
-    if (to)   { params.push(to);   period += ` AND (e.created_at AT TIME ZONE 'Australia/Sydney')::date <= $${params.length}::date`; }
+    if (from) { params.push(from); period += ` AND (e.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Australia/Sydney')::date >= $${params.length}::date`; }
+    if (to)   { params.push(to);   period += ` AND (e.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Australia/Sydney')::date <= $${params.length}::date`; }
 
     // Each movement's SIGNED EFFECT, taken from what the balance actually did —
     // not from the recorded magnitude and not from the type.
