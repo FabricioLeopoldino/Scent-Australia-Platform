@@ -10,6 +10,16 @@ import { isLowStock } from '../utils/stockStatus';
 import OperatorPicker from '../components/OperatorPicker';
 import { reasonsFor } from '../../../shared/stock-reasons.js';
 
+// Colours for the replenishment status shown beside a product. A lookup rather
+// than nested ternaries because there are now four values: "No data" was added
+// 2026-09-14 and would otherwise have painted green — the one thing it is not.
+const SAFETY_BADGE = {
+  Critical:  { background: 'rgba(220,38,38,0.15)',  color: '#f87171', border: '1px solid rgba(220,38,38,0.3)' },
+  Attention: { background: 'rgba(217,119,6,0.15)',  color: '#fbbf24', border: '1px solid rgba(217,119,6,0.3)' },
+  Safe:      { background: 'rgba(22,163,74,0.15)',  color: '#4ade80', border: '1px solid rgba(22,163,74,0.3)' },
+  'No data': { background: 'rgba(148,163,184,0.15)', color: '#94a3b8', border: '1px solid rgba(148,163,184,0.3)' },
+};
+
 export default function StockManagement({ user }) {
   const showToast = useToast();
   const [confirmState, setConfirmState] = useState(null);
@@ -347,17 +357,7 @@ export default function StockManagement({ user }) {
                           NEGATIVE STOCK
                         </span>
                       ) : safetyMap[product.id] ? (
-                        <span className="badge" style={{
-                          background: safetyMap[product.id] === 'Critical' ? 'rgba(220,38,38,0.15)'
-                            : safetyMap[product.id] === 'Attention' ? 'rgba(217,119,6,0.15)'
-                            : 'rgba(22,163,74,0.15)',
-                          color: safetyMap[product.id] === 'Critical' ? '#f87171'
-                            : safetyMap[product.id] === 'Attention' ? '#fbbf24'
-                            : '#4ade80',
-                          border: `1px solid ${safetyMap[product.id] === 'Critical' ? 'rgba(220,38,38,0.3)'
-                            : safetyMap[product.id] === 'Attention' ? 'rgba(217,119,6,0.3)'
-                            : 'rgba(22,163,74,0.3)'}`,
-                        }}>
+                        <span className="badge" style={SAFETY_BADGE[safetyMap[product.id]] || SAFETY_BADGE.Safe}>
                           {safetyMap[product.id]}
                         </span>
                       ) : (

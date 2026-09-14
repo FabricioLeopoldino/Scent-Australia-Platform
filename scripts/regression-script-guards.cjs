@@ -142,6 +142,13 @@ const GUARDED = /--apply|--commit|CLEANUP_DATABASE_URL|assertStoreNotLive|ROLLBA
     // its own .xlsx import creates, all stamped imported_by='regression'.
     // Deletes all of them and the temp spreadsheet, then counts what is left.
     'regression-forecast-import-report.js',
+    // Added 2026-09-14. Three disposable SA oils (ZZFF_*) and one forecast row
+    // each: one dated 200 days back, one dated today, one 200 days back but
+    // worth zero litres. They exist to prove the staleness warning fires on the
+    // first, stays quiet on the second, and — the point of the third — does not
+    // shout about an old forecast that moves no number. Deleted in the finally
+    // block, which then counts what is left and fails if anything remains.
+    'regression-forecast-freshness.js',
   ];
 
   const unguarded = [];

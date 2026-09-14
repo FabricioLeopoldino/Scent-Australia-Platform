@@ -10,6 +10,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 import express from 'express';
+import { calcSmartDemand } from '../../shared/demand-calculator.js';
 import { isValidReason, reasonLabel } from '../../shared/stock-reasons.js';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
@@ -81,6 +82,11 @@ const storage = multer.diskStorage({
 // only until its debit row ages out of the 30-day window (buy-safe, matches the
 // DP Conservative scenario). Single source of truth so the replenishment query
 // and the per-product detail query can never drift apart.
+// A forecast import is expected monthly, so 35 days without one is a missed
+// cycle rather than ordinary lateness. Used for both the order penalty and the
+// warning on screen, so the two can never disagree.
+const FORECAST_STALE_DAYS = 35;
+
 const DEMAND_TX_TYPES = [
   'remove', 'shopify_sale', 'sale',
   'muse_production', 'sm_std_production', 'sm_major_production',
@@ -4267,7 +4273,13 @@ router.get('/dashboard/replenishment', async (req, res) => {
       // Latest forecast per product
       pool.query(`
         SELECT DISTINCT ON (product_code)
-          product_code, forecast_120_days, import_date
+          product_code, forecast_120_days, import_date,
+          -- Same reason as the newest-import query below: import_date is stored
+          -- naive-UTC, so subtracting it from Date.now() in JS on a Sydney
+          -- machine is off by ten hours and lands a day out either side of
+          -- midnight. This number is now shown per row and colours a warning,
+          -- so it is worked out where the timezone is known.
+          ((NOW() AT TIME ZONE 'Australia/Sydney')::date - import_date::date) AS age_days
         FROM forecasts
         -- id DESC breaks the tie: one file can legitimately carry the same code
         -- twice (the importer now reports that), and both rows land with the
@@ -4275,7 +4287,17 @@ router.get('/dashboard/replenishment', async (req, res) => {
         -- planner happened to return — arbitrary, and silently so.
         ORDER BY product_code, import_date DESC, id DESC
       `),
-      pool.query(`SELECT import_date, imported_by FROM forecasts ORDER BY import_date DESC LIMIT 1`),
+      // age_days comes from Postgres in Sydney time on purpose. Working it out
+      // in JS from the returned timestamp is the ten-hour trap: import_date is
+      // stored naive-UTC and the driver hands it over as if it were local.
+      // import_date_syd is sent as TEXT for the same reason: the screen shows
+      // the date beside the age, and a date built with new Date() in the browser
+      // can land a day off the age computed here. Two numbers that disagree on
+      // the same card read as a broken screen.
+      pool.query(`SELECT import_date, imported_by,
+                         import_date::date::text AS import_date_syd,
+                         ((NOW() AT TIME ZONE 'Australia/Sydney')::date - import_date::date) AS age_days
+                  FROM forecasts ORDER BY import_date DESC LIMIT 1`),
       pool.query(`SELECT id, name, lead_time, notes FROM suppliers ORDER BY name`),
       // Pending purchase orders: quantity still on the way per product
       pool.query(`
@@ -4298,7 +4320,10 @@ router.get('/dashboard/replenishment', async (req, res) => {
     for (const row of forecastResult.rows) {
       forecastMap[row.product_code] = {
         forecast_120_days: parseFloat(row.forecast_120_days) || 0,
-        import_date: row.import_date
+        import_date: row.import_date,
+        // Carried through explicitly: this map rebuilds the row field by field,
+        // so a column added to the query alone arrives as undefined downstream.
+        age_days: Number(row.age_days)
       };
     }
 
@@ -4320,132 +4345,12 @@ router.get('/dashboard/replenishment', async (req, res) => {
     //   Conservative = peak retail + 100% B2B forecast  (buy-safe decision)
     //   Expected     = avg retail  + 100% B2B forecast  (normal planning)
     //   Optimistic   = min retail  + 70%  B2B forecast  (best-case scenario)
-    // safetyStatus is driven by the Conservative scenario (worst-case protection).
+    // safetyStatus is NOT driven by any of these three — see the block where it
+    // is computed, below. It used to be driven by Conservative, which is the
+    // double count, and that is exactly what changed on 2026-09-14.
     // ════════════════════════════════════════════════════════════════════════
-    const calcSmartDemand = (dailyEntries, forecastDaily) => {
-      // ── Stream 1: Retail (Shopify / transaction history)
-      // Uses weighted average: last 7 days (60%) vs days 8-30 (40%)
-      // This detects trending products (growing or declining demand).
-      // Falls back to flat average when only one period has data.
-      const PERIOD_DAYS = 30;
-      const RECENT_DAYS = 7;
-      const RECENT_WEIGHT = 0.6;
-      const OLDER_WEIGHT  = 0.4;
-
-      let retailAvg = 0, retailPeak = 0, retailMin = 0, cleanDays = 0, totalSold30d = 0;
-      let meanVol = 0, stddev = 0;
-      let recentEntries = [], olderEntries = [];
-      let recentAvg = 0, olderAvg = 0;
-      if (dailyEntries && dailyEntries.length > 0) {
-        const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
-        const cutoffDate = new Date(todayStr);
-        cutoffDate.setDate(cutoffDate.getDate() - RECENT_DAYS);
-        const recentCutoffStr = cutoffDate.toISOString().slice(0, 10);
-
-        recentEntries = dailyEntries.filter(e => e.date >= recentCutoffStr);
-        olderEntries  = dailyEntries.filter(e => e.date <  recentCutoffStr);
-        const allVolumes    = dailyEntries.map(e => e.volume);
-
-        totalSold30d = allVolumes.reduce((a, b) => a + b, 0);
-        cleanDays    = allVolumes.length;
-        const freq   = cleanDays / PERIOD_DAYS;
-
-        // Weighted average blending recent trend with historical baseline
-        let weightedDailyAvg;
-        if (recentEntries.length > 0 && olderEntries.length > 0) {
-          recentAvg = recentEntries.reduce((a, e) => a + e.volume, 0) / RECENT_DAYS;
-          olderAvg  = olderEntries.reduce((a, e) => a + e.volume, 0) / (PERIOD_DAYS - RECENT_DAYS);
-          weightedDailyAvg = recentAvg * RECENT_WEIGHT + olderAvg * OLDER_WEIGHT;
-        } else {
-          // Only one period has data: use flat average (no trend to detect)
-          weightedDailyAvg = totalSold30d / PERIOD_DAYS;
-        }
-
-        retailAvg  = weightedDailyAvg;
-
-        meanVol  = totalSold30d / PERIOD_DAYS; // true daily rate over the period
-        const zeroDays = Math.max(0, PERIOD_DAYS - cleanDays); // guard: SQL may return >30 sale-days
-        const sumSqDiff = allVolumes.reduce((sum, v) => sum + Math.pow(v - meanVol, 2), 0)
-                        + zeroDays * Math.pow(meanVol, 2); // (0 − mean)² for zero-sale days
-        const variance  = sumSqDiff / PERIOD_DAYS;
-        stddev    = Math.sqrt(variance);
-        retailPeak = meanVol + 1.5 * stddev;
-
-        // Physical cap: the conservative daily retail rate cannot exceed the
-        // single highest observed day. For sparse products (few cleanDays),
-        // the stddev can theoretically exceed the max real observation — this
-        // prevents the formula from producing a statistically impossible result.
-        const maxObservedDay = Math.max(...allVolumes);
-        if (retailPeak > maxObservedDay) retailPeak = maxObservedDay;
-
-        // Sparse product cap: with few sale days, zeroDays dominate stddev
-        // making retailPeak unrealistically high (e.g. 1122 mL/d from 2 sale days).
-        // Cap relative to the true mean to keep conservative scenario grounded.
-        // < 5 sale days → cap at 2× mean;  5–14 sale days → cap at 3× mean.
-        if      (cleanDays < 5  && meanVol > 0) retailPeak = Math.min(retailPeak, meanVol * 2);
-        else if (cleanDays < 15 && meanVol > 0) retailPeak = Math.min(retailPeak, meanVol * 3);
-
-        // Optimistic minimum: normalize by sales frequency so sporadic products
-        // don't appear to have a high minimum daily rate.
-        // e.g. min sale of 10L on 1/30 days → 0.33 L/day, not 10 L/day.
-        retailMin = Math.min(...allVolumes) * (cleanDays / PERIOD_DAYS);
-      }
-
-      // ── Stream 2: B2B (Salesforce forecast)
-      const b2bDaily = (forecastDaily != null && forecastDaily > 0) ? forecastDaily : 0;
-
-      // ── Data confidence (based on retail history depth)
-      let dataConfidence;
-      if      (cleanDays >= 25) dataConfidence = 'high';
-      else if (cleanDays >= 15) dataConfidence = 'medium';
-      else if (cleanDays >= 5)  dataConfidence = 'low';
-      else if (cleanDays > 0)   dataConfidence = 'very_low';
-      else if (b2bDaily > 0)    dataConfidence = 'forecast_only';
-      else                      dataConfidence = 'no_data';
-
-      // ── 3 Scenarios: retail stream + B2B stream (separated, not blended)
-      // No artificial floor — products with zero demand correctly show infinite days of stock.
-      // Division-by-zero is handled in todays() below.
-
-      // Trend multiplier: se últimos 7d acelerando ou desacelerando vs histórico
-      // amortecido em ±25% para não reagir excessivamente a ruído de curto prazo
-      let trendMultiplier = 1.0;
-      if (recentEntries && recentEntries.length > 0 &&
-          olderEntries  && olderEntries.length  > 0 &&
-          olderAvg > 0) {
-        const ratio = recentAvg / olderAvg;
-        trendMultiplier = Math.min(1.25, Math.max(0.75, ratio));
-      }
-
-      // CV-based dynamic buffer (usado abaixo na ordem, exposto via return)
-      const cv = meanVol > 0 ? stddev / meanVol : 1;
-      // Cap buffer by data confidence: sparse products always have high CV (many zeros),
-      // but ordering 75 buffer days based on 2 data points is statistically unsound.
-      const bufferCap = cleanDays >= 25 ? 75 : cleanDays >= 15 ? 60 : cleanDays >= 5 ? 45 : 30;
-      const dynamicBufferDays = Math.round(Math.min(bufferCap, Math.max(30, 30 + (45 * Math.min(cv, 2) / 2))));
-
-      const conservative = retailPeak                    + b2bDaily;
-      const expected     = (retailAvg * trendMultiplier) + b2bDaily;
-      const optimistic   = retailMin                     + (b2bDaily * 0.7);
-
-      // backward-compat: avgDailyDemand = expected scenario
-      const avgDailyDemand = expected;
-
-      return {
-        avgDailyDemand,          // kept for backward compat (StockManagement)
-        retailDailyAvg:  retailAvg,
-        retailDailyPeak: retailPeak,
-        retailDailyMin:  retailMin,
-        b2bDaily,
-        scenarios: { conservative, expected, optimistic },
-        trendMultiplier,
-        dynamicBufferDays,
-        cleanDays,
-        totalSold30d,
-        dataConfidence,
-        spikesRemoved: 0
-      };
-    };
+    // calcSmartDemand now lives in shared/demand-calculator.js — see the header
+    // there for why. Unchanged arithmetic; the backtest imports the same function.
 
     // ── Build final product data
     const data = productsResult.rows.map(p => {
@@ -4481,15 +4386,6 @@ router.get('/dashboard/replenishment', async (req, res) => {
       // Safety stock = expected × lead time × 1.5
       const safetyStockLevel = expected * leadTime * 1.5;
 
-      // ── Safety Status driven by Conservative scenario (worst-case protection)
-      const BUFFER_CRITICAL  = leadTime + 10;
-      const BUFFER_ATTENTION = leadTime + 45;
-
-      const safetyStatus = realStock <= 0                ? 'Critical'
-        : daysConservative < BUFFER_CRITICAL             ? 'Critical'
-        : daysConservative < BUFFER_ATTENTION            ? 'Attention'
-        : 'Safe';
-
       const minStockLevel  = parseFloat(p.minStockLevel) || 0;
       const incomingStock  = poIncomingMap[p.id] || 0;
       const effectiveStock = realStock + incomingStock;
@@ -4502,12 +4398,27 @@ router.get('/dashboard/replenishment', async (req, res) => {
 
       // Forecast staleness: penalidade crescente no conservador se forecast > 35 dias.
       // Atualização mensal esperada → após 60d sem update algo está errado.
-      const forecastAgeDays = fc
-        ? Math.floor((Date.now() - new Date(fc.import_date)) / 86400000)
-        : 0;
-      const stalenessFactor = forecastAgeDays > 35
-        ? Math.min(1.25, 1 + ((forecastAgeDays - 35) / 200))
+      const forecastAgeDays = fc ? Number(fc.age_days) : 0;
+
+      // One threshold, named once, so the order maths and the screen cannot
+      // drift apart: the import is monthly, so 35 days is a missed cycle.
+      const forecastPastDue = !!fc && forecastAgeDays > FORECAST_STALE_DAYS;
+
+      // The order penalty keeps EXACTLY the condition it has always had. It is
+      // tempting to also require b2bDaily > 0 here — inflating a scenario
+      // because a forecast of zero got old is arguable at best — but that would
+      // change the safe-order figure on 75 products as a side effect of a
+      // display change, unmeasured. Left alone deliberately; noted in the PRD
+      // as its own question.
+      const stalenessFactor = forecastPastDue
+        ? Math.min(1.25, 1 + ((forecastAgeDays - FORECAST_STALE_DAYS) / 200))
         : 1.0;
+
+      // What the SCREEN flags is narrower, and that is the whole point of it
+      // being separate. 79 oils carry a forecast row past the threshold, but 75
+      // of those rows say zero: old, and moving no number. An amber mark on a
+      // quarter of the screen to point at four products is wallpaper.
+      const forecastStale = forecastPastDue && demand.b2bDaily > 0;
       const conservativeAdjusted = conservative * stalenessFactor;
 
       // Normal order: based on expected scenario
@@ -4575,10 +4486,55 @@ router.get('/dashboard/replenishment', async (req, res) => {
       // shortfall. And no demand signal at all is "count first" whatever the
       // confidence label says — a rate of zero cannot be told apart from
       // silence, and "no order needed at 0 L/day" reads as fact when it is not.
-      const recommendedDisplay = Math.round(recommendedRaw / (p.unit === 'mL' ? 1000 : 1));
+      //
+      // A shortfall on a product that is ACTUALLY running out never rounds away.
+      // FRAG_0180 sits at 0 L against a 0.2 L/month trickle: the shortfall is
+      // 340 mL, which rounded to "Order 0 L" and therefore to "hold" — on a
+      // product with nothing on the shelf. The badge said Critical and the
+      // recommendation said do nothing, which is the exact contradiction this
+      // week's work exists to remove. 1 L orders are ordinary here (the owner:
+      // "já vi pedidos de 1L vindo"), so a real stockout gets a real number.
+      // Rounding dust on a well-stocked product still reads "hold" — asking for
+      // 1 L against 50 L on the shelf would be noise.
+      const coverDays = correctedDaily > 0 ? effectiveStock / correctedDaily : null;
+      const runsOut = coverDays !== null && coverDays < leadTime;
+      const recommendedRounded = Math.round(recommendedRaw / (p.unit === 'mL' ? 1000 : 1));
+      const recommendedDisplay = recommendedRaw > 0 && runsOut
+        ? Math.max(1, recommendedRounded) : recommendedRounded;
       const action = correctedDaily <= 0 ? 'count_first'
         : recommendedDisplay <= 0 ? 'hold'
         : 'order';
+
+      // ── Safety Status
+      //
+      // WHY THIS CHANGED (2026-09-14). It used to be driven by the Conservative
+      // scenario — peak retail day + 100% of the B2B forecast — which is the
+      // double count with the busiest single day of the month assumed to repeat
+      // every day. The row then carried two contradictory numbers: FRAG_0137
+      // Santal read 22.97 L/day → 10.3 days → Critical in the badge, and
+      // 5.94 L/day → 40 days in the Recommendation beside it.
+      //
+      // The manager filters by Critical and works down the list. That filter
+      // returned 106 oils: 34 with no demand at all sitting at 0 L, 4 already
+      // covered by a purchase order, 18 with enough stock, and 50 that genuinely
+      // needed one. Measured the same day: NO oil outside Critical with ≥20 L a
+      // month needed an order — so the filter was not hiding anything, it was
+      // diluted. Reading the corrected rate takes it to 35.
+      //
+      // Three changes, each one a thing the old rule got wrong:
+      //   · it reads the SAME rate the Recommendation acts on, so one row can no
+      //     longer disagree with itself;
+      //   · stock already on its way counts, so a raised PO stops the alarm;
+      //   · no demand signal is "No data", not an emergency — a rate of zero
+      //     cannot be told apart from silence, and 34 of those were the group
+      //     awaiting confirmation to retire.
+      //
+      // Safety, measured before shipping: of the 18 oils that move from Critical
+      // to Safe, the least covered has 61 days against a 21-day lead time.
+      const safetyStatus = correctedDaily <= 0 ? (realStock > 0 ? 'Safe' : 'No data')
+        : coverDays < leadTime  ? 'Critical'   // will not survive until an order lands
+        : action === 'order'    ? 'Attention'  // there is time, but it must be planned
+        : 'Safe';
 
       const NOTE = {
         both_agree:           'Shopify and the contract agree on this one — the figure is as solid as this screen gets.',
@@ -4627,6 +4583,10 @@ router.get('/dashboard/replenishment', async (req, res) => {
           litres:      recommendedDisplay,          // in the product's display unit
           dailyRate:   r3(correctedDaily / R),
           coversDays:  leadTime + ORDER_BUFFER_DAYS,
+          // Days the shelf (plus anything already on its way) lasts at the
+          // corrected rate. This is what decides safetyStatus — served rather
+          // than recomputed, so the badge and the screen cannot drift apart.
+          coverDays:   coverDays === null ? null : r1(coverDays),
           basis,
           confidence:  demand.dataConfidence,
           note:        NOTE[basis],
@@ -4655,15 +4615,22 @@ router.get('/dashboard/replenishment', async (req, res) => {
         cleanDays:           demand.cleanDays,
         spikesRemoved:       demand.spikesRemoved,
         forecastAgeDays,
+        forecastStale,
         trendMultiplier:     Math.round(demand.trendMultiplier * 100) / 100,
         dynamicBufferDays:   demand.dynamicBufferDays
       };
     });
 
-    const statusOrder = { Critical: 0, Attention: 1, Safe: 2 };
+    // "No data" sorts last: it is a housekeeping queue, not a shortage.
+    const statusOrder = { Critical: 0, Attention: 1, Safe: 2, 'No data': 3 };
     data.sort((a, b) => {
       const diff = statusOrder[a.safetyStatus] - statusOrder[b.safetyStatus];
-      return diff !== 0 ? diff : a.projectedDaysOfStock - b.projectedDaysOfStock;
+      if (diff !== 0) return diff;
+      // Within a band, least cover first — on the same corrected rate the status
+      // was decided on. Nulls (no rate) go last.
+      const ca = a.recommendation?.coverDays ?? Infinity;
+      const cb = b.recommendation?.coverDays ?? Infinity;
+      return ca - cb;
     });
 
     res.json({
@@ -4673,7 +4640,22 @@ router.get('/dashboard/replenishment', async (req, res) => {
         critical:          data.filter(d => d.safetyStatus === 'Critical').length,
         attention:         data.filter(d => d.safetyStatus === 'Attention').length,
         safe:              data.filter(d => d.safetyStatus === 'Safe').length,
+        noData:            data.filter(d => d.safetyStatus === 'No data').length,
         lastForecastImport: lastForecastResult.rows[0] || null,
+        // The whole-portfolio alarm. The feed died silently for three months
+        // when the previous owner left; the screen showed the date the entire
+        // time and a date that stops moving is not a warning.
+        forecastAgeDays:   lastForecastResult.rows[0]
+          ? Number(lastForecastResult.rows[0].age_days) : null,
+        forecastStaleDays: FORECAST_STALE_DAYS,
+        // Products whose OWN forecast is stale even though an import ran —
+        // they were simply not in the recent files. Live today: 4 oils holding
+        // 833 L of forecast from 2 July, one of which (FRAG_0060) is the
+        // largest single line on the Critical list.
+        // OILS only, because the card sits above a table that shows only oils.
+        // A count that includes something the reader cannot find in the list
+        // below it is worse than no count.
+        staleForecastProducts: data.filter(d => d.forecastStale && d.category === 'OILS').length,
         suppliers:         suppliersResult.rows,
         calculatedAt:      new Date().toISOString()
       }

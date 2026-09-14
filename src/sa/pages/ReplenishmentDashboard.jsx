@@ -57,6 +57,9 @@ function StatusBadge({ status }) {
     Critical: { background: 'rgba(220,38,38,0.12)', color: '#f87171', border: '1px solid rgba(220,38,38,0.3)' },
     Attention: { background: 'rgba(217,119,6,0.12)', color: '#fbbf24', border: '1px solid rgba(217,119,6,0.3)' },
     Safe:      { background: 'rgba(22,163,74,0.12)', color: '#4ade80', border: '1px solid rgba(22,163,74,0.3)' },
+    // Grey on purpose: nothing is known about this one, which is not the same
+    // thing as it being fine, and not an emergency either.
+    'No data': { background: 'rgba(148,163,184,0.12)', color: '#94a3b8', border: '1px solid rgba(148,163,184,0.3)' },
   };
   return <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, ...styles[status] }}>{status}</span>;
 }
@@ -82,6 +85,7 @@ function StatCard({ label, value, color, icon }) {
     yellow: { bg: 'rgba(217,119,6,0.1)', text: '#fbbf24', border: 'rgba(217,119,6,0.3)' },
     green:  { bg: 'rgba(22,163,74,0.1)', text: '#4ade80', border: 'rgba(22,163,74,0.3)' },
     blue:   { bg: 'rgba(37,99,235,0.1)', text: '#60a5fa', border: 'rgba(37,99,235,0.3)' },
+    grey:   { bg: 'rgba(148,163,184,0.1)', text: '#94a3b8', border: 'rgba(148,163,184,0.3)' },
   };
   const c = colors[color] || colors.blue;
   return (
@@ -140,12 +144,64 @@ const fmtDays = (v) => {
   return rounded.toLocaleString('en-AU');
 };
 
+// ─── Forecast freshness ──────────────────────────────────────────────────────
+// WHY THIS IS NOT JUST A DATE (2026-09-14). The Salesforce feed stopped when the
+// person running it left, and nobody noticed for three months. This card was
+// already here the whole time, showing the date. A date that stops moving is
+// not a warning — somebody has to remember what the number used to be. So it
+// now says the age in words and changes colour when a monthly cycle is missed.
+//
+// It also reports the quieter failure: an import can run and still leave
+// individual products behind. Four oils currently carry a forecast from 2 July,
+// 833 L of it, and one of them is the single largest line on the Critical list.
+function ForecastFreshnessCard({ meta }) {
+  const age = meta.forecastAgeDays;
+  const limit = meta.forecastStaleDays ?? 35;
+  const stragglers = meta.staleForecastProducts || 0;
+  // Two levels, because "a cycle was missed" and "this has been abandoned" call
+  // for different reactions. Amber at one missed month, red at two.
+  const level = age == null ? 'unknown' : age > limit * 2 ? 'bad' : age > limit ? 'warn' : 'ok';
+  const skin = {
+    ok:      { bg: 'rgba(37,99,235,0.1)',  br: 'rgba(37,99,235,0.3)',  fg: '#60a5fa', sub: '#93c5fd', icon: '📁' },
+    warn:    { bg: 'rgba(217,119,6,0.12)', br: 'rgba(217,119,6,0.4)',  fg: '#fbbf24', sub: '#fcd34d', icon: '⚠️' },
+    bad:     { bg: 'rgba(220,38,38,0.12)', br: 'rgba(220,38,38,0.45)', fg: '#f87171', sub: '#fca5a5', icon: '🚨' },
+    unknown: { bg: 'rgba(148,163,184,0.1)', br: 'rgba(148,163,184,0.3)', fg: '#94a3b8', sub: '#94a3b8', icon: '📁' },
+  }[level];
+  const when = age == null ? 'date unknown'
+    : age === 0 ? 'imported today'
+    : age === 1 ? 'imported yesterday'
+    : `imported ${age} days ago`;
+  const verdict = level === 'bad' ? 'The monthly import has been missed twice — this feed looks abandoned.'
+    : level === 'warn' ? 'A monthly import is overdue. Orders are being planned on an old figure.'
+    : null;
+
+  return (
+    <div style={{ background: skin.bg, border: `1px solid ${skin.br}`, borderRadius: 12, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 4, minWidth: 200, maxWidth: 320 }}>
+      <span style={{ fontSize: 22 }}>{skin.icon}</span>
+      <span style={{ fontSize: 12, fontWeight: 700, color: skin.fg }}>Forecast — {when}</span>
+      {/* The date comes from the server as plain text in Sydney terms. Building
+          it here with new Date() reads the naive-UTC timestamp as local and can
+          land a day away from the age shown just above it. */}
+      <span style={{ fontSize: 11, color: skin.sub }}>
+        {(meta.lastForecastImport.import_date_syd || '').split('-').reverse().join('/')} by {meta.lastForecastImport.imported_by}
+      </span>
+      {verdict && <span style={{ fontSize: 11, color: skin.fg, fontWeight: 600, lineHeight: 1.45, marginTop: 2 }}>{verdict}</span>}
+      {stragglers > 0 && (
+        <span style={{ fontSize: 11, color: '#fbbf24', lineHeight: 1.45, marginTop: 2 }}>
+          {stragglers} {stragglers === 1 ? 'oil is' : 'oils are'} still on a forecast older than {limit} days — the recent files did not mention {stragglers === 1 ? 'it' : 'them'}.
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ─── Product Detail Modal ─────────────────────────────────────────────────────
 function ProductDetailModal({ product, detail, loading, onClose }) {
   if (!product) return null;
 
   const statusColor = product.safetyStatus === 'Critical' ? '#dc2626'
-                    : product.safetyStatus === 'Attention' ? '#d97706' : '#16a34a';
+                    : product.safetyStatus === 'Attention' ? '#d97706'
+                    : product.safetyStatus === 'No data' ? '#64748b' : '#16a34a';
 
   // Build bar chart data from daily sales
   const dailySales = detail?.dailySales || [];
@@ -186,7 +242,12 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
   const incomingCovers = recAction === 'hold';
   const safeTarget = 90;
   const pct = Math.min(100, Math.max(0, (daysStock / safeTarget) * 100));
-  const barColor = daysStock < 45 ? '#dc2626' : daysStock <= 90 ? '#d97706' : '#16a34a';
+  // Follows the badge, not a fixed 45/90 pair. Those two numbers were the old
+  // status thresholds; against a 90-day Bell lead time they painted a bar amber
+  // while the badge beside it said Critical.
+  const barColor = product.safetyStatus === 'Critical' ? '#dc2626'
+    : product.safetyStatus === 'Attention' ? '#d97706'
+    : product.safetyStatus === 'No data' ? '#64748b' : '#16a34a';
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
@@ -329,7 +390,21 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
           {/* Forecast comparison */}
           {product.hasForecast && (
             <div style={{ marginBottom: 24, padding: '14px 16px', background: 'rgba(37,99,235,0.1)', borderRadius: 10, border: '1px solid rgba(37,99,235,0.25)' }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: '#93c5fd', marginBottom: 8 }}>📊 Salesforce Forecast</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#93c5fd', marginBottom: 8 }}>
+                📊 Salesforce Forecast
+                {product.forecastAgeDays != null && (
+                  <span style={{ fontWeight: 600, color: product.forecastStale ? '#fbbf24' : 'rgba(147,197,253,0.65)', marginLeft: 8 }}>
+                    · {product.forecastAgeDays === 0 ? 'imported today' : `${product.forecastAgeDays} days old`}
+                  </span>
+                )}
+              </div>
+              {product.forecastStale && (
+                <div style={{ marginBottom: 10, padding: '6px 10px', background: 'rgba(217,119,6,0.12)', border: '1px solid rgba(217,119,6,0.35)', borderRadius: 8, fontSize: 11.5, color: '#fbbf24', lineHeight: 1.5 }}>
+                  The recent imports did not include this product, so everything below
+                  rests on a figure that is {product.forecastAgeDays} days old. Worth a look
+                  before ordering against it.
+                </div>
+              )}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
                 <div style={{ textAlign: 'center' }}>
                   <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>120-day Forecast</div>
@@ -712,7 +787,7 @@ export default function ReplenishmentDashboard({ user }) {
         const ws = XLSX.utils.aoa_to_sheet([
           [title],
           [subtitle],
-          [`Generated: ${dateStr} ${timeStr}   |   Products: ${rows.length}   |   Critical: ${rows.filter(p => p.safetyStatus === 'Critical').length}   |   Attention: ${rows.filter(p => p.safetyStatus === 'Attention').length}   |   Safe: ${rows.filter(p => p.safetyStatus === 'Safe').length}`],
+          [`Generated: ${dateStr} ${timeStr}   |   Products: ${rows.length}   |   Critical: ${rows.filter(p => p.safetyStatus === 'Critical').length}   |   Attention: ${rows.filter(p => p.safetyStatus === 'Attention').length}   |   Safe: ${rows.filter(p => p.safetyStatus === 'Safe').length}   |   No data: ${rows.filter(p => p.safetyStatus === 'No data').length}`],
           [],
           ['Product Code', 'Product Name', 'Category', 'Supplier', 'Real Stock (L)', 'Safety Stock (L)', 'Avg Daily (L/d)', 'Sold 30d (L)', 'Forecast 120d (L)', 'Forecast Daily (L/d)', 'Projected Daily (L/d)', 'Projected Days', 'Days of Stock', 'Gap (d)', 'Safety Status', 'Order Qty', 'Lead Time (d)', 'Recommendation', 'Recommended Qty', 'Why'],
           ...rows.map(p => [
@@ -753,11 +828,11 @@ export default function ReplenishmentDashboard({ user }) {
 
       // Sheet 2: Critical
       const criticalAll = allProducts.filter(p => p.safetyStatus === 'Critical');
-      if (criticalAll.length > 0) XLSX.utils.book_append_sheet(wb, buildSheet(criticalAll, 'CRITICAL PRODUCTS — Action Required', `${criticalAll.length} products with Days of Stock < 45 days`), 'Critical');
+      if (criticalAll.length > 0) XLSX.utils.book_append_sheet(wb, buildSheet(criticalAll, 'CRITICAL PRODUCTS — Action Required', `${criticalAll.length} products that run out before a new order can land`), 'Critical');
 
       // Sheet 3: Attention
       const attentionAll = allProducts.filter(p => p.safetyStatus === 'Attention');
-      if (attentionAll.length > 0) XLSX.utils.book_append_sheet(wb, buildSheet(attentionAll, 'ATTENTION — Monitor Closely', `${attentionAll.length} products with Days of Stock 45–90 days`), 'Attention');
+      if (attentionAll.length > 0) XLSX.utils.book_append_sheet(wb, buildSheet(attentionAll, 'ATTENTION — Monitor Closely', `${attentionAll.length} products with time to plan, but an order is due`), 'Attention');
 
       // Sheet 4: Full report
       XLSX.utils.book_append_sheet(wb, buildSheet(allProducts, 'SCENT STOCK MANAGER — Full Report', `All ${allProducts.length} products`), 'All Products');
@@ -792,9 +867,12 @@ export default function ReplenishmentDashboard({ user }) {
   const thStyle = { padding: '10px 12px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: '#94a3b8', background: 'rgba(14,14,26,0.95)', borderBottom: '2px solid rgba(255,255,255,0.08)', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 10 };
   const tdStyle = { padding: '10px 12px', fontSize: 12, color: '#cbd5e1', borderBottom: '1px solid rgba(255,255,255,0.05)', whiteSpace: 'nowrap' };
   const rowBg = (p) => p.safetyStatus === 'Critical' ? 'rgba(220,38,38,0.07)' : p.safetyStatus === 'Attention' ? 'rgba(217,119,6,0.07)' : 'transparent';
+  // The stripe follows the badge and nothing else. It used to paint an orange
+  // band whenever projectedDaysOfStock < 45 — the Conservative days, i.e. the
+  // double-counted rate the status no longer uses — so a row could show a green
+  // Safe badge inside an orange warning stripe.
   const rowBorderLeft = (p) => {
     if (p.safetyStatus === 'Critical') return '3px solid #dc2626';
-    if (p.projectedDaysOfStock < 45) return '3px solid #f97316';
     if (p.safetyStatus === 'Attention') return '3px solid #f59e0b';
     return '3px solid transparent';
   };
@@ -867,16 +945,14 @@ export default function ReplenishmentDashboard({ user }) {
       {/* ── Stat cards ── */}
       <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
         <StatCard label="Total Oils" value={filteredForStats.length} color="blue" icon="📋" />
-        <StatCard label="Critical (<45d)" value={filteredForStats.filter(d => d.safetyStatus === 'Critical').length} color="red" icon="🔴" />
-        <StatCard label="Attention (45–90d)" value={filteredForStats.filter(d => d.safetyStatus === 'Attention').length} color="yellow" icon="🟡" />
-        <StatCard label="Safe (>90d)" value={filteredForStats.filter(d => d.safetyStatus === 'Safe').length} color="green" icon="🟢" />
-        {meta.lastForecastImport && (
-          <div style={{ background: 'rgba(37,99,235,0.1)', border: '1px solid rgba(37,99,235,0.3)', borderRadius: 12, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <span style={{ fontSize: 22 }}>📁</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: '#60a5fa' }}>Last Forecast Import</span>
-            <span style={{ fontSize: 11, color: '#93c5fd' }}>{new Date(meta.lastForecastImport.import_date).toLocaleDateString('en-AU', { day: '2-digit', month: '2-digit', year: 'numeric' })} by {meta.lastForecastImport.imported_by}</span>
-          </div>
-        )}
+        {/* Labels say what the status MEANS. The old ones ("<45d", "45–90d")
+            described a rule that no longer exists, and never matched the
+            per-product lead time it was actually compared against. */}
+        <StatCard label="Critical — runs out before an order lands" value={filteredForStats.filter(d => d.safetyStatus === 'Critical').length} color="red" icon="🔴" />
+        <StatCard label="Attention — plan an order" value={filteredForStats.filter(d => d.safetyStatus === 'Attention').length} color="yellow" icon="🟡" />
+        <StatCard label="Safe — covered" value={filteredForStats.filter(d => d.safetyStatus === 'Safe').length} color="green" icon="🟢" />
+        <StatCard label="No data — nothing to plan with" value={filteredForStats.filter(d => d.safetyStatus === 'No data').length} color="grey" icon="⚪" />
+        {meta.lastForecastImport && <ForecastFreshnessCard meta={meta} />}
       </div>
 
       {/* ── Import panel ── */}
@@ -938,11 +1014,11 @@ export default function ReplenishmentDashboard({ user }) {
         {/* Status filter */}
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(232,234,242,0.45)' }}>Status:</span>
-          {['ALL', 'Critical', 'Attention', 'Safe'].map(s => (
+          {['ALL', 'Critical', 'Attention', 'Safe', 'No data'].map(s => (
             <button key={s} onClick={() => setFilterStatus(s)} style={{
               padding: '5px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer',
               border: filterStatus === s ? 'none' : '1px solid rgba(255,255,255,0.1)',
-              background: filterStatus === s ? (s === 'Critical' ? '#dc2626' : s === 'Attention' ? '#d97706' : s === 'Safe' ? '#16a34a' : '#2563eb') : 'rgba(255,255,255,0.05)',
+              background: filterStatus === s ? (s === 'Critical' ? '#dc2626' : s === 'Attention' ? '#d97706' : s === 'Safe' ? '#16a34a' : s === 'No data' ? '#64748b' : '#2563eb') : 'rgba(255,255,255,0.05)',
               color: filterStatus === s ? 'white' : '#94a3b8'
             }}>{s}</button>
           ))}
@@ -1014,7 +1090,14 @@ export default function ReplenishmentDashboard({ user }) {
                     )}
                   </td>
                   <td style={{ ...tdStyle, textAlign: 'right', color: '#60a5fa' }}>{p.retailDailyAvg > 0 ? fmt(p.retailDailyAvg, 3) : <span style={{color:'rgba(232,234,242,0.25)'}}>—</span>}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right', color: p.hasForecast ? '#a78bfa' : 'rgba(232,234,242,0.25)' }}>{p.hasForecast ? fmt(p.b2bDaily, 3) : '—'}</td>
+                  {/* An amber dot when this product's own forecast is older than a
+                      monthly cycle. The import can run and still leave products
+                      behind — FRAG_0060 drives the largest line on the Critical
+                      list off a figure from 2 July. */}
+                  <td style={{ ...tdStyle, textAlign: 'right', color: p.hasForecast ? (p.forecastStale ? '#fbbf24' : '#a78bfa') : 'rgba(232,234,242,0.25)' }}
+                    title={p.forecastStale ? `This forecast is ${p.forecastAgeDays} days old — the recent imports did not include this product` : undefined}>
+                    {p.hasForecast ? fmt(p.b2bDaily, 3) : '—'}{p.forecastStale ? ' ●' : ''}
+                  </td>
                   <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, background: 'rgba(220,38,38,0.04)', color: p.daysConservative < 45 ? '#f87171' : p.daysConservative < 90 ? '#fbbf24' : '#4ade80' }}>
                     {p.daysConservative >= 9999 ? '∞' : fmtDays(p.daysConservative)}
                   </td>
