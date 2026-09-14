@@ -3943,12 +3943,44 @@ router.post('/forecast/import', upload.single('file'), async (req, res) => {
       const litresUnreachable = [...problems.unknown_product, ...problems.inactive_product]
         .reduce((n, p) => n + (p.litres || 0), 0);
 
+      // WHAT THIS FILE DROPPED (2026-09-14).
+      //
+      // The forecast is a snapshot: this upload replaces the previous one
+      // outright, so any code the previous file carried and this one does not
+      // stops counting toward demand from now on. That is exactly right when a
+      // contract ended — the owner's reason for wanting it this way — and
+      // exactly wrong if the export came out incomplete.
+      //
+      // Nothing here can tell those two apart. A person can, in about five
+      // seconds, but only if somebody shows them. So the safety against a
+      // half-file is not a delay or a grace period, it is this list, on screen,
+      // at the moment of upload, while the person who made the file is still
+      // looking at it.
+      const droppedRows = (await client.query(`
+        WITH prior AS (
+          SELECT product_code, MAX(forecast_120_days) f FROM forecasts
+          WHERE import_date = (SELECT MAX(import_date) FROM forecasts WHERE import_date < $1)
+          GROUP BY product_code
+        )
+        SELECT p.product_code, p.f, pr.name
+        FROM prior p JOIN products pr ON pr."productCode" = p.product_code
+        WHERE p.f > 0 AND pr.status = 'active'
+          AND p.product_code NOT IN (SELECT product_code FROM forecasts WHERE import_date = $1)
+        ORDER BY p.f DESC
+      `, [importDate])).rows;
+      const dropped = droppedRows.map((r) => ({
+        code: r.product_code, name: r.name, litres: Math.round(Number(r.f) * 10) / 10,
+      }));
+
       res.json({
         success: true, inserted, skipped,
         importDate: importDate.toISOString(), importedBy,
         problemCount, rowsFlagged, notedCount,
         litresUnreachable: Math.round(litresUnreachable * 10) / 10,
         problems,
+        dropped,
+        droppedCount: dropped.length,
+        droppedLitres: Math.round(dropped.reduce((n, d) => n + d.litres, 0) * 10) / 10,
       });
     } catch (err) {
       await client.query('ROLLBACK');
@@ -4238,7 +4270,8 @@ router.get('/dashboard/replenishment', async (req, res) => {
   try {
     // All date calculations use Australian/Sydney timezone directly in SQL
 
-    const [productsResult, salesByDayResult, forecastResult, lastForecastResult, suppliersResult, poResult] = await Promise.all([
+    const [productsResult, salesByDayResult, forecastResult, lastForecastResult,
+      suppliersResult, droppedResult, poResult] = await Promise.all([
       // Products with lead_time resolved: product override → supplier default → 30d fallback
       pool.query(`
         SELECT
@@ -4272,19 +4305,43 @@ router.get('/dashboard/replenishment', async (req, res) => {
       `, [DEMAND_TX_TYPES]),
       // Latest forecast per product
       pool.query(`
+        -- THE FORECAST IS THE LATEST FILE, AND ONLY THE LATEST FILE.
+        --
+        -- WHY (2026-09-14, the owner's call). It used to take the newest row per
+        -- product code across every import ever run, which meant a code that
+        -- stopped appearing kept its last known figure forever. The owner named
+        -- the failure exactly: "pode acontecer estar usando um óleo hoje com um
+        -- client apenas e do nada acabar contrato, aí vai ficar constando lá."
+        --
+        -- That is not hypothetical. FRAG_0060 was carrying 825.5 L of contract
+        -- from the 2 July file, had consumed nothing in 90 days, and was the
+        -- single largest line on the Critical list, asking for 332 L.
+        --
+        -- The Salesforce export is a snapshot, and the data says so plainly: the
+        -- files of 11 and 14 September carry an IDENTICAL set of 167 codes, and
+        -- across every import since July 102 codes have left and not one has
+        -- entered. So absence means finished, and a new upload replaces the old
+        -- one outright — "o antigo some e o novo entra".
+        --
+        -- One upload is one import_date to the second (verified across every
+        -- import in the table), so "the latest file" is exact, not a guess.
+        --
+        -- The safety against a broken half-file is not delay, it is visibility:
+        -- the import report names every product that just lost its forecast, at
+        -- the moment of upload, and meta.forecastDropped keeps the count on the
+        -- dashboard afterwards.
         SELECT DISTINCT ON (product_code)
           product_code, forecast_120_days, import_date,
-          -- Same reason as the newest-import query below: import_date is stored
-          -- naive-UTC, so subtracting it from Date.now() in JS on a Sydney
-          -- machine is off by ten hours and lands a day out either side of
-          -- midnight. This number is now shown per row and colours a warning,
-          -- so it is worked out where the timezone is known.
+          -- import_date is stored naive-UTC, so subtracting it from Date.now()
+          -- in JS on a Sydney machine is off by ten hours and lands a day out
+          -- either side of midnight.
           ((NOW() AT TIME ZONE 'Australia/Sydney')::date - import_date::date) AS age_days
         FROM forecasts
+        WHERE import_date = (SELECT MAX(import_date) FROM forecasts)
         -- id DESC breaks the tie: one file can legitimately carry the same code
-        -- twice (the importer now reports that), and both rows land with the
-        -- SAME import_date, so without this the plan picked whichever the
-        -- planner happened to return — arbitrary, and silently so.
+        -- twice (the importer reports that), and both rows land with the SAME
+        -- import_date, so without this the plan picked whichever the planner
+        -- happened to return — arbitrary, and silently so.
         ORDER BY product_code, import_date DESC, id DESC
       `),
       // age_days comes from Postgres in Sydney time on purpose. Working it out
@@ -4299,6 +4356,25 @@ router.get('/dashboard/replenishment', async (req, res) => {
                          ((NOW() AT TIME ZONE 'Australia/Sydney')::date - import_date::date) AS age_days
                   FROM forecasts ORDER BY import_date DESC LIMIT 1`),
       pool.query(`SELECT id, name, lead_time, notes FROM suppliers ORDER BY name`),
+      // What the latest upload dropped: active oils that carried a forecast in
+      // the import BEFORE this one and are absent from this one. With snapshot
+      // semantics they no longer count toward demand, which is correct when a
+      // contract ended and alarming when somebody uploaded half a file. Either
+      // way it is a number the planner should be able to see without digging.
+      pool.query(`
+        WITH stamps AS (
+          SELECT DISTINCT import_date FROM forecasts ORDER BY import_date DESC LIMIT 2
+        ),
+        newest AS (SELECT product_code FROM forecasts WHERE import_date = (SELECT MAX(import_date) FROM stamps)),
+        prior  AS (SELECT product_code, MAX(forecast_120_days) f FROM forecasts
+                   WHERE import_date = (SELECT MIN(import_date) FROM stamps) GROUP BY product_code)
+        SELECT p.product_code, p.f
+        FROM prior p
+        JOIN products pr ON pr."productCode" = p.product_code
+        WHERE p.product_code NOT IN (SELECT product_code FROM newest)
+          AND p.f > 0 AND pr.category = 'OILS' AND pr.status = 'active'
+        ORDER BY p.f DESC
+      `),
       // Pending purchase orders: quantity still on the way per product
       pool.query(`
         SELECT product_id, SUM(quantity - COALESCE(quantity_received, 0)) AS pending_qty
@@ -4648,14 +4724,16 @@ router.get('/dashboard/replenishment', async (req, res) => {
         forecastAgeDays:   lastForecastResult.rows[0]
           ? Number(lastForecastResult.rows[0].age_days) : null,
         forecastStaleDays: FORECAST_STALE_DAYS,
-        // Products whose OWN forecast is stale even though an import ran —
-        // they were simply not in the recent files. Live today: 4 oils holding
-        // 833 L of forecast from 2 July, one of which (FRAG_0060) is the
-        // largest single line on the Critical list.
-        // OILS only, because the card sits above a table that shows only oils.
-        // A count that includes something the reader cannot find in the list
-        // below it is worse than no count.
-        staleForecastProducts: data.filter(d => d.forecastStale && d.category === 'OILS').length,
+        // What the latest upload dropped against the one before it. Under
+        // snapshot semantics this is the number that matters: a contract that
+        // ended looks exactly like a half-uploaded file, and only a person can
+        // tell them apart — so the count stays on the screen rather than being
+        // decided silently either way. OILS only, because the card sits above a
+        // table showing only oils, and a count the reader cannot find in the
+        // list below it is worse than no count.
+        forecastDropped:      droppedResult.rows.length,
+        forecastDroppedTop:   droppedResult.rows.slice(0, 3)
+          .map(r => ({ code: r.product_code, litres: Math.round(Number(r.f) * 10) / 10 })),
         suppliers:         suppliersResult.rows,
         calculatedAt:      new Date().toISOString()
       }

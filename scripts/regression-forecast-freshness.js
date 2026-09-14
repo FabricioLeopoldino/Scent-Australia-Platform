@@ -1,29 +1,37 @@
-// Proves the screen says how old the forecast is, and names the products the
-// recent imports left behind.
+// Proves the forecast is a snapshot: the newest file is the whole truth, and a
+// code that stops appearing stops counting.
 //
-// WHY THIS EXISTS (2026-09-14). The Salesforce feed stopped when the person
-// running it left, and nobody noticed for three months. The dashboard was not
-// broken and nothing was hidden: it showed the import date the entire time. A
-// date that stops moving is not a warning — it only reads as one to somebody
-// who remembers what it said last month.
+// WHY THIS EXISTS (2026-09-14). Two failures, found the same afternoon.
 //
-// The order maths already knew. A `stalenessFactor` has been quietly inflating
-// the conservative scenario past 35 days for as long as it has existed. A
-// penalty nobody can see is not a warning either, so both now read one named
-// constant and the screen says what the maths is already doing.
+// The first was silence. The Salesforce feed stopped when the person running it
+// left and nobody noticed for three months. The dashboard was not hiding it — it
+// showed the import date the whole time, and a date that stops moving only looks
+// wrong to somebody who remembers what it said last month.
 //
-// The second, quieter failure is the one live today: an import can RUN and
-// still leave products behind. Four oils carry a forecast from 2 July holding
-// 833 L between them, and FRAG_0060 — the largest single line on the Critical
-// list, asking for 332 L — is one of them. The portfolio card is green, the
-// import is three days old, and that number is eleven weeks stale.
+// The second was worse, and it was the owner who named it: "pode acontecer estar
+// usando um óleo hoje com um client apenas e do nada acabar contrato, aí vai
+// ficar constando lá." The plan used to take the newest row per product code
+// across every import ever run, so a code that stopped appearing kept its last
+// figure for ever. FRAG_0060 was carrying 825.5 L of contract from 2 July,
+// had consumed nothing in ninety days, and was the single largest line on the
+// Critical list — asking to buy 332 L of an oil whose contract had ended.
 //
-// TWO DIRECTIONS. A warning that is always on gets ignored, so this asserts
-// both that stale products are named AND that fresh ones are left alone.
+// The data says the export is a snapshot and says it plainly: the files of 11
+// and 14 September carry an IDENTICAL set of 167 codes, and across every import
+// since July 102 codes have left and not one has entered. So a new upload
+// replaces the old one outright.
 //
-// READ-ONLY apart from one disposable product and one forecast row for it,
-// both removed in the finally block. Everything else asserts against the live
-// catalogue, because the property being proved is arithmetic over real dates.
+// THE RISK THAT COMES WITH THAT, and what actually guards it. A contract that
+// ended and a half-finished export look exactly alike from inside the database.
+// Nothing here can tell them apart, and a grace period only delays the same
+// guess. So the guard is not delay, it is visibility: the import names every
+// product that just lost its forecast at the moment of upload, and the count
+// stays on the dashboard afterwards. Checks 4 and 5 are that guard.
+//
+// NON-DISRUPTIVE BY CONSTRUCTION. The probes attach to import timestamps that
+// already exist rather than creating a newer one. A probe with its own fresher
+// timestamp would become the entire snapshot for as long as the suite ran, and
+// every real oil would briefly lose its forecast on a live screen.
 //
 // Run: node scripts/regression-forecast-freshness.js
 import 'dotenv/config';
@@ -38,9 +46,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 3984;
 const BASE = `http://127.0.0.1:${PORT}`;
 const STAMP = Date.now();
-const OLD = `ZZFF_OLD_${STAMP}`.slice(0, 20);   // forecast deliberately ancient
-const NEW = `ZZFF_NEW_${STAMP}`.slice(0, 20);   // forecast dated today
-const ZERO = `ZZFF_ZER_${STAMP}`.slice(0, 20);  // forecast ancient AND worth zero
+const IN = `ZZFF_IN_${STAMP}`.slice(0, 20);     // in the newest file
+const OUT = `ZZFF_OUT_${STAMP}`.slice(0, 20);   // in the one before, and not since
+const NEVER = `ZZFF_NIL_${STAMP}`.slice(0, 20); // never in any file
 
 const pool = new Pool({
   connectionString: process.env.PLATFORM_DATABASE_URL.replace('-pooler.', '.'),
@@ -54,22 +62,24 @@ const check = (ok, label, detail = '') => {
 };
 
 try {
-  // Two probes, identical but for the age of their forecast. Anything that
-  // separates them in the answer is the staleness rule and nothing else.
-  for (const code of [OLD, NEW, ZERO]) {
+  const stamps = (await pool.query(
+    `SELECT DISTINCT import_date FROM forecasts ORDER BY import_date DESC LIMIT 2`)).rows;
+  if (stamps.length < 2) throw new Error('needs at least two forecast imports to test against');
+  const [latest, prior] = stamps.map((r) => r.import_date);
+
+  for (const code of [IN, OUT, NEVER]) {
     await pool.query(
       `INSERT INTO products (id, tag, "productCode", name, category, unit, "currentStock", status)
        VALUES ($1,$1,$1,$2,'OILS','mL',50000,'active')`, [code, `${code} probe`]);
   }
+  // Same figure, same product, same everything — only WHICH FILE they are in
+  // differs. Anything that separates them downstream is the snapshot rule.
   await pool.query(
     `INSERT INTO forecasts (product_code, forecast_120_days, import_date, imported_by)
-     VALUES ($1, 120, NOW() - INTERVAL '200 days', 'regression')`, [OLD]);
+     VALUES ($1, 120, $2, 'regression')`, [IN, latest]);
   await pool.query(
     `INSERT INTO forecasts (product_code, forecast_120_days, import_date, imported_by)
-     VALUES ($1, 120, NOW(), 'regression')`, [NEW]);
-  await pool.query(
-    `INSERT INTO forecasts (product_code, forecast_120_days, import_date, imported_by)
-     VALUES ($1, 0, NOW() - INTERVAL '200 days', 'regression')`, [ZERO]);
+     VALUES ($1, 120, $2, 'regression')`, [OUT, prior]);
 
   server = spawn(process.execPath, ['server/index.js'], {
     cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
@@ -93,80 +103,60 @@ try {
   })).json();
   const meta = body.meta || {};
   const byCode = new Map(body.products.map((p) => [p.productCode, p]));
-  const oldP = byCode.get(OLD), newP = byCode.get(NEW), zeroP = byCode.get(ZERO);
+  const inP = byCode.get(IN), outP = byCode.get(OUT), nilP = byCode.get(NEVER);
 
-  console.log('\n1. The portfolio card can say how old the newest import is');
+  console.log('\n1. The screen can say how old the forecast file is');
   check(typeof meta.forecastAgeDays === 'number',
-    'the age of the newest import is served, not left for the browser to work out',
-    `forecastAgeDays=${meta.forecastAgeDays}`);
+    'the age is served, not left for the browser to work out', `${meta.forecastAgeDays}`);
   // The ten-hour trap: import_date is stored naive-UTC, so computing this in JS
-  // on a Sydney machine reads a day late. The probe inserted at NOW() must
-  // therefore be 0 days old, never 1 and never -1.
-  check(meta.forecastAgeDays === 0,
-    'and it is 0 today — proving it was computed in Sydney time, not shifted by the driver',
-    `got ${meta.forecastAgeDays}`);
+  // on a Sydney machine reads a day out either side of midnight.
+  const trueAge = Number((await pool.query(
+    `SELECT ((NOW() AT TIME ZONE 'Australia/Sydney')::date - $1::date) a`, [latest])).rows[0].a);
+  check(meta.forecastAgeDays === trueAge,
+    `and it matches Postgres in Sydney time (${trueAge} days), not the driver's shifted one`,
+    `served ${meta.forecastAgeDays}`);
   check(meta.forecastStaleDays === 35,
-    'the threshold is published so the screen and the order maths cannot drift apart',
-    `forecastStaleDays=${meta.forecastStaleDays}`);
+    'the threshold is published so the screen and the order maths cannot drift apart');
+  check(typeof meta.lastForecastImport?.import_date_syd === 'string',
+    'the date is sent as text, so it cannot disagree with the age beside it',
+    JSON.stringify(meta.lastForecastImport?.import_date_syd));
 
-  console.log('\n2. A product the recent imports left behind is named');
-  check(!!oldP, 'the stale probe came back at all');
-  check(oldP?.forecastStale === true, 'it is flagged stale', `forecastStale=${oldP?.forecastStale}`);
-  check(oldP?.forecastAgeDays >= 199 && oldP?.forecastAgeDays <= 201,
-    'and its age is reported accurately, so a person can judge how bad it is',
-    `forecastAgeDays=${oldP?.forecastAgeDays}`);
-  check((meta.staleForecastProducts || 0) >= 1,
-    'the count on the card includes it', `staleForecastProducts=${meta.staleForecastProducts}`);
+  console.log('\n2. A code in the newest file counts');
+  check(inP?.hasForecast === true, 'the probe in the latest import has a forecast',
+    `hasForecast=${inP?.hasForecast}`);
+  check(inP?.b2bDaily > 0, 'and it drives a demand figure', `b2bDaily=${inP?.b2bDaily}`);
 
-  console.log('\n3. A fresh one is left alone — the half that keeps the warning worth reading');
-  check(newP?.forecastStale === false, 'today\'s forecast is not flagged',
-    `forecastStale=${newP?.forecastStale}`);
-  check(newP?.forecastAgeDays === 0, 'and reads as 0 days old', `${newP?.forecastAgeDays}`);
-  // Both probes hold identical stock and an identical forecast figure. If the
-  // flag tracked anything other than the date, they would not differ.
-  check(oldP?.b2bDaily === newP?.b2bDaily,
-    'both probes carry the same forecast figure, so only the DATE separates them',
-    `${oldP?.b2bDaily} vs ${newP?.b2bDaily}`);
+  console.log('\n3. A code the newest file dropped does NOT — this is the FRAG_0060 fix');
+  // The whole point. Same product, same 120 L, sitting in the previous file
+  // instead of this one. Under the old rule it kept its figure for ever.
+  check(outP?.hasForecast === false, 'the probe left out of the latest import has no forecast',
+    `hasForecast=${outP?.hasForecast}`);
+  check(!(outP?.b2bDaily > 0), 'and drives no demand at all', `b2bDaily=${outP?.b2bDaily}`);
+  check(inP?.b2bDaily > 0 && !(outP?.b2bDaily > 0),
+    'the two probes are identical apart from which file they are in — only that separates them');
 
-  console.log('\n4. Every flagged product really is past the published threshold');
-  const flagged = body.products.filter((p) => p.forecastStale);
-  const wrong = flagged.filter((p) => !(p.forecastAgeDays > meta.forecastStaleDays));
-  check(wrong.length === 0, `all ${flagged.length} flagged products are older than ${meta.forecastStaleDays} days`,
-    wrong.slice(0, 4).map((p) => `${p.productCode}=${p.forecastAgeDays}d`).join(', '));
-  // The `b2bDaily > 0` term is part of the definition, not an oversight — see
-  // section 5. Without it this check would demand the wallpaper back.
-  const missed = body.products.filter((p) => p.hasForecast && p.b2bDaily > 0
-    && p.forecastAgeDays > meta.forecastStaleDays && !p.forecastStale);
-  check(missed.length === 0, 'and nothing past it, that drives a number, escaped the flag',
-    missed.slice(0, 4).map((p) => `${p.productCode}=${p.forecastAgeDays}d`).join(', '));
+  console.log('\n4. The drop is counted where somebody will see it');
+  check(typeof meta.forecastDropped === 'number' && meta.forecastDropped >= 1,
+    'the dashboard reports how many oils the latest file dropped',
+    `forecastDropped=${meta.forecastDropped}`);
+  const named = (meta.forecastDroppedTop || []).map((t) => t.code);
+  check(Array.isArray(meta.forecastDroppedTop),
+    'and names the biggest of them rather than only counting', named.join(', '));
 
-  console.log('\n5. An old forecast that drives nothing is not worth a warning');
-  // 79 oils carry a forecast row past the threshold. 75 of those rows say zero:
-  // old, and moving no number at all. Flagging all 79 would put an amber mark
-  // on a quarter of the screen in order to point at the four that matter, and a
-  // warning that is everywhere is not a warning.
-  check(zeroP?.forecastStale === false,
-    'a 200-day-old forecast worth 0 L is NOT flagged — it changes no number',
-    `forecastStale=${zeroP?.forecastStale} b2bDaily=${zeroP?.b2bDaily}`);
-  check(zeroP?.forecastAgeDays >= 199,
-    'though its age is still reported honestly, for anyone who looks',
-    `${zeroP?.forecastAgeDays}`);
-  check(body.products.filter((p) => p.forecastStale).every((p) => p.b2bDaily > 0),
-    'every flagged product has a forecast that is actually driving its demand');
+  console.log('\n5. A code no file ever mentioned is not reported as a loss');
+  // The half that stops the count becoming noise: never having had a forecast
+  // is not the same as having lost one, and 103 products are in that position.
+  check(nilP?.hasForecast === false, 'the never-forecast probe has no forecast');
+  check(!named.includes(NEVER), 'and is not listed among what was dropped');
 
-  console.log('\n6. A product with no forecast is not accused of having an old one');
-  const noFc = body.products.filter((p) => !p.hasForecast);
-  check(noFc.every((p) => p.forecastStale === false),
-    `${noFc.length} products carry no forecast — none is flagged stale`,
-    noFc.filter((p) => p.forecastStale).slice(0, 4).map((p) => p.productCode).join(', '));
-
-  console.log('\n7. The silent order penalty and the visible warning agree');
-  // They read one constant. Before today the penalty existed and the screen
-  // said nothing, which is how a number can be inflated for three months
-  // without anybody being told.
-  check(oldP && oldP.safeOrder >= oldP.suggestedOrder,
-    'the stale probe still carries the inflated conservative order',
-    `safe=${oldP?.safeOrder} exp=${oldP?.suggestedOrder}`);
+  console.log('\n6. The old per-product staleness cannot happen any more');
+  // Under snapshot semantics every forecast comes from the same file, so no
+  // product can sit on its own private old figure. If this ever fails, the
+  // endpoint has gone back to reading the newest row per code.
+  const withFc = body.products.filter((p) => p.hasForecast);
+  const ages = new Set(withFc.map((p) => p.forecastAgeDays));
+  check(ages.size <= 1, `all ${withFc.length} forecasts share one age — they come from one file`,
+    `distinct ages: ${[...ages].join(', ')}`);
 
   if (failed) {
     console.log('\n--- server log ---');

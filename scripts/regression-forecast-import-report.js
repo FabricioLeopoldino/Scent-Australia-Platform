@@ -19,6 +19,15 @@
 // control, imports it through the real endpoint, and deletes every forecast row
 // it created afterwards.
 //
+// KNOWN TRANSIENT EFFECT, and it is worse since 2026-09-14. The forecast became
+// a snapshot that day: the plan reads the newest import and nothing else. This
+// suite performs a REAL import of about seven codes, so for as long as it runs
+// — up to a minute — the live replenishment screen would show those seven as
+// the entire forecast. Deleting the rows in the finally block restores the
+// previous file automatically, because "newest import" is then the real one
+// again, and no data is lost either way. But do not run this while somebody is
+// planning orders. Written down rather than left to be discovered.
+//
 // Run: node scripts/regression-forecast-import-report.js
 import 'dotenv/config';
 import { spawn } from 'node:child_process';
@@ -168,14 +177,31 @@ try {
   check(Math.abs((r.litresUnreachable || 0) - 110.7) < 0.01,
     'the litres on unreachable codes are added up', `${r.litresUnreachable} L`);
 
-  console.log('\n5. Reporting is not rejecting — every row still landed');
+  console.log('\n5. It names what this file DROPPED, not only what is wrong inside it');
+  // Since the forecast became a snapshot, an upload silently ends every
+  // contract it fails to mention. A finished contract and a half-written export
+  // look identical from inside the database, and no rule can separate them — so
+  // the guard is that the person who just made the file is told, immediately,
+  // while they can still check. This file carries seven codes against a real
+  // catalogue, so it drops a great many; the assertion is that it says so.
+  check(typeof r.droppedCount === 'number' && r.droppedCount > 0,
+    'the import reports how many products lost their forecast', `droppedCount=${r.droppedCount}`);
+  check(Array.isArray(r.dropped) && r.dropped.length > 0 && r.dropped[0].code && r.dropped[0].name,
+    'and names them, with the product name — a code alone is not something you can check',
+    JSON.stringify(r.dropped?.[0]));
+  check(r.dropped.every((d) => d.litres > 0),
+    'only products that actually had a forecast figure are counted as losses');
+  check(!r.dropped.some((d) => d.code === GOOD),
+    'a code present in THIS file is never reported as dropped by it');
+
+  console.log('\n6. Reporting is not rejecting — every row still landed');
   const stored = (await pool.query(
     `SELECT product_code FROM forecasts WHERE imported_by = 'regression'`)).rows.map((x) => x.product_code);
   check(stored.includes(GHOST), 'the unknown code was still imported, not dropped');
   check(stored.includes(DEAD), 'the inactive one too');
   check(stored.filter((c) => c === GOOD).length === 2, 'and both copies of the duplicate', `${stored.filter((c) => c === GOOD).length}`);
 
-  console.log('\n6. The clean control row raises nothing');
+  console.log('\n7. The clean control row raises nothing');
   const flaggedCodes = Object.values(P).flat().map((x) => x.code).filter(Boolean);
   check(flaggedCodes.filter((c) => c === GOOD).length === 1,
     'the good code appears only for the duplicate, never for anything else',

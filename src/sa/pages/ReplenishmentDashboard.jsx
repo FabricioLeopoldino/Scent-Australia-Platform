@@ -151,13 +151,16 @@ const fmtDays = (v) => {
 // not a warning — somebody has to remember what the number used to be. So it
 // now says the age in words and changes colour when a monthly cycle is missed.
 //
-// It also reports the quieter failure: an import can run and still leave
-// individual products behind. Four oils currently carry a forecast from 2 July,
-// 833 L of it, and one of them is the single largest line on the Critical list.
+// It also reports what the newest upload DROPPED. The forecast is a snapshot —
+// a new file replaces the old one outright — so a product that stops appearing
+// stops counting toward demand. That is right when a contract ended and wrong
+// when somebody uploaded half a file, and the two look identical from here. So
+// the count stays visible instead of the system quietly picking an answer.
 function ForecastFreshnessCard({ meta }) {
   const age = meta.forecastAgeDays;
   const limit = meta.forecastStaleDays ?? 35;
-  const stragglers = meta.staleForecastProducts || 0;
+  const dropped = meta.forecastDropped || 0;
+  const top = meta.forecastDroppedTop || [];
   // Two levels, because "a cycle was missed" and "this has been abandoned" call
   // for different reactions. Amber at one missed month, red at two.
   const level = age == null ? 'unknown' : age > limit * 2 ? 'bad' : age > limit ? 'warn' : 'ok';
@@ -186,9 +189,11 @@ function ForecastFreshnessCard({ meta }) {
         {(meta.lastForecastImport.import_date_syd || '').split('-').reverse().join('/')} by {meta.lastForecastImport.imported_by}
       </span>
       {verdict && <span style={{ fontSize: 11, color: skin.fg, fontWeight: 600, lineHeight: 1.45, marginTop: 2 }}>{verdict}</span>}
-      {stragglers > 0 && (
+      {dropped > 0 && (
         <span style={{ fontSize: 11, color: '#fbbf24', lineHeight: 1.45, marginTop: 2 }}>
-          {stragglers} {stragglers === 1 ? 'oil is' : 'oils are'} still on a forecast older than {limit} days — the recent files did not mention {stragglers === 1 ? 'it' : 'them'}.
+          This file dropped {dropped} {dropped === 1 ? 'oil' : 'oils'} that the previous one carried
+          {top.length > 0 && ` (${top.map((t) => `${t.code} ${t.litres} L`).join(', ')}${dropped > top.length ? '…' : ''})`}.
+          {' '}They no longer count toward demand — correct if those contracts ended, wrong if the export was incomplete.
         </span>
       )}
     </div>
@@ -400,9 +405,9 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
               </div>
               {product.forecastStale && (
                 <div style={{ marginBottom: 10, padding: '6px 10px', background: 'rgba(217,119,6,0.12)', border: '1px solid rgba(217,119,6,0.35)', borderRadius: 8, fontSize: 11.5, color: '#fbbf24', lineHeight: 1.5 }}>
-                  The recent imports did not include this product, so everything below
-                  rests on a figure that is {product.forecastAgeDays} days old. Worth a look
-                  before ordering against it.
+                  This rests on a forecast file that is {product.forecastAgeDays} days old — the
+                  monthly import is overdue. Worth refreshing it before ordering against
+                  this figure.
                 </div>
               )}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
@@ -1090,13 +1095,13 @@ export default function ReplenishmentDashboard({ user }) {
                     )}
                   </td>
                   <td style={{ ...tdStyle, textAlign: 'right', color: '#60a5fa' }}>{p.retailDailyAvg > 0 ? fmt(p.retailDailyAvg, 3) : <span style={{color:'rgba(232,234,242,0.25)'}}>—</span>}</td>
-                  {/* An amber dot when this product's own forecast is older than a
-                      monthly cycle. The import can run and still leave products
-                      behind — FRAG_0060 drives the largest line on the Critical
-                      list off a figure from 2 July. */}
-                  <td style={{ ...tdStyle, textAlign: 'right', color: p.hasForecast ? (p.forecastStale ? '#fbbf24' : '#a78bfa') : 'rgba(232,234,242,0.25)' }}
-                    title={p.forecastStale ? `This forecast is ${p.forecastAgeDays} days old — the recent imports did not include this product` : undefined}>
-                    {p.hasForecast ? fmt(p.b2bDaily, 3) : '—'}{p.forecastStale ? ' ●' : ''}
+                  {/* No per-row staleness mark any more. It made sense while a
+                      product could sit on its own private old forecast; under
+                      snapshot semantics every forecast comes from the same file,
+                      so the mark would light every row at once the day that file
+                      ages — which is the portfolio card's job, said once. */}
+                  <td style={{ ...tdStyle, textAlign: 'right', color: p.hasForecast ? '#a78bfa' : 'rgba(232,234,242,0.25)' }}>
+                    {p.hasForecast ? fmt(p.b2bDaily, 3) : '—'}
                   </td>
                   <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, background: 'rgba(220,38,38,0.04)', color: p.daysConservative < 45 ? '#f87171' : p.daysConservative < 90 ? '#fbbf24' : '#4ade80' }}>
                     {p.daysConservative >= 9999 ? '∞' : fmtDays(p.daysConservative)}
@@ -1220,6 +1225,34 @@ function ImportReport({ result, onDismiss }) {
           <div style={{ fontSize: 11.5, color: 'rgba(232,234,242,0.5)', marginTop: 6 }}>
             Nothing was rejected — every row was imported. Fix these in the source file
             so the next import is clean.
+          </div>
+        </div>
+      )}
+
+      {/* WHAT THIS FILE DROPPED. The forecast is a snapshot — this upload
+          replaces the last one — so a code the previous file carried and this
+          one does not has stopped counting toward demand. Right when a contract
+          ended, wrong when the export came out short, and nothing here can tell
+          those apart. The person who just made the file can, in seconds, which
+          is why this appears now rather than being discovered next month. */}
+      {r && r.droppedCount > 0 && (
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${tone.bd}` }}>
+          <div style={{ color: '#fbbf24', fontWeight: 600, marginBottom: 4 }}>
+            {r.droppedCount} {r.droppedCount === 1 ? 'oil was' : 'oils were'} in the previous
+            forecast and not in this one{r.droppedLitres > 0 && <> — {r.droppedLitres} L</>}
+          </div>
+          <div style={{ fontSize: 12, color: 'rgba(232,234,242,0.8)', lineHeight: 1.6 }}>
+            {r.dropped.slice(0, 6).map((d, i) => (
+              <div key={i}>{d.code} — {d.name} ({d.litres} L)</div>
+            ))}
+            {r.dropped.length > 6 && (
+              <div style={{ color: 'rgba(232,234,242,0.45)' }}>…and {r.dropped.length - 6} more</div>
+            )}
+          </div>
+          <div style={{ fontSize: 11.5, color: 'rgba(232,234,242,0.55)', marginTop: 6 }}>
+            They no longer count toward demand. That is correct if those contracts
+            ended. If this list looks too long, the export may be incomplete — check
+            it before relying on the plan.
           </div>
         </div>
       )}
