@@ -65,8 +65,19 @@ export default function BOMViewer({ user }) {
       color: VARIANT_COLORS[k],
       subCategory: 'Oil Products',
     }])),
-    'REFURB_SCENTPRO': { name: 'Refurb - Scentpro',     volume: 0,    color: '#f59e0b', subCategory: 'Refurb - Scentpro' },
-    'REFURB_SCENTLITE':{ name: 'Refurb - ScentLite',    volume: 0,    color: '#06b6d4', subCategory: 'Refurb - ScentLite' },
+    // A refurb variant is "what a reconditioned unit ships with" — one bottle,
+    // not a parts list. The machine's actual build lives on the Diffuser BOM
+    // page. Each entry names the machines it covers so REFURB_MACHINE_COVERAGE
+    // below can prove none is left without a home; that is exactly what went
+    // wrong with the 700 Medium.
+    'REFURB_SCENTPRO':     { name: 'Refurb - ScentPro Smart Medium', volume: 0, color: '#f59e0b', subCategory: 'Refurb - Scentpro' },
+    // Added 2026-09-15. The 700 Medium was registered as a product (SA_RF00005,
+    // SA_RF00006) with no variant to hang a BOM on, and the page offers no way
+    // to create one — the list is source code. The owner: "notei que tem uma
+    // máquina que virou refurb e não está lá, queria adicionar mas não é
+    // possível". It ships with the 700 ml bottle, not the PRO one.
+    'REFURB_SCENTPRO_700': { name: 'Refurb - ScentPro 700 Medium',   volume: 0, color: '#fb923c', subCategory: 'Refurb - Scentpro' },
+    'REFURB_SCENTLITE':    { name: 'Refurb - ScentLite Bathroom',    volume: 0, color: '#06b6d4', subCategory: 'Refurb - ScentLite' },
   };
 
   const ALL_KNOWN_VARIANTS = Object.keys(VARIANT_CONFIG);
