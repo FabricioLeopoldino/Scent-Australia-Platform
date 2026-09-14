@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
+import { SYSTEM_NAMES } from '../../shared/business-names.js';
 import { ArrowLeft, Plus, KeyRound, Trash2, Copy, Check } from 'lucide-react';
 
 const ROLES = ['root', 'admin', 'user', 'technician'];
 const ALL_MODULES = ['SA', 'SM', 'MUSE'];
-const MODULE_LABELS = { SA: 'Scent Stock Manager', SM: 'Scented Merchandise', MUSE: 'MUSE' };
+const MODULE_LABELS = { SA: 'Scent Stock Manager', SM: SYSTEM_NAMES.SM, MUSE: SYSTEM_NAMES.MUSE };
 
 // Platform-level User Management (root only) — FR-USER-1..4.
 // Global role + per-module access checkboxes (D6).

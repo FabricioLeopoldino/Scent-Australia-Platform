@@ -2,6 +2,7 @@ import express from 'express';
 import { saPool, smPool, platformPool } from '../db.js';
 import { requireRole } from './auth.js';
 import { DIRECTION_SQL, BUSINESS_SQL, SA_SYSTEM_SQL, systemMatches, typesVisibleIn } from './movement-direction.js';
+import { SYSTEM_NAMES } from '../../shared/business-names.js';
 
 // ── Timestamps ───────────────────────────────────────────────────────────
 // WHY THIS EXISTS (2026-09-15). `created_at` is `timestamp WITHOUT time zone`
@@ -39,7 +40,7 @@ const router = express.Router();
 // by the product's segment (audit rows: SA vs SM, MUSE split where derivable).
 // ═══════════════════════════════════════════════════════════════════════
 
-const SYSTEMS = ['SA', 'Scented Merchandise', 'MUSE', 'Platform'];
+const SYSTEMS = ['SA', SYSTEM_NAMES.SM, 'MUSE', 'Platform'];
 const cap = (v, def, max) => Math.min(parseInt(v) || def, max);
 
 // t.* date/type/search filters — Sydney-local date matches the SA module's own
@@ -68,7 +69,7 @@ const SM_TX = `
   SELECT t.id::text AS id, ${UTC_ISO('t.created_at')}, COALESCE(u.name, 'System') AS performed_by,
          t.type, t.category, t.product_name, t.product_code,
          t.quantity, t.unit, t.balance_after, t.notes,
-         CASE WHEN p.segment = 'MUSE' THEN 'MUSE' ELSE 'Scented Merchandise' END AS system,
+         CASE WHEN p.segment = 'MUSE' THEN 'MUSE' ELSE '${SYSTEM_NAMES.SM}' END AS system,
          ${DIRECTION_SQL()} AS direction
   FROM transactions t
   LEFT JOIN users u ON t.user_id = u.id
@@ -80,8 +81,8 @@ async function fetchHistory({ system, from, to, type, search, limit }) {
   // sa is read for MUSE and Scented too: the oil they consume is recorded
   // there, and skipping it is what made the MUSE filter show no fragrance.
   const wantSA = !system || system === 'ALL' || system === 'SA'
-    || system === 'SM' || system === 'MUSE' || system === 'Scented Merchandise';
-  const wantSM = !system || system === 'ALL' || system === 'SM' || system === 'MUSE' || system === 'Scented Merchandise';
+    || system === 'SM' || system === 'MUSE' || system === SYSTEM_NAMES.SM;
+  const wantSM = !system || system === 'ALL' || system === 'SM' || system === 'MUSE' || system === SYSTEM_NAMES.SM;
   const jobs = [];
   if (wantSA) {
     const p = [];
@@ -131,7 +132,7 @@ const SA_AUDIT = `
 const SM_AUDIT = `
   SELECT al.id::text AS id, ${UTC_ISO('al.created_at')}, COALESCE(u.name, 'System') AS performed_by,
          al.action, al.entity_type, al.entity_name, al.details::text AS details,
-         CASE WHEN al.details->>'segment' = 'MUSE' THEN 'MUSE' ELSE 'Scented Merchandise' END AS system
+         CASE WHEN al.details->>'segment' = 'MUSE' THEN 'MUSE' ELSE '${SYSTEM_NAMES.SM}' END AS system
   FROM audit_log al LEFT JOIN users u ON al.user_id = u.id
   WHERE 1=1`;
 
@@ -155,7 +156,7 @@ const PF_AUDIT = `
 async function fetchActivity({ system, from, to, action, search, limit }) {
   const lim = cap(limit, 2000, 10000);
   const wantSA = !system || system === 'ALL' || system === 'SA';
-  const wantSM = !system || system === 'ALL' || system === 'SM' || system === 'MUSE' || system === 'Scented Merchandise';
+  const wantSM = !system || system === 'ALL' || system === 'SM' || system === 'MUSE' || system === SYSTEM_NAMES.SM;
   const wantPF = !system || system === 'ALL' || system === 'Platform';
   const jobs = [];
   if (wantSA) { const p = []; jobs.push(saPool.query(auditFilters(SA_AUDIT, { from, to, action, search }, p) + ` ORDER BY al.created_at DESC LIMIT ${lim}`, p).then(r => r.rows)); }

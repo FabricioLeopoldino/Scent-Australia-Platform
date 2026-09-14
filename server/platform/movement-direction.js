@@ -1,3 +1,5 @@
+import { SYSTEM_NAMES } from '../../shared/business-names.js';
+
 // Which way a stock movement went. ONE definition, for every screen that shows
 // one.
 //
@@ -152,10 +154,10 @@ export { BUSINESS };
 const ALSO_VISIBLE_IN = {
   muse_production:     'MUSE',
   muse_reversal:       'MUSE',
-  sm_std_production:   'Scented Merchandise',
-  sm_std_reversal:     'Scented Merchandise',
-  sm_major_production: 'Scented Merchandise',
-  sm_major_reversal:   'Scented Merchandise',
+  sm_std_production:   SYSTEM_NAMES.SM,
+  sm_std_reversal:     SYSTEM_NAMES.SM,
+  sm_major_production: SYSTEM_NAMES.SM,
+  sm_major_reversal:   SYSTEM_NAMES.SM,
 };
 
 /** The second system a movement is visible in, or null when it is only its own. */
@@ -185,7 +187,7 @@ export function systemMatches(rowSystem, wanted) {
  * filter ever saw them. 'SM' means both of its halves.
  */
 export function typesVisibleIn(system) {
-  const want = system === 'SM' ? ['MUSE', 'Scented Merchandise'] : [system];
+  const want = system === 'SM' ? ['MUSE', SYSTEM_NAMES.SM] : [system];
   return Object.entries(ALSO_VISIBLE_IN).filter(([, v]) => want.includes(v)).map(([k]) => k);
 }
 

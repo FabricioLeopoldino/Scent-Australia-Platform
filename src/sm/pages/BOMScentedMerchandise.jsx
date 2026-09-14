@@ -101,7 +101,7 @@ export default function BOMScentedMerchandise() {
         <h1 style={{ fontFamily: 'Archivo Black, sans-serif', fontSize: 22, color: '#e8eaf2' }}>Bill of Materials</h1>
       </div>
       <div style={{ fontSize: 13, color: 'rgba(232,234,242,0.5)', marginBottom: 22 }}>
-        Centralized BOM management for Scented Merchandise masters
+        Centralized BOM management for The Atelier masters
       </div>
 
       {/* Controls — tabs + search in an SA glowing panel */}

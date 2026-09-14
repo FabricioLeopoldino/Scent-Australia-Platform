@@ -31,6 +31,7 @@ import { dirname, join } from 'node:path';
 import jwt from 'jsonwebtoken';
 import pkg from 'pg';
 import { systemMatches, alsoVisibleIn } from '../server/platform/movement-direction.js';
+import { SYSTEM_NAMES } from '../shared/business-names.js';
 const { Pool } = pkg;
 
 // Read straight from sa to know the TRUE count, independent of the report. The
@@ -63,7 +64,11 @@ const history = async (params) => {
 try {
   console.log('\n1. The rule itself, before any HTTP');
   check(alsoVisibleIn('muse_production') === 'MUSE', 'muse_production is also a MUSE movement');
-  check(alsoVisibleIn('sm_std_production') === 'Scented Merchandise', 'Atelier production too');
+  // Reads the constant rather than its own copy of the string. The rename of
+  // 2026-09-15 (Scented Merchandise → The Atelier) broke this line precisely
+  // because it held a copy — which is the reason the names now live in one file.
+  check(alsoVisibleIn('sm_std_production') === SYSTEM_NAMES.SM,
+    `${SYSTEM_NAMES.SM} production too`, alsoVisibleIn('sm_std_production'));
   check(alsoVisibleIn('shopify_sale') === null, 'an ordinary store sale belongs to one side only');
   check(systemMatches('SA · MUSE', 'MUSE'), 'a composite label satisfies MUSE');
   check(systemMatches('SA · MUSE', 'SA'), 'and still satisfies SA');

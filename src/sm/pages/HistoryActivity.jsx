@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { SYSTEM_NAMES } from '../../../shared/business-names.js'
 import { Search, Download, History as HistoryIcon, ScrollText } from 'lucide-react'
 import axios from 'axios'
 import { useToast } from '../SMModule.jsx'
@@ -9,9 +10,9 @@ function api() { return { headers: { Authorization: `Bearer ${localStorage.getIt
 
 // Centralized cross-system report (owner 2026-07-28): one page that unions the
 // stock history (kind="history") or audit events (kind="activity") of SA +
-// Scented Merchandise + MUSE, with a System column, filters and CSV export.
+// The Atelier + MUSE, with a System column, filters and CSV export.
 // Backend: /api/platform/history|activity (+ /export). Admin/root only.
-const SYS_COLOR = { SA: '#60a5fa', 'Scented Merchandise': '#4ade80', MUSE: '#fbbf24', Platform: '#a78bfa' }
+const SYS_COLOR = { SA: '#60a5fa', [SYSTEM_NAMES.SM]: '#4ade80', MUSE: '#fbbf24', Platform: '#a78bfa' }
 
 // A movement can belong to two systems at once — oil leaves SA's shelf BECAUSE
 // of a MUSE sale, and the label says "SA · MUSE". Colour it by the business
@@ -27,16 +28,16 @@ const sysColour = (system) =>
 // transfers, product links), so only Activity offers that filter.
 const CONFIG = {
   history: {
-    title: 'History', sub: 'All stock movements across SA · Scented Merchandise · MUSE',
+    title: 'History', sub: `All stock movements across SA · ${SYSTEM_NAMES.SM} · MUSE`,
     icon: HistoryIcon, endpoint: 'history', searchPlaceholder: 'Search product or code…',
     columns: ['Date', 'System', 'By', 'Type', 'Product', 'Qty', 'Balance after', 'Notes'],
-    systems: ['ALL', 'SA', 'Scented Merchandise', 'MUSE'],
+    systems: ['ALL', 'SA', SYSTEM_NAMES.SM, 'MUSE'],
   },
   activity: {
-    title: 'Activity', sub: 'All system actions across SA · Scented Merchandise · MUSE · Platform',
+    title: 'Activity', sub: `All system actions across SA · ${SYSTEM_NAMES.SM} · MUSE · Platform`,
     icon: ScrollText, endpoint: 'activity', searchPlaceholder: 'Search entity or action…',
     columns: ['Date', 'System', 'By', 'Action', 'Entity', 'Details'],
-    systems: ['ALL', 'SA', 'Scented Merchandise', 'MUSE', 'Platform'],
+    systems: ['ALL', 'SA', SYSTEM_NAMES.SM, 'MUSE', 'Platform'],
   },
 }
 
@@ -88,8 +89,8 @@ function SysBadge({ system }) {
   )
 }
 
-const SCOPE_BY_MODULE = { MUSE: 'MUSE', SM: 'Scented Merchandise', OPS: 'SM' }
-const SCOPE_LABEL = { MUSE: 'MUSE', 'Scented Merchandise': 'Scented Merchandise', SM: 'Scented Merchandise & MUSE' }
+const SCOPE_BY_MODULE = { MUSE: 'MUSE', SM: SYSTEM_NAMES.SM, OPS: 'SM' }
+const SCOPE_LABEL = { MUSE: 'MUSE', [SYSTEM_NAMES.SM]: SYSTEM_NAMES.SM, SM: `${SYSTEM_NAMES.SM} & MUSE` }
 
 export default function HistoryActivity({ kind = 'history' }) {
   const cfg = CONFIG[kind]

@@ -631,7 +631,7 @@ export default function ProductManagement({ user, libraryMode = false }) {
       <div className="page-header">
         <h2 className="page-title">{libraryMode ? 'Fragrance Library' : 'Product Management'}</h2>
         <p style={{ color: 'rgba(232,234,242,0.45)', marginTop: '8px' }}>
-          {libraryMode ? 'The single source of truth for oil — shared by SA, Scented Merchandise and MUSE' : 'Manage all products across categories'}
+          {libraryMode ? 'The single source of truth for oil — shared by SA, The Atelier and MUSE' : 'Manage all products across categories'}
         </p>
       </div>
 

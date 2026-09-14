@@ -1,4 +1,5 @@
 import { Package, FlaskConical, Sparkles, Factory, Users, LogOut, Droplets, History } from 'lucide-react';
+import { SYSTEM_NAMES } from '../../shared/business-names.js';
 
 // Module Picker — behavioral spec in PRD Appendix B.
 // Tiles: SA / SM enabled by user.modules; MUSE always "Coming soon" (B6).
@@ -25,7 +26,7 @@ const MODULES = [
   },
   {
     key: 'SM',
-    title: 'Scented Merchandise',
+    title: SYSTEM_NAMES.SM,
     subtitle: 'B2B clients · catalogs',
     icon: FlaskConical,
     logo: '/logo-light.png',       // same mark as SA (owner decision)

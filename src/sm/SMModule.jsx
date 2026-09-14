@@ -84,7 +84,7 @@ function installAxiosInterceptors() {
 installAxiosInterceptors();
 
 // ─────────────────────────────────────────
-// SM MODULE (Scented Merchandise + MUSE views) — Phase 3c
+// SM MODULE (The Atelier + MUSE views) — Phase 3c
 // Login/forced-password-change/user-management live in the platform shell.
 // ─────────────────────────────────────────
 export default function SMModule({ user, onLogout }) {

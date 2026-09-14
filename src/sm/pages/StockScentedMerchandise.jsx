@@ -328,7 +328,7 @@ export default function StockScentedMerchandise() {
             <h1 style={{ fontFamily: 'Archivo Black, sans-serif', fontSize: 22, color: '#e8eaf2' }}>Stock</h1>
           </div>
           <div style={{ fontSize: 13, color: 'rgba(232,234,242,0.5)' }}>
-            Components, labels and reserved stock for Scented Merchandise
+            Components, labels and reserved stock for The Atelier
           </div>
         </div>
         {/* "+ New Product" across the general product tabs (parity with /stock).

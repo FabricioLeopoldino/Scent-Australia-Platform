@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { SYSTEM_NAMES } from '../../../shared/business-names.js'
 import { useLocation } from 'wouter'
 import { useAuth } from '../SMModule.jsx'
 import {
@@ -17,7 +18,7 @@ function getInitialTheme() {
 // Sections with headers. Each section has items; headers render as small uppercase labels.
 // D11 (owner, 2026-07-11): THREE views over this module, picked by tile —
 //   'ops'  → Production & Operations (factory floor + warehouse + shared inventory)
-//   'sm'   → Scented Merchandise (B2B commercial)
+//   'sm'   → The Atelier (B2B commercial, was Scented Merchandise)
 //   'muse' → MUSE own brand (D7)
 // Each section lists the views it appears in (default ['sm']).
 const NAV_SECTIONS = [
@@ -75,7 +76,7 @@ export default function Layout({ children }) {
   // D7/D11: the active tile decides the view (and the sidebar brand) —
   //   OPS tile  → Production & Operations (factory/warehouse sections)
   //   MUSE tile → MU:SE mark + MUSE sections
-  //   SM tile   → Scented Merchandise brand + B2B sections
+  //   SM tile   → The Atelier brand + B2B sections
   const activeModule = typeof localStorage !== 'undefined' ? localStorage.getItem('platform_active_module') : null
   const activeView = activeModule === 'MUSE' ? 'muse' : activeModule === 'OPS' ? 'ops' : activeModule === 'REPORTS' ? 'reports' : 'sm'
 
@@ -122,10 +123,10 @@ export default function Layout({ children }) {
           )}
           {!collapsed && activeView === 'sm' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {/* SM view — Scented Merchandise wordmark (D7: MUSE mark lives on its own tile) */}
+              {/* SM view — The Atelier wordmark (D7: MUSE mark lives on its own tile) */}
               <div>
                 <div className="serif" style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.02em', lineHeight: 1.1 }}>
-                  Scented Merchandise
+                  {SYSTEM_NAMES.SM}
                 </div>
                 <div style={{ fontSize: 8.5, fontWeight: 600, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-muted)', marginTop: 3 }}>
                   B2B Clients &amp; Catalog
