@@ -44,3 +44,25 @@ export function refurbVariantFor(productCode) {
     .find(([, v]) => v.machines.includes(productCode));
   return hit ? hit[0] : null;
 }
+
+// Which row of `bom` a product's components hang off, or null for a product
+// that has none. ONE answer, used by the sale and by the reversal, so the two
+// can never disagree about what a sale consumed.
+//
+// WHY MACHINES ARE HERE NOW (2026-09-15). They were not: the webhook read
+// "Machine — no BOM, direct debit" and took out the machine alone. The owner
+// confirmed that is wrong in the real world — "sim sai junto com alguns outros
+// spare parts" — so 2,447 machines have shipped with parts the system never
+// deducted, 14 of them refurbished.
+//
+// Only refurbished machines are wired up. A new machine's parts list lives in
+// the separate `diffuser_bom` table, keyed by its own type codes
+// ('wifi_pro_black' and friends) that nothing maps to a product code — so there
+// is no honest way to resolve one yet, and guessing at it would debit the wrong
+// parts. Returning null leaves those exactly as they behave today.
+export function bomVariantFor(product) {
+  if (!product) return null;
+  if (product.category === 'SA_SCENTED_PRODUCTS') return product.productCode;
+  if (product.category === 'SCENT_MACHINES') return refurbVariantFor(product.productCode);
+  return null;
+}

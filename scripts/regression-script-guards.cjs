@@ -149,6 +149,16 @@ const GUARDED = /--apply|--commit|CLEANUP_DATABASE_URL|assertStoreNotLive|ROLLBA
     // shout about an old forecast that moves no number. Deleted in the finally
     // block, which then counts what is left and fails if anything remains.
     'regression-forecast-freshness.js',
+    // Added 2026-09-15. One disposable spare part, one BOM line hung off the
+    // empty REFURB_SCENTPRO_700 variant, and a real fulfilment of ONE unit of a
+    // real refurbished machine — the resolver reads a static map, so a
+    // throwaway machine cannot exercise the path at all. Sale and cancellation
+    // both run; the cancellation is the restore and is verified, and the finally
+    // block puts the machine back by hand if the run dies between the two. It
+    // uses the 700 Medium because that variant is empty, so no real component is
+    // ever dragged in — the first attempt used a variant holding the real PRO
+    // bottle and left it one unit out.
+    'regression-machine-bom-consumption.js',
   ];
 
   const unguarded = [];

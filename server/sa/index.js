@@ -11,6 +11,7 @@
 
 import express from 'express';
 import { calcSmartDemand } from '../../shared/demand-calculator.js';
+import { bomVariantFor } from '../../shared/refurb-machines.js';
 import { isValidReason, reasonLabel } from '../../shared/stock-reasons.js';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
@@ -2446,14 +2447,20 @@ export async function saWebhookHandler(req, res) {
           // STEP 2: Debit BOM components
           // ========================================================================
 
-          // ── SA_SCENTED_PRODUCTS: BOM variant = product's own SKU ──────────────
-          if (product.category === 'SA_SCENTED_PRODUCTS') {
+          // ── Which BOM this product consumes, if any ───────────────────────────
+          // Scented goods use their own SKU. Refurbished machines use their
+          // model's REFURB_* variant, which is new here: until 2026-09-15 a
+          // machine was debited alone and the parts that physically ship with it
+          // were never taken out. The owner confirmed they do ship.
+          // A machine with no mapped variant behaves exactly as before.
+          const bomVariant = bomVariantFor(product);
+          if (bomVariant) {
             const scentedBom = await client.query(
               'SELECT * FROM bom WHERE variant = $1 ORDER BY seq',
-              [product.productCode]
+              [bomVariant]
             );
             if (scentedBom.rows.length > 0) {
-              console.log(`🧴 Scented BOM: ${scentedBom.rows.length} components for ${product.productCode}`);
+              console.log(`🧴 BOM ${bomVariant}: ${scentedBom.rows.length} components for ${product.productCode}`);
               for (const bomItem of scentedBom.rows) {
                 const compRes = await client.query(
                   'SELECT * FROM products WHERE ("productCode" = $1 OR tag = $1) FOR UPDATE',
@@ -2476,7 +2483,7 @@ export async function saWebhookHandler(req, res) {
                    VALUES ($1,$2,$3,$4,'shopify_sale',$5,$6,$7,$8,$9)`,
                   [comp.id, comp.productCode || comp.tag, comp.name, comp.category,
                    compQty, bomItem.unit || comp.unit || 'mL', compNewStock,
-                   `Shopify Order ${baseOrderName} - BOM (${quantity}x ${product.productCode})`,
+                   `Shopify Order ${baseOrderName} - BOM ${bomVariant} (${quantity}x ${product.productCode})`,
                    baseOrderName]
                 );
                 console.log(`  ✅ Scented BOM: ${comp.name} -${compQty} ${bomItem.unit || comp.unit} (New: ${compNewStock})`);
@@ -2783,12 +2790,14 @@ export async function saWebhookHandler(req, res) {
         );
         console.log(`↩️  Reversed: ${product.name} +${totalReversal} ${product.unit} (New: ${newStock})`);
 
-        // Also reverse BOM components
-        if (product.category === 'SA_SCENTED_PRODUCTS') {
-          // Scented products: BOM variant = product's own SKU
+        // Also reverse BOM components — the SAME resolver the sale used, so a
+        // cancellation always gives back exactly what the sale took. Two copies
+        // of this decision is how a reversal starts crediting the wrong thing.
+        const bomVariantRev = bomVariantFor(product);
+        if (bomVariantRev) {
           const scentedBomRev = await client.query(
             'SELECT * FROM bom WHERE variant = $1 ORDER BY seq',
-            [product.productCode]
+            [bomVariantRev]
           );
           for (const bomItem of scentedBomRev.rows) {
             const compRes = await client.query(
