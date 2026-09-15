@@ -844,9 +844,17 @@ export default function ProductManagement({ user, libraryMode = false }) {
       {/* Products Table */}
       <div className="card" style={{ position: 'relative', overflow: 'visible' }}>
         <GlowingEffect spread={30} glow={false} disabled={false} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
-        <div className="table-scroll" style={{ overflowX: 'auto' }}>
+        {/* SCROLLING (2026-09-15). The owner: "o sistema de filtro está ruim na
+            questão de rolagem, coloca uma barra lateral." The filter chips and
+            the column headings sat at the top of the page and the table then
+            ran for as many rows as matched — 772 products here, 282 oils in the
+            Fragrance Library — so scrolling to row 300 left you with no headings
+            and no filters, and no way back except scrolling up again.
+            The table now scrolls inside its own box with the headings pinned,
+            which is what the Demand Planning table already did. */}
+        <div className="table-scroll" style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '68vh' }}>
           <table className="table">
-            <thead>
+            <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: '#0e0e1a' }}>
               <tr>
                 <th>Tag</th>
                 <th>Product Code</th>
