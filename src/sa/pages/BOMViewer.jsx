@@ -12,7 +12,7 @@ export default function BOMViewer({ user }) {
   const [selectedVariant, setSelectedVariant] = useState('SA_CA');
   const [selectedSubCategory, setSelectedSubCategory] = useState('ALL');
   const [products, setProducts] = useState([]);
-  const [rawMaterials, setRawMaterials] = useState([]);
+  const [components, setComponents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -41,7 +41,16 @@ export default function BOMViewer({ user }) {
       setBom(bomData && typeof bomData === 'object' && !Array.isArray(bomData) ? bomData : {});
       const safeProducts = Array.isArray(productsData) ? productsData : [];
       setProducts(safeProducts);
-      setRawMaterials(safeProducts.filter(p => p.category === 'RAW_MATERIALS'));
+      // WHAT MAY BE A COMPONENT (2026-09-15). This offered RAW_MATERIALS and
+      // nothing else, which was narrower than reality in two directions: the
+      // owner went to build a machine's BOM and found no spare parts to pick
+      // ("os componentes que vao la sao spares parts e so consigo adicionar raw
+      // material"), and the BOMs already stored contain 113 different OILS
+      // across 354 lines — put there by import, because this screen could never
+      // have added them. A picker narrower than the data it edits is a trap:
+      // everything looks fine until somebody tries to add the obvious thing.
+      setComponents(safeProducts.filter(p =>
+        ['RAW_MATERIALS', 'MACHINES_SPARES', 'OILS'].includes(p.category)));
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -215,9 +224,9 @@ export default function BOMViewer({ user }) {
     });
   };
 
-  const handleRawMaterialSelect = (e) => {
+  const handleComponentSelect = (e) => {
     const code = e.target.value;
-    const rm = rawMaterials.find(r => r.productCode === code);
+    const rm = components.find(r => r.productCode === code);
     if (rm) {
       setFormData({
         componentCode: rm.productCode,
@@ -489,9 +498,9 @@ export default function BOMViewer({ user }) {
         <div className="card" style={{ textAlign: 'center', padding: '20px', position: 'relative', overflow: 'visible' }}>
           <GlowingEffect spread={30} glow={false} disabled={false} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
           <div style={{ fontSize: '32px', fontWeight: '900', color: '#10b981', marginBottom: '8px' }}>
-            {rawMaterials.length}
+            {components.length}
           </div>
-          <div style={{ fontSize: '13px', color: 'rgba(232,234,242,0.45)', fontWeight: '600' }}>Available Raw Materials</div>
+          <div style={{ fontSize: '13px', color: 'rgba(232,234,242,0.45)', fontWeight: '600' }}>Available Components</div>
         </div>
       </div>
 
@@ -507,17 +516,33 @@ export default function BOMViewer({ user }) {
             <form onSubmit={handleAddComponent}>
               <div className="form-group">
                 <label>Select Raw Material</label>
+                {/* Grouped: three categories and 350-odd options is a wall of
+                    text otherwise, and a machine's spare part and an oil read
+                    almost the same in a flat list. optgroup is native — no
+                    library, and it still works with type-ahead. */}
                 <select
                   className="input"
-                  onChange={handleRawMaterialSelect}
+                  onChange={handleComponentSelect}
                   value={formData.componentCode}
                 >
-                  <option value="">-- Select a Raw Material --</option>
-                  {rawMaterials.map(rm => (
-                    <option key={rm.productCode} value={rm.productCode}>
-                      {rm.productCode} - {rm.name}
-                    </option>
-                  ))}
+                  <option value="">-- Select a component --</option>
+                  {[
+                    ['MACHINES_SPARES', 'Machine spare parts'],
+                    ['RAW_MATERIALS',   'Raw materials'],
+                    ['OILS',            'Oils'],
+                  ].map(([cat, label]) => {
+                    const list = components.filter(c => c.category === cat);
+                    if (!list.length) return null;
+                    return (
+                      <optgroup key={cat} label={`${label} (${list.length})`}>
+                        {list.map(rm => (
+                          <option key={rm.productCode} value={rm.productCode}>
+                            {rm.productCode} - {rm.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    );
+                  })}
                 </select>
               </div>
 

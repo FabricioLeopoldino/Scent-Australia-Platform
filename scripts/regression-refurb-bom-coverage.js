@@ -26,6 +26,9 @@
 //
 // Run: node scripts/regression-refurb-bom-coverage.js
 import 'dotenv/config';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import pkg from 'pg';
 import { REFURB_MACHINE_COVERAGE, refurbVariantFor } from '../shared/refurb-machines.js';
 const { Pool } = pkg;
@@ -106,6 +109,30 @@ try {
   check(undocumented.length === 0,
     `all ${stored.length} stored refurb variants are described in shared/refurb-machines.js`,
     undocumented.join(', '));
+
+  console.log('\n6. The screen can pick everything a BOM is allowed to hold');
+  // The picker offered RAW_MATERIALS and nothing else — narrower than the data
+  // it edits, in two directions at once. A machine's parts are MACHINES_SPARES,
+  // so the owner could not add one at all ("os componentes que vão lá são
+  // spare parts e só consigo adicionar raw material"); and the stored BOMs
+  // already hold 113 different OILS across 354 lines, put there by import
+  // because this screen could never have added them either.
+  const page = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src/sa/pages/BOMViewer.jsx'), 'utf8');
+  const offered = (page.match(/\['RAW_MATERIALS'[^\]]*\]/) || [''])[0];
+  for (const cat of ['RAW_MATERIALS', 'MACHINES_SPARES', 'OILS']) {
+    check(offered.includes(`'${cat}'`), `the picker offers ${cat}`, offered || 'list not found');
+  }
+  // The one that keeps it honest as the data moves, rather than a list that was
+  // right on the day somebody wrote it: whatever the BOMs actually contain must
+  // be selectable on the screen that edits them.
+  const used = (await pool.query(`
+    SELECT DISTINCT pr.category c FROM bom b JOIN products pr ON pr."productCode" = b.component_code
+    WHERE pr.category IS NOT NULL`)).rows.map((r) => r.c);
+  const cannotPick = used.filter((c) => !offered.includes(`'${c}'`));
+  check(cannotPick.length === 0,
+    `every category already used in a BOM (${used.join(', ')}) can be picked`,
+    cannotPick.join(', '));
 
   console.log(failed === 0
     ? '\n✅ refurb-bom-coverage: all checks passed'
