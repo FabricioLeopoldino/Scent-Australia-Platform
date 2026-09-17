@@ -307,8 +307,19 @@ const generateAutoSkus = (category, baseNumber) => {
   }
 
   if (category === 'SCENT_MACHINES') {
+    // SA_00014, not SA_DM_00014. Shopify is the authority on the SKU and this is
+    // what the owner set there on 2026-09-16; it also continues the series the
+    // thirteen machines registered in March already use (SA_0001 … SA_0013),
+    // which no machine has ever departed from. The 'SA_DM' KEY stays: it is what
+    // VARIANT_DETAILS is looked up by when a product is pushed to the store, and
+    // it is not the SKU. Key and value differing is exactly what the Diffusers
+    // screen used to confuse — see scripts/regression-machine-sku.js.
+    //
+    // One difference worth knowing: the March machines pad to four digits and
+    // everything minted since pads to five, so the series reads SA_0013 then
+    // SA_00014. Left as it is because SA_00014 is already live in Shopify.
     return {
-      SA_DM: `SA_DM_${paddedNum}`
+      SA_DM: `SA_${paddedNum}`
     };
   }
 
@@ -853,6 +864,57 @@ router.put('/products/:id', async (req, res) => {
         }
       }
       skusJson = JSON.stringify(shopifySkus);
+
+      // An empty object is never a deliberate instruction to un-sell a product:
+      // the SKU is the ONLY link between a Shopify sale and this row, and the
+      // match is on the VALUE. Clear it and the sale arrives, finds nothing and
+      // is written to webhook_skipped, where nobody looks.
+      //
+      // WHY THIS EXISTS (2026-09-16). HVAC Scent Station was registered on the
+      // Products screen, which minted SA_DM_00014 correctly and pushed it to
+      // Shopify. Opening it on the Diffusers screen to fill in colour and
+      // sub-category loaded the SKU field from Object.KEYS — the prefix 'SA_DM'
+      // — and saving wrote that back as the value. The thirteen machines that
+      // came before never showed the fault because their key and value are the
+      // same string; this was the first product where they differ. The screen
+      // is fixed too, but the mint belongs here so no caller can blank a SKU.
+    }
+
+    // Checked on the RESULT, not on what was sent: a screen that omits the field
+    // entirely leaves a row that is already blank still blank, which is the state
+    // HVAC Scent Station was left in. Minting here repairs it on the next save
+    // without anyone typing a code.
+    const arrivedEmpty = skusJson
+      ? Object.keys(JSON.parse(skusJson)).length === 0
+      : null; // null = field not sent at all
+    if (arrivedEmpty !== false) {
+      const cur = (await pool.query(
+        `SELECT category, tag, "productCode", "shopifySkus" FROM products WHERE id = $1`,
+        [productId])).rows[0];
+      const stored = parseJSONB(cur?.shopifySkus) || {};
+
+      if (Object.keys(stored).length > 0) {
+        // A stored SKU is never replaced by a mint. The thirteen machines from
+        // March pad to four digits (SA_0013); minting over one would write
+        // SA_00013, a code Shopify does not carry, and turn a working product
+        // into a silently unsellable one — the exact failure this guard exists
+        // to prevent, caused by the guard. An empty object is treated as "leave
+        // it alone", never as "clear it".
+        skusJson = null;
+      } else if (cur) {
+        // Genuinely no SKU: mint one. Read the category and tag being SET in this
+        // same request where they were sent, not only what is on the row, or a
+        // product whose category changes here mints against the old one. Fall
+        // back to the product code when the tag carries no number.
+        const effCategory = category || cur.category;
+        const digits = String(tag || cur.tag || '').match(/\d+/)
+          || String(cur.productCode || '').match(/\d+/);
+        const minted = digits ? generateAutoSkus(effCategory, parseInt(digits[0])) : {};
+        if (Object.keys(minted).length > 0) {
+          skusJson = JSON.stringify(minted);
+          console.log(`✨ Minted SKU for ${productId}: ${JSON.stringify(minted)} (had none)`);
+        }
+      }
     }
 
     let skuMultipliersJson = null;

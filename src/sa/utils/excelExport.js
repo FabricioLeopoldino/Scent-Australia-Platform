@@ -59,7 +59,7 @@ export function exportProductsToExcel(products, allAliases = []) {
     'Min Stock Level': product.minStockLevel,
     'Supplier': product.supplier || '-',
     'Supplier Code': product.supplier_code || '-',
-    'Shopify SKUs': Object.keys(product.shopifySkus || {}).join(', ') || '-',
+    'Shopify SKUs': Object.values(product.shopifySkus || {}).filter(Boolean).join(', ') || '-',
     'Created At': product.createdAt ? new Date(product.createdAt).toLocaleDateString('en-AU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '-'
   }));
 
@@ -169,7 +169,7 @@ export function exportFullDatabaseToExcel(products, transactions) {
     'Min Stock Level': product.minStockLevel,
     'Supplier': product.supplier || '-',
     'Supplier Code': product.supplier_code || '-',
-    'Shopify SKUs': Object.keys(product.shopifySkus || {}).join(', ') || '-'
+    'Shopify SKUs': Object.values(product.shopifySkus || {}).filter(Boolean).join(', ') || '-'
   }));
   const wsProducts = XLSX.utils.json_to_sheet(productsData);
   wsProducts['!cols'] = [

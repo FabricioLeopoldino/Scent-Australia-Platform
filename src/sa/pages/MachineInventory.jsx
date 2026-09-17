@@ -103,14 +103,13 @@ export default function MachineInventory({ user }) {
 
       const method = editingMachine ? 'PUT' : 'POST';
 
-      // Convert shopifySkus string to object
-      let skusObject = {};
-      if (formData.shopifySkus && formData.shopifySkus.trim()) {
-        const skusArray = formData.shopifySkus.split(',').map(s => s.trim()).filter(Boolean);
-        skusArray.forEach(sku => {
-          skusObject[sku] = sku;
-        });
-      }
+      // The SKU is NOT sent from this screen. It is minted once, on the server,
+      // in the SA_000NN series and owned there rather than typed — the same rule
+      // the Muse catalogue was put under on 11 August after fifteen products
+      // launched on hand-typed codes. Omitting the field entirely (rather than
+      // sending an empty object) leaves the stored value untouched by the
+      // COALESCE in PUT /products/:id, so completing a machine's colour and
+      // sub-category can no longer disturb the one string a sale is matched on.
 
       // ENSURE fields are strings (not undefined/null)
       const sub_category = formData.sub_category || '';
@@ -127,7 +126,6 @@ export default function MachineInventory({ user }) {
         minStockLevel: parseFloat(formData.minStockLevel) || 0,
         supplier: formData.supplier || '',
         supplier_code: formData.supplier_code || '',
-        shopifySkus: skusObject,
         sub_category: sub_category,
         color: color,
         location: location,
@@ -192,7 +190,12 @@ export default function MachineInventory({ user }) {
       tag: machine.tag,
       currentStock: machine.currentStock,
       minStockLevel: machine.minStockLevel,
-      shopifySkus: Object.keys(machine.shopifySkus || {}).join(', ') || ''
+      // VALUES, not keys. The key is the prefix ('SA_DM'); the value is the SKU
+      // ('SA_DM_00014') and the only thing a Shopify sale is matched on. Loading
+      // the key here and saving it back is what overwrote a live SKU with its own
+      // prefix on 15 September — silently, because the screen never showed the
+      // real one either.
+      shopifySkus: Object.values(machine.shopifySkus || {}).filter(Boolean).join(', ') || ''
     });
     setShowAddModal(true);
   };
@@ -360,14 +363,18 @@ export default function MachineInventory({ user }) {
       {/* Action Buttons */}
       <div style={{ display: 'flex', gap: 12, marginBottom: '24px', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
         <LiquidMetalButton label="🧩 Diffuser BOM" width={168} onClick={() => window.location.href = '/sa/diffuser-bom'} />
+        {/* One registration path, the owner's call 2026-09-16: "vou cadastrar
+            produto direto em produto, faz mais sentido ter 1 lugar do que
+            vários". Two screens that both create a machine is what produced the
+            round trip — register here, complete it there — and that round trip
+            is what overwrote a live SKU. Products now carries sub-category and
+            colour, so it can finish a machine on its own; this screen keeps
+            editing, stock, purchase orders and receiving. */}
         {['admin', 'root'].includes(user?.role) && (
           <button
             className="btn btn-primary"
-            onClick={() => {
-              setEditingMachine(null);
-              resetForm();
-              setShowAddModal(true);
-            }}
+            onClick={() => { window.location.href = '/sa/products'; }}
+            title="Machines are registered on the Products screen, which mints the code, the tag and the SKU"
           >
             + Add Machine
           </button>
@@ -516,7 +523,7 @@ export default function MachineInventory({ user }) {
                       {machine.bin_location || '-'}
                     </td>
                     <td style={{ fontFamily: 'monospace', fontSize: '12px' }}>
-                      {Object.keys(machine.shopifySkus || {}).join(', ') || '-'}
+                      {Object.values(machine.shopifySkus || {}).filter(Boolean).join(', ') || '-'}
                     </td>
                     <td>
                       <span style={{
@@ -751,16 +758,21 @@ export default function MachineInventory({ user }) {
                 </div>
 
                 <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-                  <label>Shopify SKUs (comma-separated)</label>
+                  <label>Shopify SKU</label>
                   <input
                     type="text"
                     className="input"
                     value={formData.shopifySkus}
-                    onChange={(e) => setFormData({...formData, shopifySkus: e.target.value})}
-                    placeholder="e.g., SA_0001, SA_0002"
+                    readOnly
+                    disabled
+                    placeholder={editingMachine ? 'Not set — will be minted on save' : 'Minted automatically on save'}
+                    style={{ opacity: 0.7, cursor: 'not-allowed', fontFamily: 'monospace' }}
                   />
                   <div style={{ fontSize: '12px', color: 'rgba(232,234,242,0.45)', marginTop: '4px' }}>
-                    Enter multiple SKUs separated by commas
+                    Minted by the platform in the SA_000NN series. Shown here so it can be read,
+                    never typed — it is the only link between a sale and this machine. A newly
+                    minted code is not pushed to the store from this screen: check it matches
+                    Shopify.
                   </div>
                 </div>
 

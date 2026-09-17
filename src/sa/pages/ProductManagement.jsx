@@ -85,6 +85,8 @@ export default function ProductManagement({ user, libraryMode = false }) {
     shopifySkus: {},
     skuMultipliers: {},
     bin_location: '',
+    sub_category: '',
+    color: '',
     exclusivity: 'SHARED'
   });
 
@@ -570,6 +572,8 @@ export default function ProductManagement({ user, libraryMode = false }) {
       shopifySkus: product.shopifySkus || {},
       skuMultipliers: product.skuMultipliers || {},
       bin_location: product.bin_location || '',
+      sub_category: product.sub_category || '',
+      color: product.color || '',
       exclusivity: product.exclusivity || 'SHARED'
     });
     setShowAddModal(true);
@@ -592,6 +596,8 @@ export default function ProductManagement({ user, libraryMode = false }) {
       shopifySkus: {},
       skuMultipliers: {},
       bin_location: '',
+      sub_category: '',
+      color: '',
       exclusivity: 'SHARED'
     });
   };
@@ -1318,6 +1324,51 @@ export default function ProductManagement({ user, libraryMode = false }) {
                   value={formData.bin_location}
                   onChange={(value) => setFormData({...formData, bin_location: value})}
                 />
+
+                {/* A machine is not finished without these two, and until now they
+                    existed only on the Diffusers screen — so registering one here
+                    meant going there afterwards to complete it, and that round
+                    trip is what overwrote a live SKU on 15 September. Both are
+                    free text with the existing values suggested: the range grows,
+                    and a fixed list would send the next new model back to the
+                    other screen. The server has always accepted both. */}
+                {formData.category === 'SCENT_MACHINES' && (
+                  <>
+                    <div className="form-group">
+                      <label>Sub-category</label>
+                      <input
+                        type="text"
+                        className="input"
+                        list="machine-subcategories"
+                        value={formData.sub_category}
+                        onChange={(e) => setFormData({...formData, sub_category: e.target.value})}
+                        placeholder="e.g. HVAC, Tower, ScentPRO"
+                      />
+                      <datalist id="machine-subcategories">
+                        {[...new Set(products
+                          .filter(p => p.category === 'SCENT_MACHINES' && p.sub_category)
+                          .map(p => p.sub_category))].sort().map(s => <option key={s} value={s} />)}
+                      </datalist>
+                    </div>
+
+                    <div className="form-group">
+                      <label>Colour</label>
+                      <input
+                        type="text"
+                        className="input"
+                        list="machine-colours"
+                        value={formData.color}
+                        onChange={(e) => setFormData({...formData, color: e.target.value})}
+                        placeholder="e.g. Black, White, Grey"
+                      />
+                      <datalist id="machine-colours">
+                        {[...new Set(products
+                          .filter(p => p.category === 'SCENT_MACHINES' && p.color)
+                          .map(p => p.color))].sort().map(c => <option key={c} value={c} />)}
+                      </datalist>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="modal-footer">
