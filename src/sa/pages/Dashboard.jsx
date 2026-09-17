@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { exportToShopifyCSV, exportLowStockToShopifyCSV } from '../utils/shopifyExport';
 import { displayStock, displayUnit } from '../utils/unitConversion';
-import { isLowStock } from '../utils/stockStatus';
+import { isLowStock, getStockStatus as sharedStockStatus, isReorderSoon, REORDER_SOON_FACTOR } from '../utils/stockStatus';
 import { GlowingEffect } from '../components/GlowingEffect';
 
 export default function Dashboard() {
@@ -128,6 +128,43 @@ export default function Dashboard() {
   }
 
   const lowStockProducts = products.filter(isLowStock);
+
+  // ── Machines: the reorder watch ────────────────────────────────────────────
+  // Asked for directly by the business on 2026-09-17 — "super important we don't
+  // run out of stock here… set a trigger when it gets to a certain quantity,
+  // knowing it takes 3 months approx. to arrive".
+  //
+  // The trigger already existed: eleven of the eighteen machines carry a minimum
+  // and six of them are under it right now, one at zero. Nothing was broken —
+  // the machines were simply spread through a list of 772 products with
+  // everything else, so nobody read it. This section is only about making what
+  // the data already says impossible to walk past.
+  //
+  // Judged with the SHARED rule (utils/stockStatus), not the percentage one
+  // defined further up this page: that local rule calls a product low only below
+  // 60% of its minimum, so a machine would have been graded differently here
+  // than on every other screen.
+  // Active only. Every machine is active today, so this changes nothing now —
+  // but the list this page reads carries inactive products too (it is how 354
+  // discontinued scented lines still arrive), and a retired machine sitting at
+  // zero would otherwise be presented as something to reorder for ever.
+  const allMachines = products.filter(p => p.category === 'SCENT_MACHINES' && p.status !== 'inactive');
+  const machineRank = { NEGATIVE: 0, OUT: 1, LOW: 2, HEALTHY: 3 };
+  const machinesNeedingAction = allMachines
+    .filter(m => sharedStockStatus(m).key !== 'HEALTHY' || isReorderSoon(m))
+    .sort((a, b) => {
+      const d = machineRank[sharedStockStatus(a).key] - machineRank[sharedStockStatus(b).key];
+      if (d !== 0) return d;
+      // Within a band, the one closest to running out first.
+      const ra = (parseFloat(a.minStockLevel) || 0) === 0 ? Infinity : a.currentStock / a.minStockLevel;
+      const rb = (parseFloat(b.minStockLevel) || 0) === 0 ? Infinity : b.currentStock / b.minStockLevel;
+      return ra - rb;
+    });
+  // A machine with no minimum cannot ever reach a threshold, so it will never
+  // appear above however low it gets. Naming them is the only honest way to show
+  // that the watch does not cover them yet.
+  const machinesWithoutMinimum = allMachines.filter(m => !(parseFloat(m.minStockLevel) > 0));
+
   const oilsData = products.filter(p => p.category === 'OILS');
   const machinesData = products.filter(p => p.category === 'MACHINES_SPARES');
   const rawMaterialsData = products.filter(p => p.category === 'RAW_MATERIALS');
@@ -461,6 +498,86 @@ export default function Dashboard() {
         )}
       </div>
 
+      {/* Machines — Reorder Watch */}
+      <div className="card" style={{
+        marginBottom: 28,
+        borderLeft: `3px solid ${machinesNeedingAction.length > 0 ? '#f87171' : '#10b981'}`,
+        position: 'relative', overflow: 'visible',
+      }}>
+        <GlowingEffect spread={35} glow={false} disabled={false} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
+        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 6, color: machinesNeedingAction.length > 0 ? '#f87171' : '#10b981', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Cpu size={16} />
+          Machines — Reorder Watch
+          <span style={{
+            marginLeft: 4, fontSize: 12, fontWeight: 700,
+            background: machinesNeedingAction.length > 0 ? 'rgba(248,113,113,0.15)' : 'rgba(16,185,129,0.15)',
+            color: machinesNeedingAction.length > 0 ? '#f87171' : '#10b981',
+            border: `1px solid ${machinesNeedingAction.length > 0 ? 'rgba(248,113,113,0.3)' : 'rgba(16,185,129,0.3)'}`,
+            borderRadius: 20, padding: '1px 8px',
+          }}>
+            {machinesNeedingAction.length} of {allMachines.length}
+          </span>
+        </h3>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 14 }}>
+          Machines take around three months to arrive. Anything listed here should be ordered now, not when it hits zero.
+        </div>
+
+        {machinesNeedingAction.length === 0 ? (
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '8px 0' }}>
+            Every machine with a minimum set is above it.
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: 8 }}>
+            {machinesNeedingAction.map(m => {
+              const status = sharedStockStatus(m);
+              const soon = status.key === 'HEALTHY' && isReorderSoon(m);
+              const tone = status.key === 'HEALTHY'
+                ? { fg: '#fbbf24', bg: 'rgba(245,158,11,0.06)', br: 'rgba(245,158,11,0.15)' }
+                : { fg: '#f87171', bg: 'rgba(248,113,113,0.07)', br: 'rgba(248,113,113,0.2)' };
+              return (
+                <div key={m.id} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '12px 16px', background: tone.bg, borderRadius: 8, border: `1px solid ${tone.br}`,
+                }}>
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 13, color: 'var(--text-primary)' }}>{m.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      {m.productCode}
+                      {m.sub_category ? ` • ${m.sub_category}` : ''}
+                      {m.color ? ` • ${m.color}` : ''}
+                      {m.supplier ? ` • ${m.supplier}` : ''}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontWeight: 700, color: tone.fg, fontSize: 14 }}>
+                      {m.currentStock} units
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      Min: {m.minStockLevel} • {soon ? `within ${REORDER_SOON_FACTOR}× minimum` : status.label}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {machinesWithoutMinimum.length > 0 && (
+          <div style={{
+            marginTop: 14, padding: '10px 14px', borderRadius: 8,
+            background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.18)',
+            fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6,
+          }}>
+            <strong style={{ color: '#a5b4fc' }}>
+              {machinesWithoutMinimum.length} machine{machinesWithoutMinimum.length > 1 ? 's carry' : ' carries'} no minimum
+            </strong>{' '}
+            and can never appear above, however low the stock goes. Set one on the Products screen to bring
+            {machinesWithoutMinimum.length > 1 ? ' them' : ' it'} into the watch:{' '}
+            {machinesWithoutMinimum.map(m => `${m.name.trim()} (${m.currentStock})`).join(', ')}.
+          </div>
+        )}
+      </div>
+
       {/* Negative Stock Alerts */}
       {products.filter(p => p.currentStock < 0).length > 0 && (
         <div className="card" style={{
@@ -471,48 +588,52 @@ export default function Dashboard() {
           position: 'relative', overflow: 'visible',
         }}>
           <GlowingEffect spread={35} glow={false} disabled={false} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
-          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 16, color: '#f87171', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <AlertOctagon size={18} color="#f87171" />
-            Negative Stock Alerts ({products.filter(p => p.currentStock < 0).length}) — Check Physical Count
+          {/* Compacted 2026-09-17 at the owner's request, to give the machine
+              watch the room at the top. It listed all 26 negatives at 18px with
+              a four-bullet explanation of what negative stock means — a block
+              taller than the screen, for a state that has been standing for
+              months and is read as a list, not as an alarm. The worst are shown
+              and the rest counted; nothing is dropped, and the count is the
+              whole set so the number never understates it. */}
+          <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 10, color: '#f87171', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <AlertOctagon size={15} color="#f87171" />
+            Negative Stock ({products.filter(p => p.currentStock < 0).length})
+            <span style={{ fontWeight: 500, fontSize: 11, color: 'rgba(252,165,165,0.7)' }}>
+              — needs a physical count
+            </span>
           </h3>
-          <div style={{
-            padding: '12px 16px', background: 'rgba(239,68,68,0.08)', borderRadius: 8,
-            marginBottom: 16, border: '1px solid rgba(239,68,68,0.15)',
-          }}>
-            <div style={{ fontSize: 12, color: '#fca5a5', fontWeight: 600, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <AlertTriangle size={13} /> These products have negative stock — indicating one of:
-            </div>
-            <ul style={{ fontSize: 12, color: 'rgba(252,165,165,0.7)', marginLeft: 20, marginTop: 4, marginBottom: 0, lineHeight: 1.8 }}>
-              <li>Physical count discrepancy</li>
-              <li>Missing stock entry in system</li>
-              <li>Unregistered removal</li>
-              <li>Shopify/System sync issue</li>
-            </ul>
-          </div>
-          <div style={{ display: 'grid', gap: 10 }}>
-            {products.filter(p => p.currentStock < 0).map(product => (
-              <div key={product.id} style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                padding: '12px 16px', background: 'rgba(128,128,128,0.06)', borderRadius: 8,
-                border: '1px solid rgba(239,68,68,0.25)',
-              }}>
-                <div>
-                  <div style={{ fontWeight: 700, marginBottom: 4, fontSize: 14, color: 'var(--text-primary)' }}>{product.name}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                    {product.productCode} • {product.category === 'MACHINES_SPARES' ? 'Spares' : product.category === 'RAW_MATERIALS' ? 'Raw Materials' : 'Oils'}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 6 }}>
+            {products
+              .filter(p => p.currentStock < 0)
+              .sort((a, b) => a.currentStock - b.currentStock)
+              .slice(0, 8)
+              .map(product => (
+                <div key={product.id} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
+                  padding: '7px 11px', background: 'rgba(239,68,68,0.07)', borderRadius: 6,
+                  border: '1px solid rgba(239,68,68,0.18)',
+                }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 12, fontWeight: 600, color: 'var(--text-primary)',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>
+                      {product.name}
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{product.productCode}</div>
                   </div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontWeight: 900, color: '#f87171', fontSize: 18, marginBottom: 4 }}>
+                  <div style={{ fontWeight: 700, color: '#f87171', fontSize: 13, whiteSpace: 'nowrap' }}>
                     {displayStock(product.currentStock, product.unit)}
                   </div>
-                  <div style={{ fontSize: 10, color: '#fca5a5', fontWeight: 700, background: 'rgba(239,68,68,0.15)', padding: '2px 8px', borderRadius: 4, display: 'inline-block' }}>
-                    {displayStock(Math.abs(product.currentStock), product.unit)} MISSING
-                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
           </div>
+          {products.filter(p => p.currentStock < 0).length > 8 && (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
+              +{products.filter(p => p.currentStock < 0).length - 8} more, smaller. Full list on the
+              Products screen, filtered by stock.
+            </div>
+          )}
         </div>
       )}
 
