@@ -131,7 +131,7 @@ router.patch('/products/:id/oil', auth, requireRole('admin', 'root'), async (req
     if (!oil_id) return res.status(400).json({ error: 'oil_id is required' })
 
     const cur = await query(
-      `SELECT p.id, p.name, p.sku, p.master_product_id, p.oil_id,
+      `SELECT p.id, p.name, p.sku, p.master_product_id, p.oil_id, p.segment, p.category,
               o."productCode" AS from_code, o.name AS from_name
          FROM products p LEFT JOIN sa.products o ON o.id = p.oil_id
         WHERE p.id = $1`, [req.params.id])
@@ -152,12 +152,32 @@ router.patch('/products/:id/oil', auth, requireRole('admin', 'root'), async (req
     }
     if (p.oil_id === oil_id) return res.json({ unchanged: true, ...p })
 
+    // The collection follows the fragrance (owner's axis, 2026-08-14: a finished
+    // good's business_unit decides reporting). Re-pointing a variant at another
+    // fragrance moves it into that fragrance's collection, so relinking cannot
+    // leave one fragrance split across the Library and the Archive — the exact
+    // state PATCH /muse-fragrance/:oilId/collection exists to prevent, reached
+    // from the other side. Caught reviewing that endpoint, 2026-09-16.
+    // Only a MUSE finished good may carry one: the rule is library|archive =>
+    // segment MUSE, so copying a collection onto a STANDARD or MAJOR variant —
+    // which this route accepts, even if only MuseStock calls it today — would
+    // write precisely the row integrity-sm fails on.
+    const eligible = p.segment === 'MUSE' && p.category === 'FINISHED_GOOD'
+
+    const dest = eligible ? (await query(
+      `SELECT business_unit FROM products
+        WHERE oil_id = $1 AND segment = 'MUSE' AND category = 'FINISHED_GOOD'
+          AND business_unit IS NOT NULL AND id <> $2 LIMIT 1`, [oil_id, p.id])).rows[0] : null
+
     const updated = await query(
-      `UPDATE products SET oil_id = $1 WHERE id = $2 RETURNING *`, [oil_id, p.id])
+      `UPDATE products SET oil_id = $1,
+              business_unit = COALESCE($3, business_unit)
+        WHERE id = $2 RETURNING *`, [oil_id, p.id, dest?.business_unit ?? null])
     await auditLog(req.user.id, 'variant_oil_relinked', 'product', p.id, p.name, {
       sku: p.sku,
       from: { oil_id: p.oil_id, code: p.from_code, name: p.from_name },
       to: { oil_id, code: oil.rows[0].code, name: oil.rows[0].name },
+      ...(dest?.business_unit ? { business_unit: dest.business_unit } : {}),
     })
     res.json(updated.rows[0])
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }

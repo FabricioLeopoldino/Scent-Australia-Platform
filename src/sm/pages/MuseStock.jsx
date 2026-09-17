@@ -192,6 +192,7 @@ export default function MuseStock() {
       min_stock_level: String(v.min_stock_level ?? 0),
       notes: v.notes || '',
       oil_id: v.oil_id || '',
+      business_unit: v.business_unit || '',
     })
     // Load the library lazily; a stale list would be worse than a brief spinner.
     axios.get('/api/fragrance-library', { ...api(), params: { segment: 'MUSE' } })
@@ -201,6 +202,21 @@ export default function MuseStock() {
 
   async function handleEditVariant() {
     if (!editVariantForm.name.trim()) { addToast('Name is required', 'error'); return }
+    // Checked before anything is written. Rejecting halfway through would leave
+    // the rename saved and the collection silently dropped, under one toast that
+    // says the save worked.
+    const unitChanged = editVariantForm.business_unit !== (editVariantModal.variant.business_unit || '')
+    const oilChanged = (editVariantForm.oil_id || '') !== (editVariantModal.variant.oil_id || '')
+    if (unitChanged && !(editVariantForm.oil_id || editVariantModal.variant.oil_id)) {
+      addToast('Link an oil first — the collection follows the fragrance', 'error'); return
+    }
+    // Refused rather than guessed. The collection was chosen while the old
+    // fragrance was on screen, but it would be applied to the new one — moving
+    // every format of a fragrance the person was not looking at. One at a time.
+    if (unitChanged && oilChanged) {
+      addToast('Change the oil or the collection, not both at once — the collection moves every format of whichever fragrance it lands on', 'error')
+      return
+    }
     setEditVariantSaving(true)
     try {
       await axios.put(`/api/products/${editVariantModal.variant.id}`, {
@@ -214,6 +230,19 @@ export default function MuseStock() {
       if (newOil && newOil !== (editVariantModal.variant.oil_id || '')) {
         await axios.patch(`/api/products/${editVariantModal.variant.id}/oil`, { oil_id: newOil }, api())
         addToast('Linked oil changed')
+      }
+      // The collection goes through its own endpoint too, and moves the WHOLE
+      // fragrance: every format of it, not this variant alone. A fragrance half
+      // in the Archive and half in the Library is a reporting fault nobody sees
+      // until a total comes out wrong.
+      const newUnit = editVariantForm.business_unit || ''
+      const oilForUnit = newOil || editVariantModal.variant.oil_id
+      if (newUnit && newUnit !== (editVariantModal.variant.business_unit || '')) {
+        const r = await axios.patch(`/api/muse-fragrance/${oilForUnit}/collection`,
+          { business_unit: newUnit }, api())
+        addToast(r.data?.changed
+          ? `Moved ${r.data.changed} format(s) to the ${newUnit === 'archive' ? 'Archive' : 'Library'}`
+          : 'Already in that collection')
       }
       addToast('Variant updated')
       setEditVariantModal(null)
@@ -700,6 +729,29 @@ export default function MuseStock() {
                 </div>
                 <div style={{ fontSize: 11, color: 'rgba(251,191,36,0.75)', marginTop: 4 }}>
                   Changing this changes which oil a sale debits. SKU and stock are kept; the change is audited.
+                </div>
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="label">Collection</label>
+                <select
+                  value={editVariantForm.business_unit}
+                  onChange={e => setEditVariantForm(f => ({ ...f, business_unit: e.target.value }))}
+                  className="input"
+                >
+                  {/* A variant with no unit stored must not display as "The
+                      Library" while the form holds '': it would read as already
+                      classified and save nothing. */}
+                  {!editVariantForm.business_unit && <option value="">— not set —</option>}
+                  <option value="library">The Library</option>
+                  <option value="archive">The Archive</option>
+                </select>
+                {/* Registration already asks this; the toggle there defaults to
+                    Library, and the ten Archive fragrances register in one
+                    sitting. Before this control, a missed toggle could only be
+                    undone in the database by hand. */}
+                <div style={{ fontSize: 11, color: 'rgba(251,191,36,0.75)', marginTop: 4 }}>
+                  Applies to every format of this fragrance, not just this variant. Decides
+                  reporting only — the oil and production stay with MUSE. The change is audited.
                 </div>
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>

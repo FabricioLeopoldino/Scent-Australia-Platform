@@ -50,6 +50,15 @@ const RULES = {
                       AND COALESCE(archived,false)=false AND business_unit IS NULL`,
   'material with a unit': `SELECT count(*) n FROM products WHERE business_unit IS NOT NULL
                       AND category IN ('COMPONENT','RAW_MATERIAL','LABEL')`,
+  // Added 2026-09-16. The collection is a fact about the FRAGRANCE — the Archive
+  // is ten fragrances, each sold across every format. A fragrance whose Reed
+  // Diffuser is Archive and whose Room Spray is Library reports wrong, and does
+  // so silently: no total looks odd until someone adds two of them together.
+  // Not in integrity-sm yet, so it is checked here.
+  'fragrance split across collections': `SELECT count(*) n FROM (
+                      SELECT oil_id FROM products
+                       WHERE segment='MUSE' AND category='FINISHED_GOOD' AND oil_id IS NOT NULL
+                       GROUP BY oil_id HAVING count(DISTINCT business_unit) > 1) x`,
 };
 
 (async () => {
@@ -107,9 +116,101 @@ const RULES = {
     await breaks('a sellable row with no unit is caught', `business_unit = NULL`, 'sellable without a unit');
     await breaks('a material given a unit is caught', `category = 'COMPONENT'`, 'material with a unit');
 
+    console.log('\n5. A fragrance can be moved between the collections, and moves whole');
+    // WHY (2026-09-16). Registration was already right; there was no way back.
+    // The screen's toggle defaults to Library, the ten Archive fragrances
+    // register in one sitting, and a missed toggle was permanent — correctable
+    // only by editing the database by hand. PATCH /muse-fragrance/:oilId/collection
+    // is the way back, and the property that matters is that it moves ALL
+    // formats of a fragrance at once: an Archive Reed Diffuser whose Room Spray
+    // stayed in the Library is a reporting fault nobody would see until a total
+    // came out wrong.
+    //
+    // This exercises the STATEMENT the endpoint runs, inside the same
+    // transaction, and rolls it back. The HTTP layer above it — the role check,
+    // the refusal of 'atelier', the audit row — is asserted from the source,
+    // not run.
+    const patch = src('server/sm/routes/muse-fragrance.js');
+    check(/router\.patch\('\/muse-fragrance\/:oilId\/collection'/.test(patch),
+      'the correction endpoint exists');
+    check(/muse_collection_changed/.test(patch), 'it writes its own audit entry');
+    // Scoped to the new route's own body. Grepping the whole file matched the
+    // registration route's identical message, so this passed even with the
+    // correction endpoint's guard deleted — false confidence on the one line
+    // that keeps 'atelier' out of a segment-MUSE row.
+    const collectionBody = (patch.split("router.patch('/muse-fragrance/:oilId/collection'")[1] || '')
+      .split('\nrouter.')[0];
+    check(/business_unit must be 'library' or 'archive'/.test(collectionBody),
+      "it refuses anything but 'library' or 'archive', atelier included");
+    // From the route line forward only. Starting 200 characters EARLIER put the
+    // comment block above the route inside the window — the same false
+    // confidence fixed one check above, reintroduced by the fix.
+    check(/^[^\n]*requireRole\('admin', 'root'\)/.test(
+      patch.slice(patch.indexOf("router.patch('/muse-fragrance/:oilId/collection'"))),
+      'and it is admin-only');
+    check(/oil_id = \$2 AND segment = 'MUSE' AND category = 'FINISHED_GOOD'/.test(patch),
+      'it is keyed on the oil, so every format moves together');
+
+    // Counted over exactly the rows the endpoint's UPDATE touches — archived
+    // included. Excluding them here made `moved > n` on any fragrance with an
+    // archived format, which reads as a failure of a working endpoint.
+    // The fragrance's own collection is read rather than assumed: hardcoding
+    // 'library' would fail this test the day an Archive fragrance becomes the
+    // one with the most formats, on perfectly healthy data.
+    // The same split, reachable from the other side: re-pointing a variant at a
+    // different fragrance used to leave it in its old collection. Fixed in the
+    // relink endpoint rather than in this screen, so every caller is covered.
+    const relink = src('server/sm/routes/products.js');
+    check(/business_unit = COALESCE\(\$3, business_unit\)/.test(relink),
+      'relinking a variant to another fragrance adopts that fragrance’s collection');
+
+    const frag = (await client.query(
+      `SELECT oil_id, count(*) n, min(business_unit) unit, count(DISTINCT business_unit) units
+         FROM products
+        WHERE segment='MUSE' AND category='FINISHED_GOOD' AND oil_id IS NOT NULL
+        GROUP BY 1 HAVING count(*) > 1 AND count(DISTINCT business_unit) = 1
+                      AND count(*) = count(business_unit)
+        ORDER BY 2 DESC LIMIT 1`)).rows[0];
+    // count(*) = count(business_unit) excludes a fragrance carrying a NULL row.
+    // count(DISTINCT) ignores NULLs, so such a fragrance passed the selection and
+    // then failed the restore check, which sees library AND null — a red test on
+    // healthy data.
+    check(!!frag, 'a fragrance exists that is sold in more than one format');
+
+    if (frag) {
+      // Move it to whichever collection it is NOT in, so the test works the same
+      // once the Archive is populated.
+      const target = frag.unit === 'archive' ? 'library' : 'archive';
+      await client.query(`SAVEPOINT move`);
+      const moved = (await client.query(
+        `UPDATE products SET business_unit = $2
+          WHERE oil_id = $1 AND segment = 'MUSE' AND category = 'FINISHED_GOOD'
+          RETURNING id`, [frag.oil_id, target])).rows.length;
+      check(moved === Number(frag.n),
+        `all ${frag.n} formats of one fragrance move together`, `${moved} moved`);
+
+      const split = Number((await client.query(
+        `SELECT count(DISTINCT business_unit) n FROM products
+          WHERE oil_id = $1 AND segment='MUSE' AND category='FINISHED_GOOD'`,
+        [frag.oil_id])).rows[0].n);
+      check(split === 1, 'the fragrance is not left split across two collections');
+
+      for (const [label, sql] of Object.entries(RULES)) {
+        check(Number((await client.query(sql)).rows[0].n) === 0,
+          `still no ${label} after the move`);
+      }
+      await client.query(`ROLLBACK TO SAVEPOINT move`);
+      const back = (await client.query(
+        `SELECT DISTINCT business_unit b FROM products WHERE oil_id = $1
+          AND segment='MUSE' AND category='FINISHED_GOOD'`, [frag.oil_id])).rows;
+      check(back.length === 1 && back[0].b === frag.unit,
+        'and the test leaves the fragrance exactly as it found it',
+        `expected ${frag.unit}, found ${back.map((r) => r.b).join('/')}`);
+    }
+
     await client.query('ROLLBACK');
 
-    console.log('\n5. Where the range actually sits');
+    console.log('\n6. Where the range actually sits');
     const dist = (await pool.query(
       `SELECT COALESCE(business_unit,'(none)') b, count(*) n FROM products
         WHERE COALESCE(archived,false)=false GROUP BY 1 ORDER BY 2 DESC`)).rows;

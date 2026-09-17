@@ -414,6 +414,67 @@ router.delete('/muse-fragrance/:number', auth, requireRole('admin', 'root'), asy
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
+// ── PATCH /api/muse-fragrance/:oilId/collection ────────────────────────────
+// Move one registered fragrance between the Library and the Archive.
+//
+// WHY THIS EXISTS (2026-09-16). Registration already gets this right: the
+// screen has a Library/Archive toggle and every format variant is born with the
+// chosen unit. What did not exist was a way back. The toggle DEFAULTS to
+// Library — correctly, since all 454 existing products are Library — and the
+// ten Archive fragrances register in the same sitting, in a row. One missed
+// toggle wrote a fragrance into the wrong collection permanently, correctable
+// only by editing the database by hand.
+//
+// It is keyed on the OIL, not on a variant, because the collection is a fact
+// about the fragrance: the Archive is ten fragrances, each sold across every
+// format. A Reed Diffuser in the Archive whose Room Spray is in the Library
+// would be a reporting fault nobody would spot until a total came out wrong.
+// So all formats move together or none do.
+//
+// Deliberately its own endpoint rather than a field on PUT /products/:id, for
+// the same reason PATCH /products/:id/oil is: this changes what a product MEANS
+// in reporting, so it gets its own guard and its own audit entry.
+router.patch('/muse-fragrance/:oilId/collection', auth, requireRole('admin', 'root'), async (req, res) => {
+  try {
+    const unit = String(req.body?.business_unit || '')
+    // 'atelier' is a real business_unit and is refused here on purpose: the
+    // owner's axis rule is atelier => segment NOT MUSE, and every row this
+    // touches is segment MUSE. Writing it would create exactly the row
+    // integrity-sm fails on.
+    if (!['library', 'archive'].includes(unit)) {
+      return res.status(400).json({ error: "business_unit must be 'library' or 'archive'" })
+    }
+
+    const before = (await query(
+      `SELECT id, sku, name, business_unit FROM products
+       WHERE oil_id = $1 AND segment = 'MUSE' AND category = 'FINISHED_GOOD'
+       ORDER BY id`, [req.params.oilId])).rows
+    if (!before.length) {
+      return res.status(404).json({ error: 'No MUSE products are registered against this fragrance' })
+    }
+
+    const moving = before.filter((r) => r.business_unit !== unit)
+    if (!moving.length) {
+      // Not an error: saying so beats a silent success that looks like a change.
+      return res.json({ ok: true, changed: 0, business_unit: unit, message: 'Already in that collection' })
+    }
+
+    const after = await withTransaction(async (client) => (await client.query(
+      `UPDATE products SET business_unit = $1
+       WHERE oil_id = $2 AND segment = 'MUSE' AND category = 'FINISHED_GOOD'
+       RETURNING id, sku, name`, [unit, req.params.oilId])).rows)
+
+    // One audit row per variant, matching how registration records them, so the
+    // move reads on each product's own history rather than only on the oil.
+    for (const r of moving) {
+      await auditLog(req.user.id, 'muse_collection_changed', 'product', r.id, r.sku,
+        { business_unit: { from: r.business_unit, to: unit } })
+    }
+    res.json({ ok: true, changed: moving.length, total: after.length, business_unit: unit,
+      skus: moving.map((r) => r.sku) })
+  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
+})
+
 module.exports = router
 module.exports.FORMATS = FORMATS
 module.exports.gidNumber = gidNumber
