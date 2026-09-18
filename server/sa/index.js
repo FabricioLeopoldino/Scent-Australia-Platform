@@ -577,6 +577,10 @@ router.get('/products', async (req, res) => {
       incomingOrders: posMap[row.id] || [],
       exclusivity: row.exclusivity || null,
       status: row.status || 'active',
+      // null on purpose, not defaulted to true: the Dashboard reads "not
+      // excluded", so undecided and chosen-in behave the same there, while the
+      // manage list can still tell them apart.
+      reorderWatch: row.reorder_watch,
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }));
@@ -4205,6 +4209,62 @@ router.patch('/products/:id/status', async (req, res) => {
   }
 });
 
+// ── PATCH /api/products/:id/reorder-watch — show or hide a machine on the
+// Dashboard's reorder watch. The choice is shared: it is product data, so it is
+// the same for everyone who opens the page (owner, 2026-09-18).
+//
+// Its own endpoint rather than a field on PUT /products/:id, for the same reason
+// the status toggle is: this is one deliberate act with one audit line, not part
+// of filling in a form, and the caller is a checkbox that should not have to
+// send a whole product to tick itself.
+router.patch('/products/:id/reorder-watch', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Only admin or root can change the reorder watch' });
+  }
+  try {
+    const { watch } = req.body;
+    if (typeof watch !== 'boolean') return res.status(400).json({ error: 'watch must be true or false' });
+
+    // One transaction. Split, a failing audit insert returns 500 with the change
+    // already committed — and the screen, which rolls its tick back on an error,
+    // would then show the opposite of what the database holds and of what every
+    // other browser sees.
+    const client = await pool.connect();
+    let row;
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `UPDATE products SET reorder_watch = $1 WHERE id = $2
+         RETURNING id, name, "productCode", category, reorder_watch`,
+        [watch, req.params.id]
+      );
+      if (!result.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Product not found' });
+      }
+      row = result.rows[0];
+      // Audited because taking a machine off the watch is a decision somebody may
+      // have to explain later — the whole point of the watch is that a stockout
+      // costs three months.
+      await client.query(
+        `INSERT INTO audit_log (user_id, action, entity_type, entity_id, entity_name, details)
+         VALUES ($1, 'product_reorder_watch_changed', 'product', $2, $3, $4)`,
+        [req.user.id, row.id, row.name,
+         JSON.stringify({ productCode: row.productCode, category: row.category, watch })]
+      );
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+    res.json({ success: true, id: row.id, reorderWatch: row.reorder_watch });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ── PUT /api/products/:id/lead-time — Override lead_time for a specific product (NULL = use supplier default)
 router.put('/products/:id/lead-time', async (req, res) => {
   try {
@@ -5521,6 +5581,40 @@ async function runStartupMigrations() {
   try {
     await pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS lead_time INTEGER DEFAULT NULL`);
     await pool.query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS estimated_delivery_date DATE DEFAULT NULL`);
+
+    // Which machines the Dashboard's reorder watch shows. Owner, 2026-09-18:
+    // "tem como colocar para eu selecionar as maquinas que devem aparecer,
+    // porem deve aparecer para todos" — so the choice is product data, shared by
+    // everyone who opens the page, not a per-browser watchlist.
+    //
+    // NULL means nobody has decided, and the watch reads "not excluded" rather
+    // than "selected": a machine registered tomorrow is watched until someone
+    // takes it out. With a three-month lead time, defaulting a new machine to
+    // invisible is the expensive direction to be wrong in.
+    //
+    // Deliberately its own column rather than reusing minStockLevel. Those are
+    // two different questions — "what is the reorder point" and "do I want to
+    // see this here" — and conflating them already bit us: five minimums were
+    // zeroed during a stocktake on 17 September and four machines left the watch
+    // without anyone intending it.
+    await pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS reorder_watch BOOLEAN DEFAULT NULL`);
+    // Seeded ONCE, on the first boot that finds nobody has decided anything yet.
+    // Refurbished machines start out: they are not ordered from a supplier — one
+    // exists when a unit comes back — so zero is their ordinary state, not a
+    // shortage (owner, 2026-09-17).
+    //
+    // The NOT EXISTS is what makes it a seed rather than a rule that re-applies.
+    // Without it this runs every deploy, and a refurb registered last week —
+    // correctly visible, because the default is "watched until someone removes
+    // it" — would be switched off at the next restart by nobody, with no audit
+    // row to explain it. After this has run once, a refurb is excluded because a
+    // person left it excluded, which is a different and honest thing.
+    await pool.query(`
+      UPDATE products SET reorder_watch = false
+       WHERE category = 'SCENT_MACHINES' AND reorder_watch IS NULL
+         AND (COALESCE(sub_category,'') || ' ' || COALESCE(name,'')) ~* 'refurb'
+         AND NOT EXISTS (SELECT 1 FROM products
+                          WHERE category = 'SCENT_MACHINES' AND reorder_watch IS NOT NULL)`);
     // Schema must match /api/migrate-replenishment and the replenishment dashboard queries.
     await pool.query(`
       CREATE TABLE IF NOT EXISTS forecasts (

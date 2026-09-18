@@ -128,7 +128,7 @@ function SAContent({ user, onSwitchModule, onLogout }) {
 
       <div style={{ padding: '24px 2rem', position: 'relative', zIndex: 1 }}>
         <Switch>
-          <Route path="/"><Dashboard /></Route>
+          <Route path="/"><Dashboard user={user} /></Route>
           {/* The keys are load-bearing. Both routes render the SAME component,
               so without them React reconciles one into the other and KEEPS ALL
               ITS STATE across the switch — the filtered list, the search box,

@@ -58,14 +58,46 @@ try {
   const dash = src('src/sa/pages/Dashboard.jsx');
   check(/sharedStockStatus/.test(dash) && /isReorderSoon/.test(dash),
     'it imports the shared status and the reorder-soon band');
-  const machinesLine = (dash.match(/allMachines = products\.filter\([^\n]*\)/) || [''])[0];
-  check(/'SCENT_MACHINES'/.test(machinesLine),
-    'it reads SCENT_MACHINES, not MACHINES_SPARES', machinesLine || 'allMachines not found');
+  // Up to the statement's semicolon, not to the end of the line: the filter is
+  // wrapped across three lines and a single-line match found nothing, turning
+  // three real checks red while the code was correct.
+  // Both statements: the catalogue narrows to live machines, the watch narrows
+  // that to the ones chosen. Matching only `allMachines = products.filter` broke
+  // the moment the two were separated, turning three checks red on correct code.
+  const catalogueLine = (dash.match(/machineCatalogue = products\.filter\([\s\S]*?\);/) || [''])[0];
+  const machinesLine = (dash.match(/allMachines = machineCatalogue\.filter\([\s\S]*?\);/) || [''])[0];
+  check(/'SCENT_MACHINES'/.test(catalogueLine),
+    'it reads SCENT_MACHINES, not MACHINES_SPARES', catalogueLine || 'machineCatalogue not found');
   // The list this page reads carries inactive products too — that is how 354
   // discontinued scented lines still arrive — and a retired machine at zero
   // would be presented as something to reorder for ever.
-  check(/status !== 'inactive'/.test(machinesLine),
-    'and skips retired machines', machinesLine);
+  check(/status !== 'inactive'/.test(catalogueLine),
+    'and skips retired machines', catalogueLine);
+  // Owner's call 2026-09-17: a refurb is not ordered from a supplier, so zero is
+  // its ordinary state. Matched on the word rather than the exact sub-category
+  // label, so a differently typed one does not quietly rejoin the watch.
+  // Which machines are watched became DATA on 2026-09-18, not a rule in the
+  // page: the owner ticks them and the choice is shared. Refurbs are seeded out
+  // at migration, so the exclusion survives without a deploy behind it.
+  check(/reorderWatch !== false/.test(machinesLine),
+    'the watch reads the shared per-machine choice', machinesLine);
+  check(/reorder_watch BOOLEAN/.test(src('server/sa/index.js')),
+    'the column exists and is added idempotently at startup');
+  check(/reorder_watch = false[\s\S]{0,200}~\* 'refurb'/.test(src('server/sa/index.js')),
+    'refurbished machines are seeded out of it');
+  check(/reorder_watch IS NULL/.test(src('server/sa/index.js')),
+    'and the seed only touches machines nobody has decided on, so a choice survives a redeploy');
+  // Without this the seed is not a seed — it re-applies on every boot, so a
+  // refurb registered last week is switched off at the next restart by nobody,
+  // with no audit row to explain it.
+  check(/NOT EXISTS \(SELECT 1 FROM products[\s\S]{0,120}reorder_watch IS NOT NULL\)/.test(src('server/sa/index.js')),
+    'and it runs once, not on every deploy');
+  check(/BEGIN[\s\S]{0,900}product_reorder_watch_changed[\s\S]{0,400}COMMIT/.test(src('server/sa/index.js')),
+    'the change and its audit row commit together');
+  check(/product_reorder_watch_changed/.test(src('server/sa/index.js')),
+    'changing it is audited');
+  check(/excludedCount/.test(dash),
+    'the card says how many are deliberately left out');
   const shared = src('src/sa/utils/stockStatus.js');
   check(/REORDER_SOON_FACTOR = 1\.5/.test(shared),
     `the shared reorder band is still ${REORDER_SOON_FACTOR}×`,
@@ -87,11 +119,25 @@ try {
     'the section lists the machines that can never raise the alert');
 
   console.log('\n3. What the screen should be showing right now');
+  // Reads the stored choice once the column exists. Before the first deploy that
+  // creates it, fall back to the seed's own rule and say so — a red test for a
+  // migration that has simply not run yet would teach people to ignore red.
+  const hasColumn = (await pool.query(`
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'sa' AND table_name = 'products' AND column_name = 'reorder_watch'`)
+  ).rows.length > 0;
+  if (!hasColumn) {
+    console.log('  note  reorder_watch does not exist yet — this deploy creates it at startup.');
+    console.log('        Falling back to the seed rule (everything but refurbished).');
+  }
   const rows = (await pool.query(`
     SELECT "productCode" code, name, sub_category, ("currentStock"::float) stock,
            ("minStockLevel"::float) min, supplier
       FROM products
      WHERE category = 'SCENT_MACHINES' AND status = 'active'
+       AND ${hasColumn
+         ? 'reorder_watch IS DISTINCT FROM false'
+         : "COALESCE(sub_category,'') || ' ' || COALESCE(name,'') !~* 'refurb'"}
      ORDER BY "productCode"`)).rows;
 
   const graded = rows.map((r) => ({ ...r, st: statusOf(r.stock, r.min) }));

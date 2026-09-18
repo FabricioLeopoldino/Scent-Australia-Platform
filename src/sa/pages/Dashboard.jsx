@@ -10,7 +10,7 @@ import { displayStock, displayUnit } from '../utils/unitConversion';
 import { isLowStock, getStockStatus as sharedStockStatus, isReorderSoon, REORDER_SOON_FACTOR } from '../utils/stockStatus';
 import { GlowingEffect } from '../components/GlowingEffect';
 
-export default function Dashboard() {
+export default function Dashboard({ user }) {
   const showToast = useToast();
   const [data, setData] = useState(null);
   const [products, setProducts] = useState([]);
@@ -19,6 +19,12 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [watchlist, setWatchlist] = useState([]);
   const [showWatchlistModal, setShowWatchlistModal] = useState(false);
+  const [managingMachines, setManagingMachines] = useState(false);
+  // A SET, not one id. With a single id the first response's finally re-enabled
+  // every checkbox, so a second machine ticked while the first was in flight
+  // could be sent twice and land out of order, leaving the row showing the
+  // opposite of what was saved.
+  const [savingWatch, setSavingWatch] = useState(() => new Set());
   const [modalSearch, setModalSearch] = useState('');
 
   useEffect(() => {
@@ -52,6 +58,30 @@ export default function Dashboard() {
       console.error('Error:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Optimistic on purpose: the row the person just ticked is the row they are
+  // looking at, and a full reload would make it jump. The server's answer still
+  // wins — on failure the tick is put back and they are told.
+  const setMachineWatch = async (product, watch) => {
+    if (savingWatch.has(product.id)) return;
+    setSavingWatch(s => new Set(s).add(product.id));
+    const before = product.reorderWatch;
+    setProducts(ps => ps.map(p => (p.id === product.id ? { ...p, reorderWatch: watch } : p)));
+    try {
+      const res = await fetch(`/api/products/${product.id}/reorder-watch`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ watch }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Could not save');
+      showToast(watch ? `${product.name} added to the watch` : `${product.name} removed from the watch`, 'success');
+    } catch (e) {
+      setProducts(ps => ps.map(p => (p.id === product.id ? { ...p, reorderWatch: before } : p)));
+      showToast(e.message, 'error');
+    } finally {
+      setSavingWatch(s => { const n = new Set(s); n.delete(product.id); return n; });
     }
   };
 
@@ -148,7 +178,20 @@ export default function Dashboard() {
   // but the list this page reads carries inactive products too (it is how 354
   // discontinued scented lines still arrive), and a retired machine sitting at
   // zero would otherwise be presented as something to reorder for ever.
-  const allMachines = products.filter(p => p.category === 'SCENT_MACHINES' && p.status !== 'inactive');
+  //
+  // Which machines are watched is a CHOICE, stored on the product and therefore
+  // the same for every person who opens this page (owner, 2026-09-18). It is not
+  // a rule in this file: refurbished machines start out because they are not
+  // ordered from a supplier, but that is seeded data he can change, not
+  // something that needs a deploy.
+  //
+  // "not excluded", not "selected": a machine registered tomorrow is watched
+  // until somebody takes it out. With three months of lead time, defaulting a
+  // new machine to invisible is the expensive direction to be wrong in.
+  const machineCatalogue = products.filter(p =>
+    p.category === 'SCENT_MACHINES' && p.status !== 'inactive');
+  const allMachines = machineCatalogue.filter(p => p.reorderWatch !== false);
+  const excludedCount = machineCatalogue.length - allMachines.length;
   const machineRank = { NEGATIVE: 0, OUT: 1, LOW: 2, HEALTHY: 3 };
   const machinesNeedingAction = allMachines
     .filter(m => sharedStockStatus(m).key !== 'HEALTHY' || isReorderSoon(m))
@@ -237,6 +280,168 @@ export default function Dashboard() {
             <Download size={14} /> Export All to Shopify
           </button>
         </div>
+      </div>
+
+      {/* Machines — Reorder Watch */}
+      <div className="card" style={{
+        marginBottom: 28,
+        border: `1px solid ${machinesNeedingAction.length > 0 ? 'rgba(248,113,113,0.45)' : 'rgba(16,185,129,0.3)'}`,
+        borderLeft: `6px solid ${machinesNeedingAction.length > 0 ? '#ef4444' : '#10b981'}`,
+        background: machinesNeedingAction.length > 0 ? 'rgba(239,68,68,0.07)' : 'transparent',
+        position: 'relative', overflow: 'visible',
+      }}>
+        <GlowingEffect spread={45} glow={machinesNeedingAction.length > 0} disabled={false} proximity={90} inactiveZone={0.1} borderWidth={2} />
+
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            {/* The count carries the message, so it is the biggest thing on the
+                card. A heading with a badge reads as one more section; a number
+                this size is read before the words are. */}
+            <div style={{
+              minWidth: 62, height: 62, borderRadius: 12, flexShrink: 0,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              background: machinesNeedingAction.length > 0 ? 'rgba(239,68,68,0.16)' : 'rgba(16,185,129,0.14)',
+              border: `1px solid ${machinesNeedingAction.length > 0 ? 'rgba(239,68,68,0.4)' : 'rgba(16,185,129,0.35)'}`,
+            }}>
+              <div style={{
+                fontSize: 26, fontWeight: 800, lineHeight: 1,
+                color: machinesNeedingAction.length > 0 ? '#f87171' : '#10b981',
+              }}>
+                {machinesNeedingAction.length}
+              </div>
+              <div style={{ fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)', marginTop: 3 }}>
+                of {allMachines.length}
+              </div>
+            </div>
+            <div>
+              <h3 style={{
+                fontSize: 17, fontWeight: 800, margin: 0, display: 'flex', alignItems: 'center', gap: 8,
+                color: machinesNeedingAction.length > 0 ? '#f87171' : '#10b981',
+              }}>
+                <Cpu size={18} />
+                {machinesNeedingAction.length > 0 ? 'Machines to order' : 'Machines — all stocked'}
+              </h3>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, maxWidth: 560 }}>
+                Machines take around three months to arrive. Order what is listed here now, not when it reaches zero.
+              </div>
+            </div>
+          </div>
+
+          {['admin', 'root'].includes(user?.role) && (
+            <button
+              className="btn btn-secondary"
+              onClick={() => setManagingMachines(v => !v)}
+              style={{ fontSize: 12, padding: '6px 12px', whiteSpace: 'nowrap' }}
+            >
+              {managingMachines ? 'Done' : 'Choose machines'}
+            </button>
+          )}
+        </div>
+
+        {/* The manage list. Shared, not personal — ticking here changes what
+            everyone sees, so it says so rather than letting someone assume it is
+            their own view. */}
+        {managingMachines && (
+          <div style={{
+            marginTop: 16, marginBottom: 4, padding: '12px 14px', borderRadius: 8,
+            background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)',
+          }}>
+            <div style={{ fontSize: 11, color: '#a5b4fc', fontWeight: 600, marginBottom: 10 }}>
+              Which machines this watch covers — the same for everyone, not just this browser.
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 6 }}>
+              {machineCatalogue
+                .slice()
+                .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+                .map(m => (
+                  <label key={m.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 9, cursor: savingWatch.has(m.id) ? 'wait' : 'pointer',
+                    padding: '7px 10px', borderRadius: 6, background: 'rgba(255,255,255,0.02)',
+                    border: '1px solid rgba(255,255,255,0.06)', opacity: savingWatch.has(m.id) ? 0.55 : 1,
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={m.reorderWatch !== false}
+                      disabled={savingWatch.has(m.id)}
+                      onChange={e => setMachineWatch(m, e.target.checked)}
+                      style={{ cursor: 'inherit', flexShrink: 0 }}
+                    />
+                    <span style={{
+                      fontSize: 12, color: 'var(--text-primary)', minWidth: 0,
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>
+                      {m.name}
+                      <span style={{ color: 'var(--text-muted)' }}>
+                        {m.color ? ` · ${m.color}` : ''} · {m.currentStock} un
+                      </span>
+                    </span>
+                  </label>
+                ))}
+            </div>
+          </div>
+        )}
+
+        <div style={{ height: 14 }} />
+        {excludedCount > 0 && !managingMachines && (
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: -6, marginBottom: 12 }}>
+            {excludedCount} machine{excludedCount > 1 ? 's are' : ' is'} deliberately left out of this watch.
+          </div>
+        )}
+
+        {machinesNeedingAction.length === 0 ? (
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '8px 0' }}>
+            Every machine with a minimum set is above it.
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: 8 }}>
+            {machinesNeedingAction.map(m => {
+              const status = sharedStockStatus(m);
+              const soon = status.key === 'HEALTHY' && isReorderSoon(m);
+              const tone = status.key === 'HEALTHY'
+                ? { fg: '#fbbf24', bg: 'rgba(245,158,11,0.06)', br: 'rgba(245,158,11,0.15)' }
+                : { fg: '#f87171', bg: 'rgba(248,113,113,0.07)', br: 'rgba(248,113,113,0.2)' };
+              return (
+                <div key={m.id} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '12px 16px', background: tone.bg, borderRadius: 8, border: `1px solid ${tone.br}`,
+                }}>
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 13, color: 'var(--text-primary)' }}>{m.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      {m.productCode}
+                      {m.sub_category ? ` • ${m.sub_category}` : ''}
+                      {m.color ? ` • ${m.color}` : ''}
+                      {m.supplier ? ` • ${m.supplier}` : ''}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontWeight: 700, color: tone.fg, fontSize: 14 }}>
+                      {m.currentStock} units
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      Min: {m.minStockLevel} • {soon ? `within ${REORDER_SOON_FACTOR}× minimum` : status.label}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {machinesWithoutMinimum.length > 0 && (
+          <div style={{
+            marginTop: 14, padding: '10px 14px', borderRadius: 8,
+            background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.18)',
+            fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6,
+          }}>
+            <strong style={{ color: '#a5b4fc' }}>
+              {machinesWithoutMinimum.length} machine{machinesWithoutMinimum.length > 1 ? 's carry' : ' carries'} no minimum
+            </strong>{' '}
+            and can never appear above, however low the stock goes. Set one on the Products screen to bring
+            {machinesWithoutMinimum.length > 1 ? ' them' : ' it'} into the watch:{' '}
+            {machinesWithoutMinimum.map(m => `${m.name.trim()} (${m.currentStock})`).join(', ')}.
+          </div>
+        )}
       </div>
 
       {/* Stats Grid */}
@@ -494,86 +699,6 @@ export default function Dashboard() {
             <Star size={36} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4, color: 'var(--text-secondary)' }}>No products in your watchlist</div>
             <div style={{ fontSize: 12 }}>Click "+ Add Product" to track your most important products</div>
-          </div>
-        )}
-      </div>
-
-      {/* Machines — Reorder Watch */}
-      <div className="card" style={{
-        marginBottom: 28,
-        borderLeft: `3px solid ${machinesNeedingAction.length > 0 ? '#f87171' : '#10b981'}`,
-        position: 'relative', overflow: 'visible',
-      }}>
-        <GlowingEffect spread={35} glow={false} disabled={false} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
-        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 6, color: machinesNeedingAction.length > 0 ? '#f87171' : '#10b981', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Cpu size={16} />
-          Machines — Reorder Watch
-          <span style={{
-            marginLeft: 4, fontSize: 12, fontWeight: 700,
-            background: machinesNeedingAction.length > 0 ? 'rgba(248,113,113,0.15)' : 'rgba(16,185,129,0.15)',
-            color: machinesNeedingAction.length > 0 ? '#f87171' : '#10b981',
-            border: `1px solid ${machinesNeedingAction.length > 0 ? 'rgba(248,113,113,0.3)' : 'rgba(16,185,129,0.3)'}`,
-            borderRadius: 20, padding: '1px 8px',
-          }}>
-            {machinesNeedingAction.length} of {allMachines.length}
-          </span>
-        </h3>
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 14 }}>
-          Machines take around three months to arrive. Anything listed here should be ordered now, not when it hits zero.
-        </div>
-
-        {machinesNeedingAction.length === 0 ? (
-          <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '8px 0' }}>
-            Every machine with a minimum set is above it.
-          </div>
-        ) : (
-          <div style={{ display: 'grid', gap: 8 }}>
-            {machinesNeedingAction.map(m => {
-              const status = sharedStockStatus(m);
-              const soon = status.key === 'HEALTHY' && isReorderSoon(m);
-              const tone = status.key === 'HEALTHY'
-                ? { fg: '#fbbf24', bg: 'rgba(245,158,11,0.06)', br: 'rgba(245,158,11,0.15)' }
-                : { fg: '#f87171', bg: 'rgba(248,113,113,0.07)', br: 'rgba(248,113,113,0.2)' };
-              return (
-                <div key={m.id} style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  padding: '12px 16px', background: tone.bg, borderRadius: 8, border: `1px solid ${tone.br}`,
-                }}>
-                  <div>
-                    <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 13, color: 'var(--text-primary)' }}>{m.name}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                      {m.productCode}
-                      {m.sub_category ? ` • ${m.sub_category}` : ''}
-                      {m.color ? ` • ${m.color}` : ''}
-                      {m.supplier ? ` • ${m.supplier}` : ''}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontWeight: 700, color: tone.fg, fontSize: 14 }}>
-                      {m.currentStock} units
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                      Min: {m.minStockLevel} • {soon ? `within ${REORDER_SOON_FACTOR}× minimum` : status.label}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {machinesWithoutMinimum.length > 0 && (
-          <div style={{
-            marginTop: 14, padding: '10px 14px', borderRadius: 8,
-            background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.18)',
-            fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6,
-          }}>
-            <strong style={{ color: '#a5b4fc' }}>
-              {machinesWithoutMinimum.length} machine{machinesWithoutMinimum.length > 1 ? 's carry' : ' carries'} no minimum
-            </strong>{' '}
-            and can never appear above, however low the stock goes. Set one on the Products screen to bring
-            {machinesWithoutMinimum.length > 1 ? ' them' : ' it'} into the watch:{' '}
-            {machinesWithoutMinimum.map(m => `${m.name.trim()} (${m.currentStock})`).join(', ')}.
           </div>
         )}
       </div>
