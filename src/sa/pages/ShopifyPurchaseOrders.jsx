@@ -73,6 +73,21 @@ export default function ShopifyPurchaseOrders({ user }) {
     finally { setAccepting(null); }
   };
 
+  // Edited in Shopify after being accepted here. Taking the new figure is its
+  // own small act rather than a remove-and-re-accept: the line may already be
+  // part-received, and that record must not be thrown away.
+  const syncLine = async (l) => {
+    setAccepting(l.acceptedPoId);
+    try {
+      const res = await fetch(`/api/shopify-purchase-orders/line/${l.acceptedPoId}`, { method: 'PATCH' });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Could not update');
+      showToast(`Updated to ${(body.to / 1000).toLocaleString()} L`, 'success');
+      await load();
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { setAccepting(null); }
+  };
+
   const { ok, error, orders = [], orphans = [], counts, readAt, loading } = state;
 
   return (
@@ -242,11 +257,24 @@ export default function ShopifyPurchaseOrders({ user }) {
                       {l.bottles} × {l.bottleMl} mL · has {L(l.currentStock)}
                     </div>
                   )}
-                  {l.accepted && (
+                  {l.accepted && !l.changedInShopify && (
                     <div style={{ fontSize: 11, color: '#34d399' }}>
                       {l.poStatus === 'received' ? 'received'
                         : l.receivedMl > 0 ? `${L(l.receivedMl)} received so far`
                         : 'waiting to arrive'}
+                    </div>
+                  )}
+                  {l.changedInShopify && (
+                    <div style={{ fontSize: 11, color: '#fbbf24', marginTop: 4, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span>
+                        Changed in Shopify — accepted as {L(l.acceptedMl)}, now {L(l.incomingMl)}
+                      </span>
+                      {['admin', 'root'].includes(user?.role) && (
+                        <button className="btn btn-secondary" disabled={accepting === l.acceptedPoId}
+                          onClick={() => syncLine(l)} style={{ fontSize: 10, padding: '2px 8px' }}>
+                          {accepting === l.acceptedPoId ? 'Updating…' : `Take ${L(l.incomingMl)}`}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

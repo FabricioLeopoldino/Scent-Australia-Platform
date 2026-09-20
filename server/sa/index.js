@@ -4249,6 +4249,13 @@ router.get('/shopify-purchase-orders', async (req, res) => {
         l.accepted = !!row;
         l.receivedMl = row ? row.rec : null;
         l.poStatus = row ? row.status : null;
+        l.acceptedPoId = row ? row.id : null;
+        l.acceptedMl = row ? row.q : null;
+        // Edited in Shopify after it was accepted here. Without this the
+        // platform keeps expecting the old amount for ever and says nothing —
+        // the owner edited a purchase order twenty minutes after raising it, so
+        // this is ordinary behaviour, not an edge case.
+        l.changedInShopify = !!row && l.matched && Math.abs(row.q - l.incomingMl) > 0.001;
       }
       o.acceptedLines = o.lines.filter((l) => l.accepted).length;
       o.acceptableLines = o.lines.filter((l) => l.matched && !l.accepted).length;
@@ -4368,6 +4375,55 @@ router.post('/shopify-purchase-orders/accept', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   } finally {
     if (client) client.release();
+  }
+});
+
+// ── PATCH /api/shopify-purchase-orders/line/:poId — take the quantity Shopify
+// now says, for a line that was edited after it was accepted here.
+//
+// Its own small act rather than a re-accept: re-accepting would mean removing a
+// row that may already be part-received, losing the record of what arrived.
+router.patch('/shopify-purchase-orders/line/:poId', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Only admin or root can change an accepted quantity' });
+  }
+  try {
+    const row = (await pool.query(
+      `SELECT id, shopify_line_id, quantity::float q, quantity_received::float rec, order_number, product_id
+         FROM purchase_orders WHERE id = $1 AND shopify_line_id IS NOT NULL`, [req.params.poId])).rows[0];
+    if (!row) return res.status(404).json({ error: 'Not an accepted Shopify purchase order' });
+
+    const products = (await pool.query(
+      `SELECT id, "productCode", name, "currentStock", unit, "shopifySkus", status
+         FROM products WHERE status = 'active'`)).rows
+      .map((r) => ({ ...r, shopifySkus: parseJSONB(r.shopifySkus) }));
+    const { orders } = await readIncomingPurchaseOrders(products);
+    const line = orders.flatMap((o) => o.lines).find((l) => l.lineId === row.shopify_line_id);
+    if (!line) return res.status(409).json({ error: 'That line is no longer in Shopify. Remove it instead.' });
+    if (!line.matched) return res.status(400).json({ error: line.reason });
+
+    // Never below what has already physically arrived — that stock is on the
+    // shelf and recorded, and a purchase order cannot un-receive it.
+    if (line.incomingMl < row.rec - 0.001) {
+      return res.status(400).json({
+        error: `Shopify now says ${line.incomingMl / 1000} L, but ${row.rec / 1000} L has already been received. Fix it in Shopify or receive the rest.`,
+      });
+    }
+
+    const status = line.incomingMl <= row.rec + 0.001 ? 'received' : (row.rec > 0 ? 'partial' : 'pending');
+    await pool.query(
+      `UPDATE purchase_orders SET quantity = $1, status = $2, updated_at = NOW() WHERE id = $3`,
+      [line.incomingMl, status, row.id]);
+    await pool.query(
+      `INSERT INTO audit_log (user_id, action, entity_type, entity_id, entity_name, details)
+       VALUES ($1, 'shopify_po_quantity_synced', 'purchase_order', $2, $3, $4)`,
+      [req.user.id, row.id, row.order_number,
+       JSON.stringify({ from: row.q, to: line.incomingMl, alreadyReceived: row.rec })]);
+
+    res.json({ ok: true, from: row.q, to: line.incomingMl, status });
+  } catch (e) {
+    console.error('Shopify PO quantity sync failed:', e.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

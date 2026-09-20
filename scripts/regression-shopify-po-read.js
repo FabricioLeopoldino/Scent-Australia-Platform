@@ -126,6 +126,18 @@ try {
   check(/client = await pool\.connect\(\);[\s\S]{0,60}BEGIN/.test(server),
     'the database client is taken after Shopify answers, so a slow store cannot starve the pool');
 
+  console.log('\n4d. An accepted order EDITED in Shopify is noticed too');
+  // Deletion was handled first; editing was the gap. The owner edited a purchase
+  // order twenty minutes after raising it, so this is ordinary behaviour. Without
+  // it the platform would expect the old amount for ever and say nothing.
+  check(/changedInShopify = !!row && l\.matched/.test(server),
+    'an accepted line whose quantity moved in Shopify is flagged');
+  check(/shopify_po_quantity_synced/.test(server), 'taking the new figure is audited');
+  check(/has already been received/.test(server),
+    'and it refuses to drop below what has physically arrived');
+  check(/Changed in Shopify — accepted as/.test(src('src/sa/pages/ShopifyPurchaseOrders.jsx')),
+    'the screen shows both figures rather than quietly correcting one');
+
   console.log('\n5. Accepting writes an ordinary purchase order, and only once');
   // Acceptance deliberately reuses purchase_orders rather than inventing a
   // parallel table: the screens that show a pending order beside its fragrance,
