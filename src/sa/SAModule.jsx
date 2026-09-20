@@ -6,6 +6,7 @@ import SkuMapping from './pages/SkuMapping';
 import TransactionHistory from './pages/TransactionHistory';
 import ProductManagement from './pages/ProductManagement';
 import MachineInventory from './pages/MachineInventory';
+import ShopifyPurchaseOrders from './pages/ShopifyPurchaseOrders';
 import ProductReturns from './pages/ProductReturns';
 import ColdRoomMap from './pages/ColdRoomMap';
 import BOMViewer from './pages/BOMViewer';
@@ -65,6 +66,11 @@ function SAContent({ user, onSwitchModule, onLogout }) {
             <li><Link href="/fragrance-library" className={isActive('/fragrance-library') ? 'nav-active' : ''}>Fragrance Library</Link></li>
             <li><Link href="/machines" className={isActive('/machines') ? 'nav-active' : ''}>Diffusers</Link></li>
             <li><Link href="/returns" className={isActive('/returns') ? 'nav-active' : ''}>Returns</Link></li>
+            {/* Delivery 1 of the Shopify PO integration: read-only, for checking
+                against the store before anything is allowed to act on it. */}
+            {user.role !== 'technician' && (
+              <li><Link href="/shopify-po" className={isActive('/shopify-po') ? 'nav-active' : ''}>Shopify POs</Link></li>
+            )}
             {user.role !== 'technician' && (
               <li><Link href="/stock" className={isActive('/stock') ? 'nav-active' : ''}>Stock</Link></li>
             )}
@@ -140,6 +146,7 @@ function SAContent({ user, onSwitchModule, onLogout }) {
           <Route path="/products"><ProductManagement key="products" user={user} /></Route>
           <Route path="/fragrance-library"><ProductManagement key="fragrance-library" user={user} libraryMode /></Route>
           <Route path="/machines"><MachineInventory user={user} /></Route>
+          <Route path="/shopify-po"><ShopifyPurchaseOrders user={user} /></Route>
           <Route path="/returns"><ProductReturns user={user} /></Route>
           <Route path="/cold-room-map"><ColdRoomMap user={user} /></Route>
           <Route path="/stock"><StockManagement user={user} /></Route>

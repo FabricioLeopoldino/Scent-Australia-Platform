@@ -13,6 +13,7 @@ import express from 'express';
 import { calcSmartDemand } from '../../shared/demand-calculator.js';
 import { bomVariantFor } from '../../shared/refurb-machines.js';
 import { isValidReason, reasonLabel } from '../../shared/stock-reasons.js';
+import { readIncomingPurchaseOrders } from './shopify-purchase-orders.js';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import multer from 'multer';
@@ -4209,6 +4210,167 @@ router.patch('/products/:id/status', async (req, res) => {
   }
 });
 
+// ── GET /api/shopify-purchase-orders — what Shopify says is on order.
+//
+// Delivery 1 of the PO integration, and deliberately the whole of it: this
+// READS. It writes nothing, to the platform or to Shopify. It exists so the
+// owner and the manager can watch it against the real store for a few days
+// before anything is allowed to act on it.
+//
+// Fails closed and says so. `unstable` can change shape without notice, and a
+// screen that shows an old list as if it were current is worse than one that
+// says it could not reach Shopify.
+router.get('/shopify-purchase-orders', async (req, res) => {
+  // The menu hides this from technicians; a menu is not a permission. Supplier
+  // names, unit costs and stock positions are on this page.
+  if (req.user.role === 'technician') return res.status(403).json({ error: 'Not available for technicians' });
+  try {
+    const products = (await pool.query(
+      `SELECT "productCode", name, "currentStock", unit, "shopifySkus", status, category
+         FROM products WHERE status = 'active'`)).rows
+      .map((r) => ({ ...r, shopifySkus: parseJSONB(r.shopifySkus) }));
+
+    const { orders, liveLineIds } = await readIncomingPurchaseOrders(products);
+
+    // What has already been linked. Read per line, not per order: a purchase
+    // order can be accepted while one of its lines is still unrecognised, and
+    // that line has to stay offered once its code is fixed in Shopify.
+    const accepted = (await pool.query(
+      `SELECT po.id, po.order_number, po.shopify_po_gid, po.shopify_line_id, po.status,
+              po.quantity::float q, po.quantity_received::float rec,
+              pr."productCode" AS product_code, pr.name AS product_name
+         FROM purchase_orders po
+         LEFT JOIN products pr ON pr.id = po.product_id
+        WHERE po.shopify_line_id IS NOT NULL`)).rows;
+    const byLine = new Map(accepted.map((r) => [r.shopify_line_id, r]));
+    for (const o of orders) {
+      for (const l of o.lines) {
+        const row = byLine.get(l.lineId);
+        l.accepted = !!row;
+        l.receivedMl = row ? row.rec : null;
+        l.poStatus = row ? row.status : null;
+      }
+      o.acceptedLines = o.lines.filter((l) => l.accepted).length;
+      o.acceptableLines = o.lines.filter((l) => l.matched && !l.accepted).length;
+    }
+
+    // Accepted, then deleted in Shopify. Without this the platform would go on
+    // counting that oil as on its way for ever, and nobody would see it: the
+    // purchase order is gone from the store, so it is gone from the list above
+    // too. Absence is the only signal Shopify gives, so it is the one used.
+    const orphans = accepted
+      .filter((r) => ['pending', 'partial'].includes(r.status) && !liveLineIds.has(r.shopify_line_id))
+      .map((r) => ({
+        id: r.id,
+        number: r.order_number,
+        productCode: r.product_code,
+        productName: r.product_name,
+        outstandingMl: r.q - r.rec,
+        status: r.status,
+      }));
+
+    res.json({
+      ok: true,
+      readAt: new Date().toISOString(),
+      orders,
+      orphans,
+      counts: {
+        orders: orders.length,
+        lines: orders.reduce((n, o) => n + o.lines.length, 0),
+        unmatched: orders.reduce((n, o) => n + o.unmatchedCount, 0),
+      },
+    });
+  } catch (e) {
+    console.error('Shopify PO read failed:', e.message);
+    res.json({ ok: false, error: e.message, orders: [], counts: null });
+  }
+});
+
+// ── POST /api/shopify-purchase-orders/accept — link a Shopify PO to the platform.
+//
+// Delivery 2. The acceptance writes ordinary purchase_orders rows, so from this
+// point on the order behaves exactly like one raised here: it shows beside its
+// fragrance, and it is received through the flow the warehouse already uses.
+// Nothing is written back to Shopify, ever.
+//
+// The quantities are re-read from Shopify inside this request. The screen's
+// numbers are never trusted: a browser tab left open for an hour would otherwise
+// be able to accept a quantity that no longer exists.
+router.post('/shopify-purchase-orders/accept', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Only admin or root can accept a purchase order' });
+  }
+  // The database client is taken AFTER Shopify has answered. Holding one across
+  // several network calls to somebody else's server starves a pool of ten: a
+  // slow or hung Shopify would take unrelated SA requests down with it.
+  let client;
+  try {
+    const { shopifyId } = req.body || {};
+    if (!shopifyId) return res.status(400).json({ error: 'shopifyId is required' });
+
+    const products = (await pool.query(
+      `SELECT id, "productCode", name, "currentStock", unit, "shopifySkus", status
+         FROM products WHERE status = 'active'`)).rows
+      .map((r) => ({ ...r, shopifySkus: parseJSONB(r.shopifySkus) }));
+
+    const fresh = (await readIncomingPurchaseOrders(products)).orders.find((o) => o.shopifyId === shopifyId);
+    if (!fresh) {
+      // It was deleted, cancelled, or fell outside what is watched between the
+      // screen loading and the click. A deleted PO vanishes from Shopify's API
+      // entirely — verified 2026-09-21 — so absence is the only signal there is.
+      return res.status(409).json({ error: 'That purchase order is no longer in Shopify. Refresh the page.' });
+    }
+
+    const byCode = new Map(products.map((p) => [p.productCode, p]));
+    const usable = fresh.lines.filter((l) => l.matched && byCode.has(l.productCode));
+    if (usable.length === 0) {
+      return res.status(400).json({ error: 'No line on this purchase order matches a product yet' });
+    }
+
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const created = [];
+    for (const line of usable) {
+      const product = byCode.get(line.productCode);
+      const ins = await client.query(
+        `INSERT INTO purchase_orders
+           (product_id, order_number, quantity, supplier, notes, added_by, created_by,
+            shopify_po_gid, shopify_line_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         ON CONFLICT (shopify_line_id) WHERE shopify_line_id IS NOT NULL DO NOTHING
+         RETURNING id`,
+        // added_by is the label the screens show; created_by is the user id.
+        // The existing PO insert keeps them apart and so must this one.
+        [product.id, fresh.number, line.incomingMl, fresh.supplier || null,
+         `From Shopify ${fresh.number} — ${line.bottles} × ${line.bottleMl} mL`,
+         req.user.name || 'shopify', req.user.id, shopifyId, line.lineId]
+      );
+      if (ins.rows.length) created.push({ productCode: line.productCode, ml: line.incomingMl });
+    }
+    await client.query(
+      `INSERT INTO audit_log (user_id, action, entity_type, entity_id, entity_name, details)
+       VALUES ($1, 'shopify_po_accepted', 'purchase_order', NULL, $2, $3)`,
+      [req.user.id, fresh.number,
+       JSON.stringify({ shopifyId, supplier: fresh.supplier, lines: created,
+                        skippedUnmatched: fresh.unmatchedCount })]
+    );
+    await client.query('COMMIT');
+
+    res.json({
+      ok: true, number: fresh.number,
+      accepted: created.length,
+      alreadyAccepted: usable.length - created.length,
+      unmatched: fresh.unmatchedCount,
+    });
+  } catch (e) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    console.error('Shopify PO accept failed:', e.message);
+    res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    if (client) client.release();
+  }
+});
+
 // ── PATCH /api/products/:id/reorder-watch — show or hide a machine on the
 // Dashboard's reorder watch. The choice is shared: it is product data, so it is
 // the same for everyone who opens the page (owner, 2026-09-18).
@@ -5598,6 +5760,23 @@ async function runStartupMigrations() {
     // zeroed during a stocktake on 17 September and four machines left the watch
     // without anyone intending it.
     await pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS reorder_watch BOOLEAN DEFAULT NULL`);
+
+    // Accepting a Shopify purchase order writes an ORDINARY purchase_orders row.
+    // That is the whole of deliveries 2 and 3: the existing screens already show
+    // a pending PO beside its fragrance, and the existing receive flow already
+    // validates the remaining balance, locks the product row, adds the stock,
+    // marks the PO partial or received and writes the transaction. Building a
+    // parallel set of tables and screens for the same thing would have been a
+    // second way to be wrong about incoming stock.
+    //
+    // Two columns say where the row came from. The unique index is the real
+    // guarantee that a line is accepted once: code can be bypassed, a constraint
+    // cannot. Keyed on the Shopify LINE id, not the PO number — Shopify renumbers
+    // nothing, but a person can raise a second PO with the same reference.
+    await pool.query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS shopify_po_gid TEXT`);
+    await pool.query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS shopify_line_id TEXT`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS purchase_orders_shopify_line_uniq
+                        ON purchase_orders (shopify_line_id) WHERE shopify_line_id IS NOT NULL`);
     // Seeded ONCE, on the first boot that finds nobody has decided anything yet.
     // Refurbished machines start out: they are not ordered from a supplier — one
     // exists when a unit comes back — so zero is their ordinary state, not a
