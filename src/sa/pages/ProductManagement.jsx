@@ -978,8 +978,26 @@ export default function ProductManagement({ user, libraryMode = false }) {
                                 <span style={{ color: '#fbbf24' }}>
                                   ({displayStock(order.quantity, product.unit)})
                                 </span>
+                                {/* Cancelled in Shopify. The dangerous part of an
+                                    order that no longer exists is not that it
+                                    sits here — it is the green button beside it,
+                                    which would bring in oil that is never
+                                    coming. So the button goes and the reason
+                                    takes its place; removing it stays a
+                                    deliberate click, because a row that vanishes
+                                    on its own teaches nobody anything. */}
+                                {order.shopifyMissingSince && (
+                                  <span style={{
+                                    fontSize: '10px', fontWeight: 700, color: '#f87171',
+                                    background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.35)',
+                                    borderRadius: 4, padding: '2px 6px', marginLeft: 'auto',
+                                  }}>
+                                    cancelled in Shopify
+                                  </span>
+                                )}
                                 {['admin', 'root'].includes(user.role) && (
                                   <>
+                                    {!order.shopifyMissingSince && (
                                     <button
                                       onClick={() => handleOpenReceiveModal(product, order)}
                                       style={{
@@ -997,6 +1015,7 @@ export default function ProductManagement({ user, libraryMode = false }) {
                                     >
                                       ✓ Received
                                     </button>
+                                    )}
                                     <button
                                       onClick={() => handleClearIncoming(order.id)}
                                       style={{

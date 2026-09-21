@@ -126,6 +126,21 @@ try {
   check(/client = await pool\.connect\(\);[\s\S]{0,60}BEGIN/.test(server),
     'the database client is taken after Shopify answers, so a slow store cannot starve the pool');
 
+  console.log('\n4b2. And the fact reaches the screen where the stock is received');
+  // Found by the owner testing it: the alert was on the Shopify page, but the
+  // card beside the fragrance still offered a green "received" button for oil
+  // that had been cancelled. The alert has to travel to where the mistake would
+  // be made, not only to where it was detected.
+  check(/shopify_missing_since/.test(server), 'a cancelled order is recorded on the row itself');
+  check(/shopifyMissingSince: po\.shopify_missing_since/.test(server),
+    'and the product list carries it to the screens');
+  const pm = src('src/sa/pages/ProductManagement.jsx');
+  check(/order\.shopifyMissingSince/.test(pm), 'the card beside the fragrance says it was cancelled');
+  check(/\{!order\.shopifyMissingSince && \(/.test(pm),
+    'and the receive button is gone from it — that button is the actual danger');
+  check(/shopify_missing_since = NULL/.test(server),
+    'an order that comes back clears the mark rather than staying wrong');
+
   console.log('\n4d. An accepted order EDITED in Shopify is noticed too');
   // Deletion was handled first; editing was the gap. The owner edited a purchase
   // order twenty minutes after raising it, so this is ordinary behaviour. Without

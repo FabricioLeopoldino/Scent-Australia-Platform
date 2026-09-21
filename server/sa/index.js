@@ -533,7 +533,7 @@ router.get('/products', async (req, res) => {
     
     const [result, posResult] = await Promise.all([
       pool.query(query, params),
-      pool.query(`SELECT id, product_id, order_number, quantity, quantity_received, supplier, status, notes, added_at, added_by, estimated_delivery_date
+      pool.query(`SELECT id, product_id, order_number, quantity, quantity_received, supplier, status, notes, added_at, added_by, estimated_delivery_date, shopify_missing_since
                   FROM purchase_orders WHERE status IN ('pending','partial') ORDER BY added_at ASC`)
     ]);
 
@@ -551,7 +551,8 @@ router.get('/products', async (req, res) => {
         notes: po.notes || '',
         addedAt: po.added_at,
         addedBy: po.added_by || '',
-        estimatedDeliveryDate: po.estimated_delivery_date || null
+        estimatedDeliveryDate: po.estimated_delivery_date || null,
+        shopifyMissingSince: po.shopify_missing_since || null
       });
     }
 
@@ -4236,7 +4237,7 @@ router.get('/shopify-purchase-orders', async (req, res) => {
     // order can be accepted while one of its lines is still unrecognised, and
     // that line has to stay offered once its code is fixed in Shopify.
     const accepted = (await pool.query(
-      `SELECT po.id, po.order_number, po.shopify_po_gid, po.shopify_line_id, po.status,
+      `SELECT po.id, po.order_number, po.shopify_po_gid, po.shopify_line_id, po.status, po.shopify_missing_since,
               po.quantity::float q, po.quantity_received::float rec,
               pr."productCode" AS product_code, pr.name AS product_name
          FROM purchase_orders po
@@ -4265,6 +4266,27 @@ router.get('/shopify-purchase-orders', async (req, res) => {
     // counting that oil as on its way for ever, and nobody would see it: the
     // purchase order is gone from the store, so it is gone from the list above
     // too. Absence is the only signal Shopify gives, so it is the one used.
+    // A read that writes, deliberately and idempotently: it records a fact it
+    // has just established and nothing else. Without it the fact stays on this
+    // page, and the person about to click "received" on a fragrance never learns
+    // the order was cancelled. Cleared again if the order comes back.
+    const orphanIds = accepted
+      .filter((r) => ['pending', 'partial'].includes(r.status) && !liveLineIds.has(r.shopify_line_id))
+      .map((r) => r.id);
+    const presentIds = accepted
+      .filter((r) => liveLineIds.has(r.shopify_line_id) && r.shopify_missing_since)
+      .map((r) => r.id);
+    if (orphanIds.length) {
+      await pool.query(
+        `UPDATE purchase_orders SET shopify_missing_since = COALESCE(shopify_missing_since, NOW())
+          WHERE id = ANY($1::int[])`, [orphanIds]);
+    }
+    if (presentIds.length) {
+      await pool.query(
+        `UPDATE purchase_orders SET shopify_missing_since = NULL WHERE id = ANY($1::int[])`,
+        [presentIds]);
+    }
+
     const orphans = accepted
       .filter((r) => ['pending', 'partial'].includes(r.status) && !liveLineIds.has(r.shopify_line_id))
       .map((r) => ({
@@ -5833,6 +5855,11 @@ async function runStartupMigrations() {
     await pool.query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS shopify_line_id TEXT`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS purchase_orders_shopify_line_uniq
                         ON purchase_orders (shopify_line_id) WHERE shopify_line_id IS NOT NULL`);
+    // Stamped when the order is found to be gone from Shopify. It exists so the
+    // fact travels to the screens that show incoming stock beside a product —
+    // those cannot each ask Shopify, and a person looking at a fragrance must
+    // not be offered a "received" button for oil that is not coming.
+    await pool.query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS shopify_missing_since TIMESTAMP`);
     // Seeded ONCE, on the first boot that finds nobody has decided anything yet.
     // Refurbished machines start out: they are not ordered from a supplier — one
     // exists when a unit comes back — so zero is their ordinary state, not a
