@@ -1398,7 +1398,14 @@ router.get('/audit', async (req, res) => {
         SELECT al.id::text AS id, al.created_at, al.user_id,
                COALESCE(u.name, 'Unknown') AS performed_by,
                al.action, al.entity_name,
-               COALESCE(al.details->>'product_code', al.entity_id::text) AS entity_code,
+               -- Both spellings. Every writer of these rows uses productCode,
+               -- and this only ever looked for product_code, so 815 rows —
+               -- every PO created, received or cancelled, and every product
+               -- activated or deactivated — showed the internal id (OIL_45)
+               -- where the code belongs (FRAG_0045). Reading both fixes the
+               -- history already written as well as what comes next.
+               COALESCE(al.details->>'product_code', al.details->>'productCode',
+                        al.entity_id::text) AS entity_code,
                al.details->>'category' AS category,
                NULL::numeric AS quantity, NULL AS unit,
                NULL::numeric AS balance_after,

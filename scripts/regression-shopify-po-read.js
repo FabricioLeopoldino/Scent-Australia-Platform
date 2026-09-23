@@ -170,6 +170,24 @@ try {
   check(/l\.name \|\| l\.productCode/.test(act),
     'rows written before names were stored still read, falling back to the code');
 
+  console.log('\n4f. The history shows product codes, not internal ids');
+  // Found from the owner's screenshot: the code column read OIL_45 where
+  // FRAG_0045 belongs. Every writer of these rows stores productCode and the
+  // query only ever looked for product_code, so it fell back to the row id —
+  // on 815 rows, every purchase order created, received or cancelled, and every
+  // product activated or deactivated. Reading both spellings fixes the history
+  // already written as well as what comes next.
+  check(/details->>'product_code', al\.details->>'productCode'/.test(server),
+    'the activity query reads both spellings of the product code');
+  const wrong = (await pool.query(`
+    SELECT count(*) n FROM audit_log
+     WHERE details->>'product_code' IS NULL AND details->>'productCode' IS NOT NULL`)).rows[0].n;
+  const resolved = (await pool.query(`
+    SELECT count(*) n FROM audit_log
+     WHERE COALESCE(details->>'product_code', details->>'productCode') LIKE 'FRAG_%'`)).rows[0].n;
+  check(Number(resolved) > 0,
+    `${resolved} rows now resolve to a real code (${wrong} would have shown an id)`);
+
   console.log('\n5. Accepting writes an ordinary purchase order, and only once');
   // Acceptance deliberately reuses purchase_orders rather than inventing a
   // parallel table: the screens that show a pending order beside its fragrance,
