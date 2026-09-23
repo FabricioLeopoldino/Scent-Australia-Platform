@@ -1365,7 +1365,7 @@ router.get('/audit', async (req, res) => {
     // exist as a type — so filtering the Activity Log by "Tech Batch (Scanner)"
     // silently returned 0 rows while real entries sat in audit_log. Restores
     // parity with the live SA system; keep this list in sync with it.
-    const AUDIT_LOG_TYPES = ['product_created', 'product_deleted', 'sku_published', 'sku_added', 'po_created', 'po_cancelled', 'po_received', 'formula_created', 'formula_updated', 'formula_deleted', 'formula_ready_received', 'formula_ready_adjusted', 'product_deactivated', 'product_activated', 'scented_group_created', 'scented_group_deleted', 'tech_transfer', 'tech_remove', 'tech_return', 'tech_batch'];
+    const AUDIT_LOG_TYPES = ['product_created', 'product_deleted', 'sku_published', 'sku_added', 'po_created', 'po_cancelled', 'po_received', 'formula_created', 'formula_updated', 'formula_deleted', 'formula_ready_received', 'formula_ready_adjusted', 'product_deactivated', 'product_activated', 'scented_group_created', 'scented_group_deleted', 'tech_transfer', 'tech_remove', 'tech_return', 'tech_batch', 'shopify_po_accepted', 'shopify_po_quantity_synced', 'product_reorder_watch_changed'];
     const isAuditLogType = AUDIT_LOG_TYPES.includes(type);
 
     // ── Stock transactions ─────────────────────────────────────────────────
@@ -4374,7 +4374,11 @@ router.post('/shopify-purchase-orders/accept', async (req, res) => {
          `From Shopify ${fresh.number} — ${line.bottles} × ${line.bottleMl} mL`,
          req.user.name || 'shopify', req.user.id, shopifyId, line.lineId]
       );
-      if (ins.rows.length) created.push({ productCode: line.productCode, ml: line.incomingMl });
+      // The name as well as the code: the activity screen is read by people, and
+      // "FRAG_0045" tells them nothing that "Dream" does not tell them better.
+      if (ins.rows.length) {
+        created.push({ productCode: line.productCode, name: line.productName, ml: line.incomingMl });
+      }
     }
     await client.query(
       `INSERT INTO audit_log (user_id, action, entity_type, entity_id, entity_name, details)

@@ -153,6 +153,23 @@ try {
   check(/Changed in Shopify — accepted as/.test(src('src/sa/pages/ShopifyPurchaseOrders.jsx')),
     'the screen shows both figures rather than quietly correcting one');
 
+  console.log('\n4e. The history reads as words, not as a payload');
+  // The owner opened Activity and found the raw JSON of an acceptance — a gid,
+  // millilitres and product codes. Every other action on that screen has a
+  // formatter; mine had none, so they fell through to the payload.
+  const act = src('src/sa/pages/ActivityLog.jsx');
+  for (const a of ['shopify_po_accepted', 'shopify_po_quantity_synced', 'product_reorder_watch_changed']) {
+    check(new RegExp(`${a}:\\s*\\{ label`).test(act) || new RegExp(`${a}:\\s+\\{ label`).test(act),
+      `${a} has a name on screen`);
+    check(new RegExp(`log\\.action === '${a}'`).test(act), `and is written out in words`);
+  }
+  check(/AUDIT_LOG_TYPES[\s\S]{0,700}shopify_po_accepted/.test(server),
+    'and can be filtered for, like every other action');
+  // Codes are what the first rows stored; names are stored from 24 September.
+  // The formatter must not show an empty cell for the older ones.
+  check(/l\.name \|\| l\.productCode/.test(act),
+    'rows written before names were stored still read, falling back to the code');
+
   console.log('\n5. Accepting writes an ordinary purchase order, and only once');
   // Acceptance deliberately reuses purchase_orders rather than inventing a
   // parallel table: the screens that show a pending order beside its fragrance,

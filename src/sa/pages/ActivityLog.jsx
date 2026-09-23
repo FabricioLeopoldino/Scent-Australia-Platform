@@ -31,6 +31,9 @@ const TYPE_LABELS = {
   tech_remove:            { label: 'Tech Remove',             color: '#f87171' },
   tech_return:            { label: 'Tech Return',             color: '#34d399' },
   tech_batch:             { label: 'Tech Batch (Scanner)',    color: '#c084fc' },
+  shopify_po_accepted:          { label: 'Shopify PO Accepted',  color: '#f59e0b' },
+  shopify_po_quantity_synced:   { label: 'Shopify PO Changed',   color: '#fbbf24' },
+  product_reorder_watch_changed:{ label: 'Reorder Watch',        color: '#60a5fa' },
 };
 
 const CATEGORY_LABELS = {
@@ -273,6 +276,27 @@ export default function ActivityLog({ user }) {
                       const badge = d.receiveType === 'full' ? '✅ Full' : '⚠️ Partial';
                       notesDisplay = `${d.orderNumber} · ${badge} · ${rcv}${d.receiveType === 'partial' ? ` of ${tot}` : ''}`;
                       quantityDisplay = { sign: '+', value: rcv, color: '#34d399' };
+                    } else if (log.action === 'shopify_po_accepted') {
+                      // Was rendering the raw JSON — gid, millilitres and product
+                      // codes — which is unreadable for the person whose history
+                      // this is. Names are stored from 24 September; older rows
+                      // only have codes, so fall back rather than show nothing.
+                      const lines = Array.isArray(d.lines) ? d.lines : [];
+                      const total = lines.reduce((n, l) => n + (Number(l.ml) || 0), 0);
+                      const what = lines
+                        .map((l) => `${l.name || l.productCode} ${(l.ml / 1000).toLocaleString()} L`)
+                        .join(', ');
+                      notesDisplay = `${d.supplier || 'no supplier'} · ${what || 'no lines'}`
+                        + (d.skippedUnmatched ? ` · ${d.skippedUnmatched} line(s) not recognised` : '');
+                      quantityDisplay = { sign: '+', value: `${(total / 1000).toLocaleString()} L`, color: '#f59e0b' };
+                    } else if (log.action === 'shopify_po_quantity_synced') {
+                      const from = `${(Number(d.from) / 1000).toLocaleString()} L`;
+                      const to = `${(Number(d.to) / 1000).toLocaleString()} L`;
+                      notesDisplay = `Changed in Shopify: ${from} → ${to}`
+                        + (d.alreadyReceived > 0 ? ` · ${(d.alreadyReceived / 1000).toLocaleString()} L already received` : '');
+                      quantityDisplay = { sign: d.to >= d.from ? '+' : '−', value: to, color: '#fbbf24' };
+                    } else if (log.action === 'product_reorder_watch_changed') {
+                      notesDisplay = `${d.productCode} · ${d.watch ? 'added to' : 'removed from'} the machine reorder watch`;
                     } else if (log.action === 'formula_created') {
                       const skus = Array.isArray(d.shopify_skus) ? d.shopify_skus.join(', ') : (d.shopify_skus || '—');
                       notesDisplay = `Base: ${d.base_product_code} (${d.base_percentage}%) + Oil: ${d.oil_product_code} (${d.oil_percentage}%)${skus !== '—' ? ` · SKUs: ${skus}` : ''}`;
