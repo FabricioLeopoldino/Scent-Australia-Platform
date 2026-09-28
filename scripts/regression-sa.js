@@ -423,15 +423,61 @@ async function testOilUsageReportMath() {
   ];
   const { summaryRows, detailRows } = buildOilUsageSheets(ledger);
   const s = summaryRows[0];
+  // In LITRES since 2026-09-29. The ledger stores mL and the report said so
+  // nowhere, so the owner had to ask whether a figure was litres or millilitres.
+  // The report now converts and states the unit; these expectations moved with
+  // it, deliberately — the arithmetic below is unchanged.
+  record('D15 report: the unit is stated, not left to be guessed',
+    s['Unit'] === 'L', `unit=${s['Unit']}`);
   record('D15 report: per-company usage split is exact',
-    s['MUSE Used'] === 2000 && s['SM-Standard Used'] === 1000 && s['SM-Major Used'] === 0 && s['SA Used'] === 7000,
+    s['MUSE Used'] === 2 && s['SM-Standard Used'] === 1 && s['SM-Major Used'] === 0 && s['SA Used'] === 7,
     `MUSE=${s['MUSE Used']} SM-Std=${s['SM-Standard Used']} SA=${s['SA Used']}`);
   const balances = s['Opening Stock'] + s['Replenished (+)']
     - s['MUSE Used'] - s['SM-Standard Used'] - s['SM-Major Used'] - s['SA Used']
     + s['Direct Adj. (count/manual)'] === s['Closing Stock'];
   record('D15 report: Opening + Replenished − Used(all) + DirectAdj = Closing',
-    balances && s['Opening Stock'] === 10000 && s['Closing Stock'] === 8000,
-    `${s['Opening Stock']} + ${s['Replenished (+)']} − 10000 = ${s['Closing Stock']}`);
+    balances && s['Opening Stock'] === 10 && s['Closing Stock'] === 8,
+    `${s['Opening Stock']} + ${s['Replenished (+)']} − 10 = ${s['Closing Stock']}`);
+  // Each oil's opening and closing belong to its own first and last movement in
+  // the period, which two oils rarely share — so the report has to say which day
+  // each figure is from, or it cannot be checked afterwards.
+  // The property the Direct Adj. column exists for: the printed row must add up.
+  // A first version divided then rounded, leaving rows where 10 − 1.24 = 8.76
+  // against a printed closing of 8.77 — the residual could no longer absorb the
+  // gap, so it stopped meaning "off-ledger change" and started meaning "rounding".
+  const oddLedger = [
+    { id: 1, product_id: 'Y', product_code: 'FRAG_8888', product_name: 'Odd', type: 'add',             quantity: 10000, unit: 'mL', balance_after: 10000, notes: '', created_at: '2026-07-01T09:00:00Z' },
+    { id: 2, product_id: 'Y', product_code: 'FRAG_8888', product_name: 'Odd', type: 'muse_production', quantity: 1235,  unit: 'mL', balance_after: 8765,  notes: '', created_at: '2026-07-02T09:00:00Z' },
+  ];
+  const odd = buildOilUsageSheets(oddLedger).summaryRows[0];
+  const oddBalances = Math.abs(
+    (odd['Opening Stock'] + odd['Replenished (+)'] - odd['MUSE Used'] - odd['SM-Standard Used']
+     - odd['SM-Major Used'] - odd['SA Used'] + odd['Direct Adj. (count/manual)'])
+    - odd['Closing Stock']) < 1e-9;
+  record('D15 report: the row adds up on figures that are not round litres',
+    oddBalances && odd['MUSE Used'] === 1.235,
+    `${odd['Opening Stock']} + ${odd['Replenished (+)']} − ${odd['MUSE Used']} = ${odd['Closing Stock']}`);
+  // A millilitre is 0.001 L. At two decimals a 4 mL movement reported as zero.
+  const tiny = buildOilUsageSheets([
+    oddLedger[0],
+    { ...oddLedger[1], quantity: 4, balance_after: 9996 },
+  ]).summaryRows[0];
+  record('D15 report: a 4 mL movement is not rounded away to nothing',
+    tiny['MUSE Used'] === 0.004, `MUSE=${tiny['MUSE Used']}`);
+  // A transaction can carry a BOM's unit rather than the oil's own. Converting on
+  // the first row that has one would relabel the whole oil as litres while its
+  // figures stayed in millilitres.
+  const mixed = buildOilUsageSheets([
+    { ...oddLedger[0], unit: 'L' },
+    oddLedger[1],
+  ]).summaryRows[0];
+  record('D15 report: mixed units are left raw and named, never silently converted',
+    mixed['Unit'] === 'L/mL' && mixed['Opening Stock'] === 0,
+    `unit=${mixed['Unit']} opening=${mixed['Opening Stock']}`);
+
+  record('D15 report: each row carries the dates its own figures come from',
+    !!s['Opening At'] && s['Opening At'] !== '-' && !!s['Closing At'] && s['Closing At'] !== '-',
+    `${s['Opening At']} → ${s['Closing At']}`);
   // A clean ledger (no off-ledger edits) must report ZERO direct adjustment —
   // otherwise the column would hide arithmetic errors instead of surfacing real
   // manual corrections.
@@ -442,13 +488,13 @@ async function testOilUsageReportMath() {
   const gapped = buildOilUsageSheets(ledger.map((r, i) =>
     i === ledger.length - 1 ? { ...r, balance_after: 8500 } : r)).summaryRows[0];
   record('D15 report: an off-ledger stock change is surfaced as Direct Adj.',
-    gapped['Direct Adj. (count/manual)'] === 500, `adj=${gapped['Direct Adj. (count/manual)']}`);
+    gapped['Direct Adj. (count/manual)'] === 0.5, `adj=${gapped['Direct Adj. (count/manual)']}`);
   // A reversal must net against its OWN business, never count as replenishment.
   const withReversal = buildOilUsageSheets([...ledger,
     { id: 5, product_id: 'X', product_code: 'FRAG_9999', product_name: 'Fragrance X', type: 'muse_reversal', quantity: 500, unit: 'mL', balance_after: 8500, notes: 'cancelled', created_at: '2026-07-05T09:00:00Z' },
   ]).summaryRows[0];
   record('D15 report: a reversal nets against its own business, not "Replenished"',
-    withReversal['MUSE Used'] === 1500 && withReversal['Replenished (+)'] === 8000,
+    withReversal['MUSE Used'] === 1.5 && withReversal['Replenished (+)'] === 8,
     `MUSE=${withReversal['MUSE Used']} Replenished=${withReversal['Replenished (+)']}`);
   record('D15 report: detail sheet has one row per movement + order refs',
     detailRows.length === 4 && detailRows.some((r) => r['Order #'] === '#555') && detailRows.some((r) => r['Order #'] === 'SM-101'),

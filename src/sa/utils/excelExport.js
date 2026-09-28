@@ -290,6 +290,7 @@ function classifyOilTx(type) {
 // Float arithmetic on mL leaves 0.000000001 tails that look like broken numbers
 // in a finance report.
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+const round3 = (n) => Math.round((n + Number.EPSILON) * 1000) / 1000;
 
 function extractOrderRef(notes) {
   if (!notes) return '-';
@@ -324,6 +325,39 @@ export function buildOilUsageSheets(transactions) {
       return ta !== tb ? ta - tb : (a.id || 0) - (b.id || 0);
     });
 
+    // WHY THE UNIT IS STATED AND CONVERTED (2026-09-29). The owner opened the
+    // report and had to ask: "Muse Used — isso e litros ou ml?". The summary
+    // carried no unit anywhere, and the ledger stores oil in mL, so 10000 meant
+    // ten litres and nothing on the page said so. Every other screen he reads
+    // speaks litres.
+    //
+    // Converted per OIL, from that oil's own rows, rather than assuming: if one
+    // is ever stored in something else, its figures stay raw and the Unit column
+    // says which — a wrong unit silently applied is worse than an unfamiliar one
+    // shown honestly.
+    // EVERY row must agree, not just the first one that carries a unit. A
+    // transaction can be written with a BOM's unit rather than the oil's stock
+    // unit, and one such early row would flip the whole oil to unconverted
+    // figures under an "L" heading — the exact mislabelling this change exists
+    // to stop. Mixed or unknown: leave the numbers raw and say so.
+    const units = new Set(rows.map((r) => r.unit).filter(Boolean));
+    const inLitres = units.size === 0 || (units.size === 1 && units.has('mL'));
+    const unitLabel = inLitres ? 'L' : [...units].join('/');
+    // Three decimals, not two: at 0.01 L a 4 mL movement reports as zero. One
+    // millilitre is 0.001 L, so this loses nothing — and it matches mlToL in
+    // utils/unitConversion.js, which every screen already uses.
+    const show = (v) => (inLitres ? Math.round((v / 1000 + Number.EPSILON) * 1000) / 1000 : round2(v));
+
+    // Each oil's opening and closing belong to ITS first and last movement in
+    // the period, not to the period's edges — two oils on the same report can be
+    // measured from different days. Saying which is the only way the numbers can
+    // be checked later.
+    const at = (tx) => (tx
+      ? new Date(tx.created_at).toLocaleString('en-AU', {
+          timeZone: 'Australia/Sydney', day: '2-digit', month: '2-digit',
+          year: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : '-');
+
     let replenished = 0;
     const used = { MUSE: 0, 'SM-Standard': 0, 'SM-Major': 0, SA: 0 };
 
@@ -345,10 +379,11 @@ export function buildOilUsageSheets(transactions) {
         'Oil Name': oil.name,
         'Company': info.company,
         'Movement': getTransactionTypeLabel(tx.type),
-        'Quantity': qty,
-        'Unit': tx.unit,
-        'Before': before,
-        'After': after,
+        // Converted with the summary, so one workbook does not carry two units.
+        'Quantity': show(qty),
+        'Unit': unitLabel,
+        'Before': show(before),
+        'After': show(after),
         'Order #': extractOrderRef(tx.notes),
         'Notes': tx.notes || '-',
       });
@@ -356,6 +391,7 @@ export function buildOilUsageSheets(transactions) {
 
     const opening = rows.length ? parseFloat(rows[0].balance_after) - classifyOilTx(rows[0].type).sign * (parseFloat(rows[0].quantity) || 0) : 0;
     const closing = rows.length ? parseFloat(rows[rows.length - 1].balance_after) : 0;
+
 
     // Stock also moves OUTSIDE the transaction ledger: someone edits the level
     // directly in the database after a physical count (the owner's documented
@@ -370,20 +406,33 @@ export function buildOilUsageSheets(transactions) {
     // can't account for IS the direct/manual adjustment. The row then always
     // balances, and the size of this column tells the reader how much of the
     // period happened off-ledger.
-    const totalUsed = used.MUSE + used['SM-Standard'] + used['SM-Major'] + used.SA;
-    const directAdj = closing - (opening + replenished - totalUsed);
+    // Derived from the numbers AS PRINTED, not from the raw ones. Computing it
+    // in mL and rounding afterwards left rows that visibly do not add up —
+    // 10 − 1.24 = 8.76 against a printed closing of 8.77 — which destroys the
+    // one property this column exists to guarantee: that the row always
+    // balances, so any gap is the off-ledger change and nothing else.
+    const shown = {
+      opening: show(opening), replenished: show(replenished), closing: show(closing),
+      muse: show(used.MUSE), std: show(used['SM-Standard']),
+      major: show(used['SM-Major']), sa: show(used.SA),
+    };
+    const directAdj = round3(shown.closing
+      - (shown.opening + shown.replenished - shown.muse - shown.std - shown.major - shown.sa));
 
     summaryRows.push({
       'Oil': oil.name,
       'Oil Code': oil.code,
-      'Opening Stock': round2(opening),
-      'Replenished (+)': round2(replenished),
-      'MUSE Used': round2(used.MUSE),
-      'SM-Standard Used': round2(used['SM-Standard']),
-      'SM-Major Used': round2(used['SM-Major']),
-      'SA Used': round2(used.SA),
-      'Direct Adj. (count/manual)': round2(directAdj),
-      'Closing Stock': round2(closing),
+      'Unit': unitLabel,
+      'Opening Stock': shown.opening,
+      'Opening At': at(rows[0]),
+      'Replenished (+)': shown.replenished,
+      'MUSE Used': shown.muse,
+      'SM-Standard Used': shown.std,
+      'SM-Major Used': shown.major,
+      'SA Used': shown.sa,
+      'Direct Adj. (count/manual)': directAdj,
+      'Closing Stock': shown.closing,
+      'Closing At': at(rows[rows.length - 1]),
     });
   });
 
@@ -393,16 +442,33 @@ export function buildOilUsageSheets(transactions) {
   return { summaryRows, detailRows };
 }
 
-export function exportOilUsageToExcel(transactions, periodLabel = '') {
+export function exportOilUsageToExcel(transactions, periodLabel = '', period = {}) {
   const { summaryRows, detailRows } = buildOilUsageSheets(transactions);
 
   const wb = XLSX.utils.book_new();
 
-  const wsSummary = XLSX.utils.json_to_sheet(summaryRows);
+  // The period, written INSIDE the file (2026-09-29). It used to live only in
+  // the filename, so a spreadsheet opened three months later — or forwarded to
+  // somebody — could not say what it covered. "All Time" is stated as such
+  // rather than left blank, because a blank reads as a mistake.
+  const range = period.from || period.to
+    ? `${period.from || 'the beginning'} to ${period.to || 'today'}`
+    : 'all time';
+  const heading = [
+    [`Oil usage by company — ${periodLabel ? periodLabel.replace(/_/g, ' ') : 'all time'}`],
+    [`Period: ${range}  ·  Exported ${new Date().toLocaleString('en-AU', { timeZone: 'Australia/Sydney' })}`],
+    ['Opening and Closing are each oil’s own first and last movement in the period — see the two date columns.'],
+    [],
+  ];
+
+  const wsSummary = XLSX.utils.aoa_to_sheet(heading);
+  XLSX.utils.sheet_add_json(wsSummary, summaryRows, { origin: 'A5' });
   wsSummary['!cols'] = [
     { wch: 30 }, // Oil
     { wch: 14 }, // Oil Code
+    { wch: 6 },  // Unit
     { wch: 14 }, // Opening Stock
+    { wch: 20 }, // Opening At
     { wch: 16 }, // Replenished (+)
     { wch: 12 }, // MUSE Used
     { wch: 16 }, // SM-Standard Used
@@ -410,10 +476,12 @@ export function exportOilUsageToExcel(transactions, periodLabel = '') {
     { wch: 10 }, // SA Used
     { wch: 24 }, // Direct Adj. (count/manual)
     { wch: 14 }, // Closing Stock
+    { wch: 20 }, // Closing At
   ];
   XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
 
-  const wsDetail = XLSX.utils.json_to_sheet(detailRows);
+  const wsDetail = XLSX.utils.aoa_to_sheet([heading[0], heading[1], []]);
+  XLSX.utils.sheet_add_json(wsDetail, detailRows, { origin: 'A4' });
   wsDetail['!cols'] = [
     { wch: 18 }, { wch: 14 }, { wch: 30 }, { wch: 14 }, { wch: 18 },
     { wch: 10 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 40 }
@@ -421,8 +489,8 @@ export function exportOilUsageToExcel(transactions, periodLabel = '') {
   XLSX.utils.book_append_sheet(wb, wsDetail, 'Detail');
 
   const timestamp = new Date().toISOString().split('T')[0];
-  const period = periodLabel ? `_${periodLabel}` : '';
-  const filename = `Oil_Usage${period}_${timestamp}.xlsx`;
+  const suffix = periodLabel ? `_${periodLabel}` : '';
+  const filename = `Oil_Usage${suffix}_${timestamp}.xlsx`;
 
   XLSX.writeFile(wb, filename);
 }

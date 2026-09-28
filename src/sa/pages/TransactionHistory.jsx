@@ -142,7 +142,12 @@ export default function TransactionHistory() {
       const label = activePreset === 'custom'
         ? `${dateFrom}_to_${dateTo}`
         : getPreset(activePreset).label.replace(/ /g, '_');
-      exportOilUsageToExcel(oilTransactions, label);
+      // The dates travel with the data now, not only in the filename.
+      // The SAME dates the fetch used, never the preset recomputed at export
+      // time — a page left open across midnight would otherwise print a period
+      // the data does not cover.
+      const range = { from: dateFrom, to: dateTo };
+      exportOilUsageToExcel(oilTransactions, label, range);
     } catch (error) {
       console.error('Oil usage export error:', error);
     } finally {
