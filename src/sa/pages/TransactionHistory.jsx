@@ -25,12 +25,25 @@ const getPreset = (key) => {
       return { from: toDateStr(new Date(y, m, d - 6)), to: toDateStr(now), label: 'Last 7 Days' };
     case '30days':
       return { from: toDateStr(new Date(y, m, d - 29)), to: toDateStr(now), label: 'Last 30 Days' };
+    // The calendar week, Monday to today — not the rolling seven days above.
+    // Asked for by the owner 2026-09-29: "como eu faco para pegar so essa
+    // semana?". getDay() is 0 on Sunday, which belongs to the week that has
+    // just ended, so it counts back six days rather than starting a new one.
+    case 'thisWeek': {
+      const back = (now.getDay() + 6) % 7;
+      return { from: toDateStr(new Date(y, m, d - back)), to: toDateStr(now), label: 'This Week' };
+    }
     case 'thisMonth':
       return { from: toDateStr(new Date(y, m, 1)), to: toDateStr(now), label: 'This Month' };
     case 'lastMonth': {
       const first = new Date(y, m - 1, 1);
       const last  = new Date(y, m, 0);
       return { from: toDateStr(first), to: toDateStr(last), label: 'Last Month' };
+    }
+    case 'thisYear':
+      return { from: toDateStr(new Date(y, 0, 1)), to: toDateStr(now), label: 'This Year' };
+    case 'lastYear': {
+      return { from: toDateStr(new Date(y - 1, 0, 1)), to: toDateStr(new Date(y - 1, 11, 31)), label: 'Last Year' };
     }
     case 'all':
     default:
@@ -170,10 +183,13 @@ export default function TransactionHistory() {
   const presets = [
     { key: 'today',     label: 'Today' },
     { key: 'yesterday', label: 'Yesterday' },
+    { key: 'thisWeek',  label: 'This Week' },
     { key: '7days',     label: '7 Days' },
     { key: '30days',    label: '30 Days' },
     { key: 'thisMonth', label: 'This Month' },
     { key: 'lastMonth', label: 'Last Month' },
+    { key: 'thisYear',  label: 'This Year' },
+    { key: 'lastYear',  label: 'Last Year' },
     { key: 'all',       label: 'All Time' },
   ];
 

@@ -458,11 +458,18 @@ export function exportOilUsageToExcel(transactions, periodLabel = '', period = {
     [`Oil usage by company — ${periodLabel ? periodLabel.replace(/_/g, ' ') : 'all time'}`],
     [`Period: ${range}  ·  Exported ${new Date().toLocaleString('en-AU', { timeZone: 'Australia/Sydney' })}`],
     ['Opening and Closing are each oil’s own first and last movement in the period — see the two date columns.'],
+    // Asked directly, 2026-09-29: "puxa todos os oleos? esta completo?". It pulls
+    // every movement, but it lists only fragrances that MOVED — 133 of 281 in a
+    // typical month. A fragrance missing from this sheet is not one at zero; it
+    // is one that stood still, and only the sheet can say which.
+    [`${summaryRows.length} fragrance(s) moved in this period. A fragrance with no movement does not appear — absence here means it did not move, not that it has no stock.`],
     [],
   ];
 
   const wsSummary = XLSX.utils.aoa_to_sheet(heading);
-  XLSX.utils.sheet_add_json(wsSummary, summaryRows, { origin: 'A5' });
+  // One row per heading line plus the blank: heading.length + 1. Hard-coding it
+  // meant adding a heading line silently wrote the table over it.
+  XLSX.utils.sheet_add_json(wsSummary, summaryRows, { origin: `A${heading.length + 1}` });
   wsSummary['!cols'] = [
     { wch: 30 }, // Oil
     { wch: 14 }, // Oil Code
