@@ -12,7 +12,7 @@
 import express from 'express';
 import { calcSmartDemand } from '../../shared/demand-calculator.js';
 import { bomVariantFor } from '../../shared/refurb-machines.js';
-import { isValidReason, reasonLabel } from '../../shared/stock-reasons.js';
+import { isValidReason, reasonLabel, NON_DEMAND_REMOVE_REASONS } from '../../shared/stock-reasons.js';
 import { readIncomingPurchaseOrders } from './shopify-purchase-orders.js';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
@@ -93,6 +93,30 @@ const DEMAND_TX_TYPES = [
   'remove', 'shopify_sale', 'sale',
   'muse_production', 'sm_std_production', 'sm_major_production',
 ];
+
+// A stocktake correction is not demand. It is the book being reconciled to the
+// shelf — the shelf lost nothing, the number did — and counting it as
+// consumption inflates the daily rate for a month. See PRD_DEMAND_PLANNING.md
+// Part II §2b: 329 of the 1,073 litres removed by hand in 90 days were
+// corrections, and one of 127.8 L on Myrrh & Tonka drove its rate on its own.
+//
+// Written once and appended to BOTH demand queries, because the per-product
+// detail and the portfolio list must never answer differently — the same
+// reasoning as FORECAST_STALE_DAYS above.
+//
+// COALESCE, and it is load-bearing. `NOT (type='remove' AND reason = ANY(...))`
+// evaluates to NULL when reason is NULL, and SQL drops a row whose WHERE is
+// NULL — so the first version of this silently removed every unexplained manual
+// removal from demand as well. Over half of them carry no reason (566 L in 90
+// days), and what to do with those is a decision the owner has NOT taken yet.
+// Taking it by accident, in a NULL, is the worst way to take it.
+// Empty list renders no filter at all. `ARRAY[]` is a syntax error in Postgres,
+// and emptying this list is a live possibility — it is the open decision in
+// PRD_DEMAND_PLANNING.md Part II §8. A configuration change must not 500 the
+// two screens the manager orders from.
+const EXCLUDE_NON_DEMAND = NON_DEMAND_REMOVE_REASONS.length === 0 ? '' :
+  `AND NOT (type = 'remove' AND COALESCE(reason, '') = ANY(ARRAY[${
+    NON_DEMAND_REMOVE_REASONS.map((r) => `'${r}'`).join(',')}]))`;
 
 const ALLOWED_MIME_TYPES = new Set([
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
@@ -4549,6 +4573,7 @@ router.get('/products/:id/transactions', async (req, res) => {
       FROM transactions
       WHERE product_id = $1
         AND type = ANY($3)
+        ${EXCLUDE_NON_DEMAND}
         AND (created_at::timestamptz AT TIME ZONE 'Australia/Sydney')::date >= ((NOW() AT TIME ZONE 'Australia/Sydney') - make_interval(days => $2))::date
       GROUP BY DATE(created_at::timestamptz AT TIME ZONE 'Australia/Sydney'), type
       ORDER BY date ASC
@@ -4681,6 +4706,7 @@ router.get('/dashboard/replenishment', async (req, res) => {
           SUM(quantity) AS daily_volume
         FROM transactions
         WHERE type = ANY($1)
+          ${EXCLUDE_NON_DEMAND}
           AND (created_at::timestamptz AT TIME ZONE 'Australia/Sydney')::date >= (NOW() AT TIME ZONE 'Australia/Sydney')::date - INTERVAL '30 days'
         GROUP BY product_id, DATE(created_at::timestamptz AT TIME ZONE 'Australia/Sydney')
         ORDER BY product_id, sale_date
@@ -5849,6 +5875,74 @@ async function runStartupMigrations() {
     // zeroed during a stocktake on 17 September and four machines left the watch
     // without anyone intending it.
     await pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS reorder_watch BOOLEAN DEFAULT NULL`);
+    // ── Who is a customer, and who is us ──────────────────────────────────
+    // WHY (2026-10-09). Demand was being counted twice. The Salesforce forecast
+    // predicts what SERVICE clients will consume — accounts where we installed
+    // the machine and a technician refills it. The technicians place those
+    // refills as orders in Shopify, so the same litres arrived a second time as
+    // "sales". Two thirds of all oil leaving by Shopify in 90 days (3,603 of
+    // 5,519 L) is technicians, and on Feu de Camp it was ALL of it: the screen
+    // asked to buy 75 L off a demand that was entirely internal.
+    //
+    // The owner's rule, confirmed with the manager: demand = forecast (service)
+    // + real customer sales. Technician movements belong to neither — they are
+    // the forecast being realised.
+    //
+    // Kept as DATA he can edit, never a list in code: technicians join and
+    // leave. Two already have ("Mathew B", "Gustavo Melb Tech"), which is what
+    // `active` records — their past orders stay classified as internal, because
+    // they were internal when they happened.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS demand_internal_actors (
+        id SERIAL PRIMARY KEY,
+        customer_name TEXT NOT NULL UNIQUE,
+        kind TEXT NOT NULL DEFAULT 'technician',
+        active BOOLEAN NOT NULL DEFAULT true,
+        note TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      )`);
+    // Which Shopify order belonged to whom. A cache, not a record: a stock
+    // movement only carries the order number, and the demand calculation cannot
+    // ask Shopify once per row on every page load. Rebuildable at any time from
+    // the store, and it never touches `transactions` — the ledger is not edited
+    // to make a report easier to write.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS shopify_order_actor (
+        order_number TEXT PRIMARY KEY,
+        customer_name TEXT,
+        tags TEXT,
+        is_internal BOOLEAN NOT NULL DEFAULT false,
+        ordered_at TIMESTAMP,
+        seen_at TIMESTAMP DEFAULT NOW()
+      )`);
+    // Seeded once, from the nineteen the manager confirmed on 2026-10-09. Only
+    // where the table is empty, so his later edits are never undone by a deploy.
+    const seeded = (await pool.query(`SELECT count(*) n FROM demand_internal_actors`)).rows[0].n;
+    if (Number(seeded) === 0) {
+      const techs = [
+        ['Ethan Hall', true], ['Anthony Spatarel', true], ['Wanderson Pereira', true],
+        ['Anthony Nguyen', true], ['Mark Micallef', true], ['Anthony Cuciniello', true],
+        ['Joe Laus', true], ['Adrian Galaz Storage Unit', true], ['Troy Nelson', true],
+        ['James Masterson', true], ['Rob Zahra', true], ['Justin Li', true],
+        ['Anthony Svejka-Marshall', true], ['Richard Buisson', true], ['Greg Lauret', true],
+        ['John Armstrong', true], ['A.S. Farr Electrical Accounts', true],
+        // Confirmed technicians who have since left. Inactive, but their past
+        // orders stay internal — they were internal when they were placed.
+        ['Mathew B', false], ['Gustavo Melb Tech', false],
+      ];
+      // ONE statement, not nineteen. These run inside the single try/catch that
+      // wraps every startup migration, so a failure halfway through would leave
+      // some technicians off the list — their orders then read as customer
+      // demand — AND skip every migration written after this one.
+      await pool.query(
+        `INSERT INTO demand_internal_actors (customer_name, kind, active, note)
+         SELECT * FROM UNNEST($1::text[], $2::text[], $3::boolean[], $4::text[])
+         ON CONFLICT (customer_name) DO NOTHING`,
+        [techs.map((t) => t[0]), techs.map(() => 'technician'),
+         techs.map((t) => t[1]), techs.map(() => 'Confirmed by the manager 2026-10-09')]);
+      console.log(`✨ Seeded ${techs.length} internal actors (technicians)`);
+    }
+
 
     // Accepting a Shopify purchase order writes an ORDINARY purchase_orders row.
     // That is the whole of deliveries 2 and 3: the existing screens already show

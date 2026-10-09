@@ -35,6 +35,20 @@ export const ADD_REASONS = [
   { id: 'other',       label: 'Other (say why)' },
 ];
 
+// Which hand-made removals are NOT consumption, and so must not feed demand.
+//
+// WHY (2026-10-09). A stocktake correction is the book being reconciled to the
+// shelf, not a litre anybody used — but demand planning counted it as one.
+// Myrrh & Tonka took a removal of 127.8 L reading "Correcting a count — Stock
+// Take 02/10/2026" and it went straight into the daily rate. Across 90 days,
+// 329 of the 1,073 litres removed by hand were corrections.
+//
+// Only `correction` is listed, deliberately. Loss and spillage ARE consumption:
+// the oil is gone and has to be replaced. A sample is consumption too. The test
+// is not "did somebody mean to use it" but "did the shelf really lose it" — and
+// in a correction the shelf lost nothing, the number did.
+export const NON_DEMAND_REMOVE_REASONS = ['correction'];
+
 export function reasonsFor(type) {
   return type === 'add' ? ADD_REASONS : REMOVE_REASONS;
 }
