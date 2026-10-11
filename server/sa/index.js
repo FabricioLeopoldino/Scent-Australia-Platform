@@ -14,7 +14,7 @@ import { calcSmartDemand } from '../../shared/demand-calculator.js';
 import { bomVariantFor } from '../../shared/refurb-machines.js';
 import { isValidReason, reasonLabel, NON_DEMAND_REMOVE_REASONS } from '../../shared/stock-reasons.js';
 import { readIncomingPurchaseOrders } from './shopify-purchase-orders.js';
-import { refreshOrderActors } from './shopify-order-actors.js';
+import { refreshOrderActors, TECH_REFILL_DAYS } from './shopify-order-actors.js';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import multer from 'multer';
@@ -3963,7 +3963,12 @@ router.post('/forecast/import', upload.single('file'), async (req, res) => {
 
     // Find column indexes (flexible matching)
     const productCodeIdx = headers.findIndex(h => h.toLowerCase().replace(/[\s_]/g,'').includes('productcode'));
-    const forecastIdx    = headers.findIndex(h => h.toLowerCase().includes('forecast') || h.toLowerCase().includes('demand'));
+    // "Sum of 4 Months Fragrance Qty" is the 120-day column of the report
+    // "FAB- Demand Planning - 30 60 90 120 days" (Oct 2026). Named explicitly so
+    // the raw export uploads as it comes out of Salesforce — and so nothing
+    // looser ever matches its 90/60/30-day columns and imports a quarter of
+    // the demand as if it were four months.
+    const forecastIdx    = headers.findIndex(h => /forecast|demand|4 months/i.test(h));
 
     if (productCodeIdx === -1 || forecastIdx === -1) {
       return res.status(400).json({
@@ -4707,7 +4712,7 @@ router.get('/dashboard/replenishment', async (req, res) => {
     // All date calculations use Australian/Sydney timezone directly in SQL
 
     const [productsResult, salesByDayResult, forecastResult, lastForecastResult,
-      suppliersResult, droppedResult, poResult, techRefillResult] = await Promise.all([
+      suppliersResult, droppedResult, poResult, techRefillResult, techCoverResult] = await Promise.all([
       // Products with lead_time resolved: product override → supplier default → 30d fallback
       pool.query(`
         SELECT
@@ -4819,19 +4824,41 @@ router.get('/dashboard/replenishment', async (req, res) => {
         WHERE status IN ('pending', 'partial')
         GROUP BY product_id
       `),
-      // What technicians actually drew over the same 30 days, on contracted
-      // oils — the forecast as it really happened. See the B2B stream below.
-      // By day, because these days still count toward how much history the
-      // product has — see the buffer below.
+      // What technicians actually drew on contracted oils — the forecast as it
+      // really happened. See the B2B stream below.
+      //
+      // Over TECH_REFILL_DAYS (120), the forecast's own horizon, not 30.
+      // Technicians restock in lumps: Special Santal took ONE order of 40 L for
+      // a storage unit on 30 Sep, which over 30 days read as 1.53 L/day against
+      // a contract of 0.34 and asked for 116 L. Over 120 days the same refills
+      // are 0.38 — the contract, slightly exceeded, as it should read. Like is
+      // compared with like: 120 days of contract against 120 days of refills.
+      // The price is that a ramp-up shows slowly here; it shows in the contract
+      // instead, because technicians only serve accounts already in Salesforce.
+      //
+      // `>` not `>=`: today plus 119 days is 120 days, the divisor below.
+      // By day, with the last 30 flagged, because those days still count
+      // toward how much history the product has — see the buffer below.
       pool.query(`
         SELECT product_id,
                DATE(created_at::timestamptz AT TIME ZONE 'Australia/Sydney') AS sale_date,
+               (created_at::timestamptz AT TIME ZONE 'Australia/Sydney')::date >= (NOW() AT TIME ZONE 'Australia/Sydney')::date - INTERVAL '30 days' AS in_30,
                SUM(quantity) AS volume
         FROM transactions
         WHERE ${TECHNICIAN_REFILL}
-          AND (created_at::timestamptz AT TIME ZONE 'Australia/Sydney')::date >= (NOW() AT TIME ZONE 'Australia/Sydney')::date - INTERVAL '30 days'
-        GROUP BY product_id, DATE(created_at::timestamptz AT TIME ZONE 'Australia/Sydney')
-      `)
+          AND (created_at::timestamptz AT TIME ZONE 'Australia/Sydney')::date > (NOW() AT TIME ZONE 'Australia/Sydney')::date - make_interval(days => $1)
+        GROUP BY 1, 2, 3
+      `, [TECH_REFILL_DAYS]),
+      // How many of those days the order cache actually covers. Until it
+      // reaches back the full window (first deploy, or a failed backfill), the
+      // refills it does know about are divided by the days it knows about —
+      // dividing a month of refills by 120 would read four times too low and
+      // quietly hand B2B back to the contract.
+      pool.query(`
+        SELECT LEAST($1, GREATEST(1,
+                 (NOW() AT TIME ZONE 'Australia/Sydney')::date
+                 - (MIN(ordered_at) AT TIME ZONE 'UTC' AT TIME ZONE 'Australia/Sydney')::date + 1)) AS days
+        FROM shopify_order_actor`, [TECH_REFILL_DAYS])
     ]);
 
     // ── Build per-product daily sales map { productId -> [{ date, volume }] }
@@ -4864,9 +4891,11 @@ router.get('/dashboard/replenishment', async (req, res) => {
     for (const row of poResult.rows) {
       poIncomingMap[row.product_id] = parseFloat(row.pending_qty) || 0;
     }
+    // Null on an empty cache: nothing is classified, so nothing is divided.
+    const techCoverDays = Number(techCoverResult.rows[0]?.days) || TECH_REFILL_DAYS;
     const techRefillMap = {};
     for (const row of techRefillResult.rows) {
-      (techRefillMap[row.product_id] ||= []).push({ date: row.sale_date, volume: parseFloat(row.volume) || 0 });
+      (techRefillMap[row.product_id] ||= []).push({ date: row.sale_date, in30: row.in_30, volume: parseFloat(row.volume) || 0 });
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -4896,16 +4925,17 @@ router.get('/dashboard/replenishment', async (req, res) => {
       const forecastDaily = forecast120 != null ? forecast120 / 120 : null;
 
       // The B2B stream is the LARGER of the contract and what technicians
-      // actually drew. Technician refills are the contract being realised, so
-      // the two are one demand and are never added. But in 30 oils (Oct 2026)
-      // technicians drew over 25% above the contract — Special Santal 46 L
-      // against 10.3 L — and the owner settled what that means: technicians
+      // actually drew over the same 120 days. Technician refills are the
+      // contract being realised, so the two are one demand and are never
+      // added. But on 59 oils (Oct 2026) technicians drew above the contract
+      // — Beach Party 1.30 L/day against 0.79 — and the owner settled what
+      // that means: technicians
       // only stock oil for an account that already exists in Salesforce, so
       // drawing above the contract is real consumption the contract
       // understates, not stock parked for something unknown. Trusting the
       // contract alone there would buy short. (2026-10-12, PRD Part II §7b.)
       const techEntries = techRefillMap[p.id] || [];
-      const techDaily = techEntries.reduce((s, e) => s + e.volume, 0) / 30;
+      const techDaily = techEntries.reduce((s, e) => s + e.volume, 0) / techCoverDays;
       const b2bSource = techDaily > (forecastDaily || 0) ? 'technicians' : 'contract';
       const b2bStream = b2bSource === 'technicians' ? techDaily : forecastDaily;
 
@@ -4918,7 +4948,7 @@ router.get('/dashboard/replenishment', async (req, res) => {
       // of its buffer — ordering short is exactly what this step must not do
       // (code review). Measured on every movement, they are what they were.
       const byDay = new Map();
-      for (const e of [...dailyEntries, ...techEntries]) {
+      for (const e of [...dailyEntries, ...techEntries.filter((t) => t.in30)]) {
         const k = String(e.date);
         byDay.set(k, { date: e.date, volume: (byDay.get(k)?.volume || 0) + e.volume });
       }
@@ -4980,9 +5010,9 @@ router.get('/dashboard/replenishment', async (req, res) => {
       // being separate. 79 oils carry a forecast row past the threshold, but 75
       // of those rows say zero: old, and moving no number. An amber mark on a
       // quarter of the screen to point at four products is wallpaper.
-      // Nor when the B2B figure is technicians' actual refills: that number is
-      // last month's, however old the forecast file is.
-      const forecastStale = forecastPastDue && demand.b2bDaily > 0 && b2bSource === 'contract';
+      // Shown even when B2B came from technician refills: those are a 120-day
+      // average, mostly older than a month, so an overdue file still matters.
+      const forecastStale = forecastPastDue && demand.b2bDaily > 0;
       const conservativeAdjusted = conservative * stalenessFactor;
 
       // Normal order: based on expected scenario
@@ -5152,7 +5182,7 @@ router.get('/dashboard/replenishment', async (req, res) => {
           basis,
           confidence:  demand.dataConfidence,
           note:        b2bSource === 'technicians' && basis !== 'nothing_known'
-            ? `${NOTE[basis]} Technicians drew more than the contract predicts, so their actual refills are used in its place.`
+            ? `${NOTE[basis]} Over 120 days technicians drew more than the contract predicts, so their actual refills are used in its place.`
             : NOTE[basis],
           // What the older columns say, so the gap is visible rather than
           // something a reader has to work out by subtracting two screens.
@@ -6895,7 +6925,8 @@ setInterval(async () => {
 //
 // A missed run is harmless in the safe direction — an order not yet recorded
 // is counted as customer demand, which over-orders slightly; it never hides
-// demand. On an empty table, the first run fills the last 35 days.
+// demand. When the table does not reach back the full comparison window
+// (TECH_REFILL_DAYS), a run reads the whole window once — about 14 pages.
 if (process.env.NODE_ENV === 'production') {
   const refreshActors = async (always = false) => {
     if (!always && !withinWarehouseHours()) return;

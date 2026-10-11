@@ -309,7 +309,7 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
               </div>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}
-                  title="The larger of the Salesforce contract and what technicians actually drew in 30 days — one demand, never added.">
+                  title="The larger of the Salesforce contract and what technicians actually drew over the same 120 days — one demand, never added.">
                   B2B/day ({product.b2bSource === 'technicians' ? 'technician refills' : 'contract'})
                 </div>
                 <div style={{ fontSize: 15, fontWeight: 800, color: '#a78bfa' }}>{product.b2bDaily ?? '—'} L</div>
@@ -1011,7 +1011,7 @@ export default function ReplenishmentDashboard({ user }) {
               <th style={thStyle}>Product Name</th>
               <th style={{ ...thStyle, textAlign: 'right' }}><Tooltip text="Current physical stock. Oils in L, machines/materials in units.">Real Stock</Tooltip></th>
               <th style={{ ...thStyle, textAlign: 'right', color: '#60a5fa' }}><Tooltip text="Average daily customer sales over the last 30 days. Technician refills of contracted oils are left out — they are already inside B2B.">Retail/day</Tooltip></th>
-              <th style={{ ...thStyle, textAlign: 'right', color: '#a78bfa' }}><Tooltip text="Daily B2B demand: the Salesforce forecast (120d ÷ 120), or what technicians actually drew in 30 days when that is higher.">B2B/day</Tooltip></th>
+              <th style={{ ...thStyle, textAlign: 'right', color: '#a78bfa' }}><Tooltip text="Daily B2B demand: the Salesforce forecast (120d ÷ 120), or what technicians actually drew over the same 120 days when that is higher.">B2B/day</Tooltip></th>
               <th style={{ ...thStyle, textAlign: 'right', background: 'rgba(220,38,38,0.06)', color: '#f87171' }}><Tooltip text="Conservative: peak retail + 100% B2B (contract or technician refills). Use this for buy-safe decisions.">Cons. Days</Tooltip></th>
               <th style={{ ...thStyle, textAlign: 'right', background: 'rgba(217,119,6,0.06)', color: '#fbbf24' }}><Tooltip text="Expected: avg retail + 100% B2B (contract or technician refills). Use for normal purchase planning.">Exp. Days</Tooltip></th>
               <th style={{ ...thStyle, textAlign: 'right', background: 'rgba(22,163,74,0.06)', color: '#4ade80' }}><Tooltip text="Optimistic: min retail + 70% B2B. Best-case scenario.">Opt. Days</Tooltip></th>

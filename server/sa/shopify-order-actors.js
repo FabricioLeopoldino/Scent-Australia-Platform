@@ -14,6 +14,11 @@
 
 const API = '2026-04';
 
+// How far back technician refills are compared with the contract: the
+// forecast's own horizon. One constant, shared with the demand query, so the
+// cache and the window it must cover cannot drift apart.
+export const TECH_REFILL_DAYS = 120;
+
 // Orders created after `sinceISO` (YYYY-MM-DD), newest first. Refuses rather
 // than truncates: a short read leaves real technician orders unclassified,
 // which silently puts them back into demand.
@@ -81,13 +86,16 @@ export async function recordOrderActors(pool, orders) {
 }
 
 // The timer's unit of work: everything since two days before the newest order
-// already recorded (an order's customer can still be fixed after it is placed),
-// or the last 35 days on an empty table — demand reads a 30-day window, so that
-// is the whole of what matters, and the first run fills it.
+// already recorded (an order's customer can still be fixed after it is placed).
+// Demand compares the contract with TECH_REFILL_DAYS of technician refills, so
+// when the table does not yet reach back that far — empty, or filled when the
+// window was 30 days — it reads the whole window plus five days once, and is
+// incremental after.
 export async function refreshOrderActors(pool) {
   const { since } = (await pool.query(
-    `SELECT to_char(COALESCE(MAX(ordered_at) - INTERVAL '2 days',
-                             NOW() - INTERVAL '35 days'), 'YYYY-MM-DD') AS since
-       FROM shopify_order_actor`)).rows[0];
+    `SELECT to_char(CASE WHEN MIN(ordered_at) IS NULL OR MIN(ordered_at) > NOW() - make_interval(days => $1)
+                         THEN NOW() - make_interval(days => $1 + 5)
+                         ELSE MAX(ordered_at) - INTERVAL '2 days' END, 'YYYY-MM-DD') AS since
+       FROM shopify_order_actor`, [TECH_REFILL_DAYS])).rows[0];
   return recordOrderActors(pool, await readOrderCustomers(since));
 }
