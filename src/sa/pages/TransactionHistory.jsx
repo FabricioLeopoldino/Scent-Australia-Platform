@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { exportTransactionsToExcel, exportOilUsageToExcel } from '../utils/excelExport';
 import { displayStock } from '../utils/unitConversion';
 import { GlowingEffect } from '../components/GlowingEffect';
@@ -54,6 +54,10 @@ const getPreset = (key) => {
 // ─────────────────────────────────────────────────────────────────────────────
 export default function TransactionHistory() {
   const [transactions, setTransactions]     = useState([]);
+  // Set once the first fetch finishes. Not `transactions.length`: a period with
+  // no movements is empty too, and would put the loading screen back over the
+  // filters every time somebody picked a quiet week.
+  const loadedOnce = useRef(false);
   const [loading, setLoading]               = useState(true);
   const [filter, setFilter]                 = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
@@ -66,8 +70,20 @@ export default function TransactionHistory() {
   const [dateTo, setDateTo]       = useState(defaultPreset.to);
   const [activePreset, setActivePreset] = useState('thisMonth');
 
+  // WHY THIS WAITS (2026-10-12). Typing a date into the FROM box made the page
+  // flash and lose the cursor: every keystroke that formed a valid date fired a
+  // fetch at once, and typing a year digit by digit forms four of them — 0002,
+  // 0020, 0202, 2026 — each a real date to the browser. Each fetch also replaced
+  // the whole page with the loading screen, unmounting the box mid-typing.
+  //
+  // Two guards, both needed: wait until typing pauses, and never ask for a year
+  // nobody means. A preset click still answers at once, because it sets both
+  // dates in one go with a real year.
+  const isReal = (d) => !d || Number(d.slice(0, 4)) >= 2000;
   useEffect(() => {
-    fetchTransactions();
+    if (!isReal(dateFrom) || !isReal(dateTo)) return;
+    const t = setTimeout(fetchTransactions, 450);
+    return () => clearTimeout(t);
   }, [dateFrom, dateTo]);
 
   const fetchTransactions = async () => {
@@ -88,6 +104,7 @@ export default function TransactionHistory() {
     } catch (error) {
       console.error('Error:', error);
     } finally {
+      loadedOnce.current = true;
       setLoading(false);
     }
   };
@@ -193,7 +210,10 @@ export default function TransactionHistory() {
     { key: 'all',       label: 'All Time' },
   ];
 
-  if (loading) {
+  // Only the FIRST load takes over the page. After that a refresh keeps the
+  // filters on screen — replacing them with a loading message is what removed
+  // the date box from under the person typing in it.
+  if (loading && !loadedOnce.current) {
     return (
       <div className="container" style={{ paddingTop: '40px' }}>
         <div style={{ textAlign: 'center', padding: '60px', color: 'rgba(232,234,242,0.45)' }}>
