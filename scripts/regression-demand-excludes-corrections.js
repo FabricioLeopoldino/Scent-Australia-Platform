@@ -111,6 +111,51 @@ try {
     'and removes exactly the corrections, nothing more',
     `gap ${(m.before - m.after).toFixed(3)} vs corrections ${m.corrections.toFixed(3)}`);
 
+  console.log('\n4. Technician refills of contracted oils are not sales (step 3, 2026-10-12)');
+  check(/const EXCLUDE_NON_DEMAND = `\$\{EXCLUDE_CORRECTIONS\}\s+AND NOT \$\{TECHNICIAN_REFILL\}`/.test(server),
+    'the demand filter carries both rules, so every demand query gets both');
+  const refill = server.slice(server.indexOf('const TECHNICIAN_REFILL'), server.indexOf('const EXCLUDE_NON_DEMAND'));
+  check(!/\bIN\s*\(/.test(refill) && (refill.match(/EXISTS/g) || []).length === 2,
+    'written with EXISTS, never IN — IN can return NULL and drop the row');
+  check(/forecast_120_days > 0/.test(refill) && /MAX\(import_date\)/.test(refill),
+    'only on oils with a contract figure in the LATEST forecast');
+
+  // Proven on the real ledger inside a transaction that is rolled back: the
+  // cache is filled from Shopify, the filter is measured, nothing is kept.
+  const before = (await pool.query(`SELECT COUNT(*)::int n FROM shopify_order_actor`)).rows[0].n;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { refreshOrderActors } = await import('../server/sa/shopify-order-actors.js');
+    const cached = await refreshOrderActors(client);
+    const block = server.slice(server.indexOf('const EXCLUDE_CORRECTIONS'), server.indexOf('const ALLOWED_MIME_TYPES'));
+    const frag = new Function('NON_DEMAND_REMOVE_REASONS', `${block}; return [EXCLUDE_CORRECTIONS, TECHNICIAN_REFILL, EXCLUDE_NON_DEMAND];`);
+    const [EC, TR, END] = frag(NON_DEMAND_REMOVE_REASONS);
+    const w = `(created_at::timestamptz AT TIME ZONE 'Australia/Sydney')::date
+               >= (NOW() AT TIME ZONE 'Australia/Sydney')::date - INTERVAL '30 days'`;
+    const [t] = (await client.query(`
+      SELECT COALESCE(sum(quantity) FILTER (WHERE true ${EC}), 0)::float/1000 AS no_corr,
+             COALESCE(sum(quantity) FILTER (WHERE true ${END}), 0)::float/1000 AS demand,
+             COALESCE(sum(quantity) FILTER (WHERE ${TR}), 0)::float/1000 AS refills
+        FROM transactions WHERE type = ANY($1) AND ${w}`, [TY])).rows;
+    console.log(`     ${cached} orders read · 30-day demand ${t.no_corr.toFixed(1)} L → ${t.demand.toFixed(1)} L (${t.refills.toFixed(1)} L technician refills)`);
+    check(cached > 0, 'the store returned orders to classify');
+    check(Math.abs((t.no_corr - t.demand) - t.refills) < 0.001,
+      'and removes exactly the technician refills, nothing more');
+    // A technician buying an oil with no contract stays in demand.
+    const [k] = (await client.query(`
+      SELECT COUNT(*)::int n FROM transactions
+       WHERE type = 'shopify_sale' AND ${w} AND NOT ${TR}
+         AND EXISTS (SELECT 1 FROM shopify_order_actor o JOIN demand_internal_actors a
+                       ON lower(btrim(a.customer_name)) = lower(btrim(o.customer_name)) WHERE o.order_number = transactions.shopify_order_id)`)).rows;
+    console.log(`     ${k.n} technician order lines on products with no contract stay counted`);
+  } finally {
+    await client.query('ROLLBACK');
+    client.release();
+  }
+  const [left] = (await pool.query(`SELECT COUNT(*)::int n FROM shopify_order_actor`)).rows;
+  check(left.n === before, `rolled back — the cache holds ${left.n} rows, as it did before`);
+
   console.log(failed === 0
     ? '\n✅ demand-excludes-corrections: all checks passed'
     : `\n❌ ${failed} failed`);

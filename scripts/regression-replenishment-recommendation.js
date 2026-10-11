@@ -69,28 +69,23 @@ try {
   check([...actions].every((a) => ['order', 'hold', 'count_first'].includes(a)),
     'and only the three defined actions appear', [...actions].join(', '));
 
-  console.log('\n2. It takes the LARGER stream, never the sum — the double count');
+  // CHANGED 2026-10-12. Until then this section asserted "the LARGER stream,
+  // never the sum" — the September workaround for a double count nobody had
+  // yet located. Technician refills are now taken out of sales at the source,
+  // so the owner's rule applies as stated: B2B + customer sales, added. The
+  // "never added" property moved to where it now lives: between the contract
+  // and the technician refills, which ARE one demand (section 7).
+  console.log('\n2. It is B2B + customer sales, capped at the conservative rate');
   const both = oils.filter((p) => p.retailDailyAvg > 0 && p.b2bDaily > 0);
   check(both.length > 0, 'there are products where both streams are known', `${both.length}`);
-  // Expected value is the larger of the two streams, THEN clamped at the
-  // conservative rate — leaving the clamp out made this check fail exactly
-  // when the cap engages, which is the one case it most needs to allow
-  // (code review). Tolerance is proportional because trendMultiplier reaches
-  // here rounded to 2dp, so the error scales with the rate.
+  // Clamped at the conservative rate — leaving the clamp out made the old
+  // check fail exactly when the cap engages (code review, 11 Sep). Tolerance
+  // is proportional because trendMultiplier reaches here rounded to 2dp.
   const tol = (p) => Math.max(0.02, p.retailDailyAvg * 0.01);
-  const sums = both.filter((p) => {
-    const larger = Math.max(p.retailDailyAvg * (p.trendMultiplier || 1), p.b2bDaily);
-    const expected = Math.min(larger, p.scenarioConservativeRate);
-    return Math.abs(p.recommendation.dailyRate - expected) > tol(p);
-  });
-  check(sums.length === 0, 'not one of them uses the sum',
-    sums.slice(0, 3).map((p) => `${p.productCode}: rate ${p.recommendation.dailyRate} vs larger ${Math.max(p.retailDailyAvg, p.b2bDaily)}`).join(' | '));
-  // And it must genuinely be SMALLER than the old expected rate wherever both
-  // streams are real — otherwise the correction is doing nothing.
-  const smaller = both.filter((p) => p.recommendation.dailyRate < p.scenarioExpectedRate - 0.001);
-  check(smaller.length === both.length,
-    'so its daily rate is below the old Expected rate on every one of them',
-    `${smaller.length} of ${both.length}`);
+  const off = oils.filter((p) => p.recommendation.dailyRate > 0 && Math.abs(
+    p.recommendation.dailyRate - Math.min(p.scenarioExpectedRate, p.scenarioConservativeRate)) > tol(p));
+  check(off.length === 0, 'its rate is the Expected scenario, capped',
+    off.slice(0, 3).map((p) => `${p.productCode}: rate ${p.recommendation.dailyRate} vs expected ${p.scenarioExpectedRate}`).join(' | '));
 
   console.log('\n3. The older columns are untouched — nothing shifts under a planner');
   // Recomputed here from the same fields the endpoint returns, so a change to
@@ -187,24 +182,22 @@ try {
   console.log('\n7. Each recommendation explains itself');
   check(ordering.every((p) => p.recommendation.note && p.recommendation.note.length > 20),
     'every order carries a plain-English reason');
-  const agree = oils.filter((p) => p.recommendation.basis === 'both_agree');
-  // The server applies 0.8–1.25 to full precision; the API rounds both rates to
-  // 3dp before they reach here, and on small numbers that rounding alone moves
-  // the ratio — FRAG_0089 is 0.0334/0.0417 = 0.801 on the server and reads as
-  // 0.033/0.042 = 0.786 here. The tolerance below is that rounding, nothing
-  // more: it is not slack in the rule, and the offenders are named rather than
-  // the first three of the group, which is how this check first lied about
-  // which products were failing.
-  const outside = agree.filter((p) => {
-    // Trended, because that is what the server compares — using the raw
-    // average produced a false failure on any product with a trend
-    // (code review).
-    const ratio = (p.retailDailyAvg * (p.trendMultiplier || 1)) / p.b2bDaily;
-    return !(ratio >= 0.75 && ratio <= 1.30);
-  });
-  check(outside.length === 0,
-    '"both agree" is only claimed when the two streams really are within 25%',
-    outside.slice(0, 3).map((p) => `${p.productCode}: ${((p.retailDailyAvg * (p.trendMultiplier || 1)) / p.b2bDaily).toFixed(3)}`).join(' | '));
+  check(oils.every((p) => ['contract_and_sales', 'forecast_only', 'sales_only', 'nothing_known']
+    .includes(p.recommendation.basis)), 'and every basis is one the screen knows how to say',
+    [...new Set(oils.map((p) => p.recommendation.basis))].join(', '));
+
+  console.log('\n8. Contract and technician refills are ONE demand — the larger, never added');
+  // Rounded to 3dp on both sides by the API, hence the small tolerance.
+  const b2bWrong = oils.filter((p) => p.forecastDaily > 0 && Math.abs(
+    p.b2bDaily - Math.max(p.forecastDaily, p.technicianDaily || 0)) > 0.002);
+  check(b2bWrong.length === 0, 'B2B is the larger of the contract and the refills',
+    b2bWrong.slice(0, 3).map((p) => `${p.productCode}: b2b ${p.b2bDaily} vs contract ${p.forecastDaily} / tech ${p.technicianDaily}`).join(' | '));
+  check(oils.every((p) => (p.b2bSource === 'technicians') === ((p.technicianDaily || 0) > (p.forecastDaily || 0) + 0.0005)
+    || Math.abs((p.technicianDaily || 0) - (p.forecastDaily || 0)) <= 0.0005),
+    'and the screen names whichever one was used');
+  // A refill is only taken out of sales where a contract exists to hold it.
+  check(oils.every((p) => !(p.technicianDaily > 0) || p.forecastDaily > 0),
+    'technician refills are only moved to B2B on oils that carry a contract');
 
   if (failed) {
     console.log('\n--- server log ---');

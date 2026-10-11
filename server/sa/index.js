@@ -14,6 +14,7 @@ import { calcSmartDemand } from '../../shared/demand-calculator.js';
 import { bomVariantFor } from '../../shared/refurb-machines.js';
 import { isValidReason, reasonLabel, NON_DEMAND_REMOVE_REASONS } from '../../shared/stock-reasons.js';
 import { readIncomingPurchaseOrders } from './shopify-purchase-orders.js';
+import { refreshOrderActors } from './shopify-order-actors.js';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import multer from 'multer';
@@ -114,9 +115,37 @@ const DEMAND_TX_TYPES = [
 // and emptying this list is a live possibility — it is the open decision in
 // PRD_DEMAND_PLANNING.md Part II §8. A configuration change must not 500 the
 // two screens the manager orders from.
-const EXCLUDE_NON_DEMAND = NON_DEMAND_REMOVE_REASONS.length === 0 ? '' :
+//
+// A technician's refill is not a sale either (Part II §1, 2026-10-12). The
+// Salesforce forecast already predicts what service clients consume, and the
+// technician who refills them buys that oil through Shopify — the same litres
+// arriving a second time. On Myrrh & Tonka it was 34 of 41 L in 30 days.
+// Who placed the order comes from shopify_order_actor, joined to the editable
+// list at read time, so a correction to that list reaches history at once.
+// Matched ignoring case and edge spaces: the list is typed by a person, and a
+// name that misses by a capital silently puts that technician back into
+// sales — counted twice, now that the two streams are added (code review).
+//
+// ONLY where the product carries a contract figure in the latest forecast. A
+// technician buying an oil the forecast does not cover is the one case where
+// excluding the order would leave that demand counted nowhere, and an
+// undercount is the failure that empties a shelf. Both tests are EXISTS, never
+// IN: EXISTS cannot return NULL, so it cannot repeat the NULL trap above.
+const EXCLUDE_CORRECTIONS = NON_DEMAND_REMOVE_REASONS.length === 0 ? '' :
   `AND NOT (type = 'remove' AND COALESCE(reason, '') = ANY(ARRAY[${
     NON_DEMAND_REMOVE_REASONS.map((r) => `'${r}'`).join(',')}]))`;
+const TECHNICIAN_REFILL = `(type = 'shopify_sale'
+    AND EXISTS (SELECT 1 FROM shopify_order_actor o
+                  JOIN demand_internal_actors a
+                    ON lower(btrim(a.customer_name)) = lower(btrim(o.customer_name))
+                 WHERE o.order_number = transactions.shopify_order_id)
+    AND EXISTS (SELECT 1 FROM products pr
+                  JOIN forecasts f ON f.product_code = pr."productCode"
+                 WHERE pr.id = transactions.product_id
+                   AND f.forecast_120_days > 0
+                   AND f.import_date = (SELECT MAX(import_date) FROM forecasts)))`;
+const EXCLUDE_NON_DEMAND = `${EXCLUDE_CORRECTIONS}
+  AND NOT ${TECHNICIAN_REFILL}`;
 
 const ALLOWED_MIME_TYPES = new Set([
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
@@ -4678,7 +4707,7 @@ router.get('/dashboard/replenishment', async (req, res) => {
     // All date calculations use Australian/Sydney timezone directly in SQL
 
     const [productsResult, salesByDayResult, forecastResult, lastForecastResult,
-      suppliersResult, droppedResult, poResult] = await Promise.all([
+      suppliersResult, droppedResult, poResult, techRefillResult] = await Promise.all([
       // Products with lead_time resolved: product override → supplier default → 30d fallback
       pool.query(`
         SELECT
@@ -4789,6 +4818,19 @@ router.get('/dashboard/replenishment', async (req, res) => {
         FROM purchase_orders
         WHERE status IN ('pending', 'partial')
         GROUP BY product_id
+      `),
+      // What technicians actually drew over the same 30 days, on contracted
+      // oils — the forecast as it really happened. See the B2B stream below.
+      // By day, because these days still count toward how much history the
+      // product has — see the buffer below.
+      pool.query(`
+        SELECT product_id,
+               DATE(created_at::timestamptz AT TIME ZONE 'Australia/Sydney') AS sale_date,
+               SUM(quantity) AS volume
+        FROM transactions
+        WHERE ${TECHNICIAN_REFILL}
+          AND (created_at::timestamptz AT TIME ZONE 'Australia/Sydney')::date >= (NOW() AT TIME ZONE 'Australia/Sydney')::date - INTERVAL '30 days'
+        GROUP BY product_id, DATE(created_at::timestamptz AT TIME ZONE 'Australia/Sydney')
       `)
     ]);
 
@@ -4822,6 +4864,10 @@ router.get('/dashboard/replenishment', async (req, res) => {
     for (const row of poResult.rows) {
       poIncomingMap[row.product_id] = parseFloat(row.pending_qty) || 0;
     }
+    const techRefillMap = {};
+    for (const row of techRefillResult.rows) {
+      (techRefillMap[row.product_id] ||= []).push({ date: row.sale_date, volume: parseFloat(row.volume) || 0 });
+    }
 
     // ════════════════════════════════════════════════════════════════════════
     // DEMAND PLANNING CALCULATOR — v2
@@ -4849,8 +4895,40 @@ router.get('/dashboard/replenishment', async (req, res) => {
       const forecast120  = fc ? fc.forecast_120_days * 1000 : null;
       const forecastDaily = forecast120 != null ? forecast120 / 120 : null;
 
+      // The B2B stream is the LARGER of the contract and what technicians
+      // actually drew. Technician refills are the contract being realised, so
+      // the two are one demand and are never added. But in 30 oils (Oct 2026)
+      // technicians drew over 25% above the contract — Special Santal 46 L
+      // against 10.3 L — and the owner settled what that means: technicians
+      // only stock oil for an account that already exists in Salesforce, so
+      // drawing above the contract is real consumption the contract
+      // understates, not stock parked for something unknown. Trusting the
+      // contract alone there would buy short. (2026-10-12, PRD Part II §7b.)
+      const techEntries = techRefillMap[p.id] || [];
+      const techDaily = techEntries.reduce((s, e) => s + e.volume, 0) / 30;
+      const b2bSource = techDaily > (forecastDaily || 0) ? 'technicians' : 'contract';
+      const b2bStream = b2bSource === 'technicians' ? techDaily : forecastDaily;
+
       const dailyEntries = dailySalesMap[p.id] || [];
-      const demand = calcSmartDemand(dailyEntries, forecastDaily);
+      // The RATES come from customer sales only. The buffer and the confidence
+      // label do not: they measure how much real movement the product has and
+      // how erratic it is, and a technician refill is real movement. Taken
+      // from customer sales alone, an oil sold almost wholly through
+      // technicians (Feu de Camp) read as having no history and lost a third
+      // of its buffer — ordering short is exactly what this step must not do
+      // (code review). Measured on every movement, they are what they were.
+      const byDay = new Map();
+      for (const e of [...dailyEntries, ...techEntries]) {
+        const k = String(e.date);
+        byDay.set(k, { date: e.date, volume: (byDay.get(k)?.volume || 0) + e.volume });
+      }
+      const spread = calcSmartDemand([...byDay.values()], b2bStream);
+      const demand = {
+        ...calcSmartDemand(dailyEntries, b2bStream),
+        dynamicBufferDays: spread.dynamicBufferDays,
+        cleanDays: spread.cleanDays,
+        dataConfidence: spread.dataConfidence,
+      };
 
       const avgDailyDemand = demand.avgDailyDemand;
       const { conservative, expected, optimistic } = demand.scenarios;
@@ -4902,7 +4980,9 @@ router.get('/dashboard/replenishment', async (req, res) => {
       // being separate. 79 oils carry a forecast row past the threshold, but 75
       // of those rows say zero: old, and moving no number. An amber mark on a
       // quarter of the screen to point at four products is wallpaper.
-      const forecastStale = forecastPastDue && demand.b2bDaily > 0;
+      // Nor when the B2B figure is technicians' actual refills: that number is
+      // last month's, however old the forecast file is.
+      const forecastStale = forecastPastDue && demand.b2bDaily > 0 && b2bSource === 'contract';
       const conservativeAdjusted = conservative * stalenessFactor;
 
       // Normal order: based on expected scenario
@@ -4934,36 +5014,34 @@ router.get('/dashboard/replenishment', async (req, res) => {
       //     single biggest day of the month repeats every day for the whole
       //     lead time. FRAG_0030 consumes 91 L a month and it suggested 582 L
       //
-      // This does NOT change either existing number — they stay exactly as
-      // they were, and a planner comparing screens will see no drift. It adds
-      // the honest answer beside them, on the corrected arithmetic: the two
-      // streams are the SAME demand measured two ways, so take the larger, not
-      // the sum.
-      // Trend-adjusted, so retail is compared with the contract on the same
-      // footing the Expected scenario already uses.
-      const trendedRetail = demand.retailDailyAvg * (demand.trendMultiplier || 1);
+      // In September the fix was to take the LARGER stream, not the sum — a
+      // workaround, because nobody yet knew WHICH sales were the forecast
+      // arriving twice. On 2026-10-09 the mechanism was found: technicians
+      // refilling service clients through Shopify. EXCLUDE_NON_DEMAND now takes
+      // those out of the sales stream at the source, so what remains is real
+      // customer demand that the contract does not predict, and the owner's
+      // rule applies as stated: demand = forecast + customer sales. The sum,
+      // which is the Expected scenario. PRD_DEMAND_PLANNING.md Part II §1.
+      //
       // Capped at the conservative rate. Without the cap the recommendation can
-      // legitimately exceed the buy-safe ceiling — trendedRetail carries a
+      // legitimately exceed the buy-safe ceiling — retail carries a trend
       // multiplier of up to 1.25 while `conservative` uses the UNtrended peak,
       // so a steadily rising product with little day-to-day variance overtakes
       // it. Recommending more than the worst case is not something this column
       // should ever do, and the tooltip says as much (code review, 11 Sep).
-      const correctedDaily = Math.min(Math.max(trendedRetail, demand.b2bDaily), conservative);
+      const trendedRetail = demand.retailDailyAvg * (demand.trendMultiplier || 1);
+      const correctedDaily = Math.min(expected, conservative);
       const recommendedRaw = correctedDaily > 0
         ? Math.max(0, (correctedDaily * (leadTime + ORDER_BUFFER_DAYS)) - effectiveStock)
         : 0;
 
-      // Which stream is actually driving it, so the number can be argued with.
-      // Compared on the TRENDED value, because that is the one that decided the
-      // number — using the raw average could name retail as the driver on a
-      // declining product where the contract is what actually set the figure.
-      const bothKnown = trendedRetail > 0 && demand.b2bDaily > 0;
-      const ratio = bothKnown ? trendedRetail / demand.b2bDaily : null;
+      // What the number rests on, so it can be argued with. The September
+      // labels compared the two streams ("sales above contract"), which only
+      // meant something while they measured the same thing; now they are two
+      // different customers and are added, so the label says which are present.
       const basis = correctedDaily <= 0 ? 'nothing_known'
-        : !bothKnown ? (demand.b2bDaily > 0 ? 'forecast_only' : 'sales_only')
-        : (ratio >= 0.8 && ratio <= 1.25) ? 'both_agree'
-        : ratio > 1.25 ? 'sales_above_contract'
-        : 'contract_above_sales';
+        : trendedRetail > 0 && demand.b2bDaily > 0 ? 'contract_and_sales'
+        : demand.b2bDaily > 0 ? 'forecast_only' : 'sales_only';
 
       // Rounded before deciding, not after: `litres` is rounded for display, so
       // deciding on the raw value could print "Order 0 L" for a 300 mL
@@ -5021,10 +5099,8 @@ router.get('/dashboard/replenishment', async (req, res) => {
         : 'Safe';
 
       const NOTE = {
-        both_agree:           'Shopify and the contract agree on this one — the figure is as solid as this screen gets.',
-        sales_above_contract: 'Driven by actual sales, which are running above the contracted volume.',
-        contract_above_sales: 'Driven by the contract; recorded sales are lower, so this may be servicing that has not been logged.',
-        forecast_only:        'No sales history — this rests entirely on the Salesforce contract.',
+        contract_and_sales:   'The Salesforce contract plus customer sales. Technician refills are already inside the contract, so they are not counted again.',
+        forecast_only:        'No customer sales in 30 days — this rests on the Salesforce contract, which already includes technician refills.',
         sales_only:           'No contract figure for this code — this rests entirely on recorded sales.',
         nothing_known:        'No sales history and no contract figure — there is nothing to calculate an order from.',
       };
@@ -5050,6 +5126,8 @@ router.get('/dashboard/replenishment', async (req, res) => {
         retailDailyPeak:     r3(demand.retailDailyPeak / R),
         retailDailyMin:      r3(demand.retailDailyMin / R),
         b2bDaily:            r3(demand.b2bDaily / R),
+        b2bSource,                                  // contract | technicians
+        technicianDaily:     r3(techDaily / R),
         // ── 3 Scenarios (daily rate)
         scenarioConservativeRate: r3(conservative / R),
         scenarioExpectedRate:     r3(expected / R),
@@ -5073,7 +5151,9 @@ router.get('/dashboard/replenishment', async (req, res) => {
           coverDays:   coverDays === null ? null : r1(coverDays),
           basis,
           confidence:  demand.dataConfidence,
-          note:        NOTE[basis],
+          note:        b2bSource === 'technicians' && basis !== 'nothing_known'
+            ? `${NOTE[basis]} Technicians drew more than the contract predicts, so their actual refills are used in its place.`
+            : NOTE[basis],
           // What the older columns say, so the gap is visible rather than
           // something a reader has to work out by subtracting two screens.
           vsSafeOrder: r0((safeOrderRaw - recommendedRaw) / R),
@@ -6806,6 +6886,33 @@ setInterval(async () => {
     if (withinWarehouseHours()) await pool.query('SELECT 1');
   } catch (e) { /* silencioso */ }
 }, 4 * 60 * 1000);
+
+// ── Who placed each Shopify order (demand planning, Part II step 3) ────────
+// Hourly, inside the same warehouse window as the ping above, so it never
+// wakes Neon on its own. Production only: the regression suites and local dev
+// boot this same file against the live database, and a cache write from a
+// test run is a deploy by the back door.
+//
+// A missed run is harmless in the safe direction — an order not yet recorded
+// is counted as customer demand, which over-orders slightly; it never hides
+// demand. On an empty table, the first run fills the last 35 days.
+if (process.env.NODE_ENV === 'production') {
+  const refreshActors = async (always = false) => {
+    if (!always && !withinWarehouseHours()) return;
+    try {
+      const n = await refreshOrderActors(pool);
+      console.log(`[order-actors] ${n} Shopify orders classified`);
+    } catch (e) {
+      console.error('[order-actors] refresh failed:', e.message);
+    }
+  };
+  // Two minutes in, so startup migrations have created the table first — and
+  // whatever the hour. The recommendation now ADDS the two streams, which is
+  // only right once technicians are out of the sales one; a deploy at night
+  // left waiting for 06:30 would show the double count, summed, until morning.
+  setTimeout(() => refreshActors(true), 2 * 60 * 1000);
+  setInterval(refreshActors, 60 * 60 * 1000);
+}
 
 // ========================================================================
 // EXPORTS (Appendix A step 3/6) — app.listen removed; the platform server

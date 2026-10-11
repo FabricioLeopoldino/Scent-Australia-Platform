@@ -100,15 +100,15 @@ function StatCard({ label, value, color, icon }) {
 // ─── Data Confidence badge ───────────────────────────────────────────────────
 function ConfidenceBadge({ confidence, spikesRemoved, cleanDays }) {
   const cfg = {
-    high:               { bg: 'rgba(22,163,74,0.12)',  color: '#4ade80', label: '●●●● High',        tip: `${cleanDays} days retail history. Conservative uses peak+B2B. ~90-93% confidence.` },
-    medium:             { bg: 'rgba(217,119,6,0.12)', color: '#fbbf24', label: '●●●○ Medium',       tip: `${cleanDays} days retail history. Scenarios building accuracy. ~75-85% confidence.` },
-    low:                { bg: 'rgba(234,88,12,0.12)', color: '#fb923c', label: '●●○○ Low',          tip: `${cleanDays} days retail history. Lean on B2B forecast more. ~60-75% confidence.` },
-    very_low:           { bg: 'rgba(220,38,38,0.12)', color: '#f87171', label: '●○○○ Very Low',     tip: `${cleanDays} day(s) retail history. B2B forecast anchoring scenarios. ~50-60% confidence.` },
-    forecast_only:      { bg: 'rgba(37,99,235,0.12)', color: '#60a5fa', label: '◆ B2B Only',        tip: 'No retail history. Scenarios based entirely on B2B forecast. ~45-55% confidence.' },
-    no_data:            { bg: 'rgba(148,163,184,0.1)', color: '#94a3b8', label: '○ No Data',        tip: 'No retail history and no B2B forecast. Using minimum 0.1 L/d.' },
-    high_no_forecast:   { bg: 'rgba(22,163,74,0.12)',  color: '#4ade80', label: '●●●● Retail Only', tip: `${cleanDays} days retail history. No B2B forecast — retail stream only.` },
-    medium_no_forecast: { bg: 'rgba(217,119,6,0.12)', color: '#fbbf24', label: '●●○○ Retail Only', tip: `${cleanDays} days retail history. No B2B forecast imported yet.` },
-    low_no_forecast:    { bg: 'rgba(234,88,12,0.12)', color: '#fb923c', label: '●○○○ Retail Only', tip: `${cleanDays} day(s) retail history. No B2B forecast imported yet.` },
+    high:               { bg: 'rgba(22,163,74,0.12)',  color: '#4ade80', label: '●●●● High',        tip: `${cleanDays} days of movement history. Conservative uses peak+B2B. ~90-93% confidence.` },
+    medium:             { bg: 'rgba(217,119,6,0.12)', color: '#fbbf24', label: '●●●○ Medium',       tip: `${cleanDays} days of movement history. Scenarios building accuracy. ~75-85% confidence.` },
+    low:                { bg: 'rgba(234,88,12,0.12)', color: '#fb923c', label: '●●○○ Low',          tip: `${cleanDays} days of movement history. Lean on B2B forecast more. ~60-75% confidence.` },
+    very_low:           { bg: 'rgba(220,38,38,0.12)', color: '#f87171', label: '●○○○ Very Low',     tip: `${cleanDays} day(s) of movement history. B2B forecast anchoring scenarios. ~50-60% confidence.` },
+    forecast_only:      { bg: 'rgba(37,99,235,0.12)', color: '#60a5fa', label: '◆ B2B Only',        tip: 'No movement in 30 days. Scenarios based entirely on B2B forecast. ~45-55% confidence.' },
+    no_data:            { bg: 'rgba(148,163,184,0.1)', color: '#94a3b8', label: '○ No Data',        tip: 'No movement in 30 days and no B2B forecast. Using minimum 0.1 L/d.' },
+    high_no_forecast:   { bg: 'rgba(22,163,74,0.12)',  color: '#4ade80', label: '●●●● Retail Only', tip: `${cleanDays} days of movement history. No B2B forecast — retail stream only.` },
+    medium_no_forecast: { bg: 'rgba(217,119,6,0.12)', color: '#fbbf24', label: '●●○○ Retail Only', tip: `${cleanDays} days of movement history. No B2B forecast imported yet.` },
+    low_no_forecast:    { bg: 'rgba(234,88,12,0.12)', color: '#fb923c', label: '●○○○ Retail Only', tip: `${cleanDays} day(s) of movement history. No B2B forecast imported yet.` },
   };
   const c = cfg[confidence] || cfg.no_data;
   return (
@@ -227,14 +227,10 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
   //
   // A number on a screen can sit next to a different number and let a person
   // judge. An alarm cannot: it says DO SOMETHING NOW, and the recommendation
-  // beside it said the opposite. So this one moves; the Expected and Safe
-  // columns stay exactly as they are, and the disagreement is stated below
-  // rather than quietly disappearing.
+  // beside it said the opposite. So this one moves.
   const recRate = product.recommendation?.dailyRate ?? 0;
   const daysStock = recRate > 0 ? Math.round((product.realStock / recRate) * 10) / 10
     : product.daysOfStockActual;
-  const oldDaysStock = product.daysOfStockActual;
-  const alarmWasFalse = oldDaysStock < product.leadTime && daysStock >= product.leadTime;
   // ONE source for "does this need an order": the recommendation's own action.
   //
   // The first version of this derived its own coverage test here — effective
@@ -308,12 +304,18 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
             <div style={{ fontSize: 12, fontWeight: 700, color: '#cbd5e1', marginBottom: 10 }}>Demand Streams</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
               <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Retail avg/day</div>
+                <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }} title="Technician refills of contracted oils are left out — the forecast already holds them.">Customer sales/day</div>
                 <div style={{ fontSize: 15, fontWeight: 800, color: '#60a5fa' }}>{product.retailDailyAvg ?? '—'} L</div>
               </div>
               <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>B2B (Forecast)/day</div>
+                <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}
+                  title="The larger of the Salesforce contract and what technicians actually drew in 30 days — one demand, never added.">
+                  B2B/day ({product.b2bSource === 'technicians' ? 'technician refills' : 'contract'})
+                </div>
                 <div style={{ fontSize: 15, fontWeight: 800, color: '#a78bfa' }}>{product.b2bDaily ?? '—'} L</div>
+                {product.b2bSource === 'technicians' && (
+                  <div style={{ fontSize: 10, color: '#fbbf24', marginTop: 2 }}>contract says {product.forecastDaily} L</div>
+                )}
               </div>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Total expected/day</div>
@@ -374,17 +376,6 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
                   : ' at today\'s rate, but the corrected demand still covers the lead time'}. No new order needed.
               </div>
             )}
-            {/* Said out loud rather than silently not firing: this alarm used to
-                appear here, and somebody who has seen it before deserves to know
-                why it stopped, not to wonder whether the screen is broken. */}
-            {alarmWasFalse && (
-              <div style={{ marginTop: 8, padding: '6px 12px', background: 'rgba(148,163,184,0.08)', border: '1px solid rgba(148,163,184,0.22)', borderRadius: 8, fontSize: 11.5, color: 'rgba(232,234,242,0.6)', lineHeight: 1.5 }}>
-                The older Expected figure puts this at {oldDaysStock} days and would
-                have called it urgent. It counts the Salesforce forecast on top of
-                recorded sales, and since B2B orders go through Shopify too, that is
-                largely the same demand twice.
-              </div>
-            )}
             {daysStock <= 0 && (
               <div style={{ marginTop: 8, padding: '6px 12px', background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 8, fontSize: 12, color: '#f87171', fontWeight: 600 }}>
                 🚨 Stock is in deficit — already oversold!
@@ -410,7 +401,7 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
                   this figure.
                 </div>
               )}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
                 <div style={{ textAlign: 'center' }}>
                   <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>120-day Forecast</div>
                   <div style={{ fontSize: 16, fontWeight: 800, color: '#60a5fa' }}>{product.forecast120Days} L</div>
@@ -418,47 +409,6 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
                 <div style={{ textAlign: 'center' }}>
                   <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Forecast Daily</div>
                   <div style={{ fontSize: 16, fontWeight: 800, color: '#60a5fa' }}>{product.forecastDaily} L/d</div>
-                </div>
-                <div style={{ textAlign: 'center' }}>
-                  {(() => {
-                    const retail = product.retailDailyAvg || 0;
-                    const forecast = product.forecastDaily || 0;
-                    // Compare forecast vs retail: ratio shows alignment
-                    // Require ≥5 sale days — fewer points make % statistically meaningless
-                    if (retail > 0 && forecast > 0 && (product.cleanDays || 0) < 5) {
-                      return (
-                        <>
-                          <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Retail vs Forecast</div>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: '#fbbf24' }} title={`Only ${product.cleanDays || 0} sale day(s) — not enough data for a reliable comparison`}>Insuf. ({product.cleanDays || 0}d data)</div>
-                        </>
-                      );
-                    } else if (retail > 0 && forecast > 0) {
-                      const ratio = retail / forecast;
-                      const pct = Math.round((ratio - 1) * 100);
-                      const color = Math.abs(pct) <= 20 ? '#4ade80' : Math.abs(pct) <= 60 ? '#fbbf24' : '#f87171';
-                      const label = pct > 0 ? `Retail +${pct}% vs Fcst` : `Retail ${pct}% vs Fcst`;
-                      return (
-                        <>
-                          <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }} title="How much retail history differs from Salesforce forecast">Retail vs Forecast</div>
-                          <div style={{ fontSize: 13, fontWeight: 800, color }}>{label}</div>
-                        </>
-                      );
-                    } else if (retail > 0) {
-                      return (
-                        <>
-                          <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Retail vs Forecast</div>
-                          <div style={{ fontSize: 13, fontWeight: 800, color: '#fbbf24' }}>No forecast</div>
-                        </>
-                      );
-                    } else {
-                      return (
-                        <>
-                          <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Retail vs Forecast</div>
-                          <div style={{ fontSize: 13, fontWeight: 800, color: '#60a5fa' }}>No retail data</div>
-                        </>
-                      );
-                    }
-                  })()}
                 </div>
               </div>
             </div>
@@ -468,6 +418,11 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0', marginBottom: 12 }}>
               📦 Daily Consumption — Last 30 Days
+              {product.b2bDaily > 0 && (
+                <span style={{ fontSize: 11, fontWeight: 500, color: 'rgba(232,234,242,0.45)', marginLeft: 8 }}>
+                  customers only — technician refills are in the forecast
+                </span>
+              )}
             </div>
             {loading ? (
               <div style={{ textAlign: 'center', padding: 32, color: 'rgba(232,234,242,0.3)' }}>Loading...</div>
@@ -532,7 +487,7 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
                       <td style={{ padding: '6px 10px', textAlign: 'right', color: '#93c5fd' }}>
                         {dailySales.reduce((s, d) => s + d.volume_l, 0).toFixed(2)} L
                       </td>
-                      <td style={{ padding: '6px 10px', color: '#e2e8f0' }} title="Projected demand rate: 30-day retail average + daily B2B forecast">Rate: {product.avgDailyDemand} L/d</td>
+                      <td style={{ padding: '6px 10px', color: '#e2e8f0' }} title="Projected demand rate: 30-day customer average + daily B2B">Rate: {product.avgDailyDemand} L/d</td>
                     </tr>
                   </tfoot>
                 </table>
@@ -1055,11 +1010,11 @@ export default function ReplenishmentDashboard({ user }) {
               <th style={thStyle}>Product Code</th>
               <th style={thStyle}>Product Name</th>
               <th style={{ ...thStyle, textAlign: 'right' }}><Tooltip text="Current physical stock. Oils in L, machines/materials in units.">Real Stock</Tooltip></th>
-              <th style={{ ...thStyle, textAlign: 'right', color: '#60a5fa' }}><Tooltip text="Average daily retail consumption from transaction history (Shopify sales).">Retail/day</Tooltip></th>
-              <th style={{ ...thStyle, textAlign: 'right', color: '#a78bfa' }}><Tooltip text="Daily B2B demand from Salesforce forecast (120d ÷ 120).">B2B/day</Tooltip></th>
-              <th style={{ ...thStyle, textAlign: 'right', background: 'rgba(220,38,38,0.06)', color: '#f87171' }}><Tooltip text="Conservative: peak retail + 100% B2B forecast. Use this for buy-safe decisions.">Cons. Days</Tooltip></th>
-              <th style={{ ...thStyle, textAlign: 'right', background: 'rgba(217,119,6,0.06)', color: '#fbbf24' }}><Tooltip text="Expected: avg retail + 100% B2B forecast. Use for normal purchase planning.">Exp. Days</Tooltip></th>
-              <th style={{ ...thStyle, textAlign: 'right', background: 'rgba(22,163,74,0.06)', color: '#4ade80' }}><Tooltip text="Optimistic: min retail + 70% B2B forecast. Best-case scenario.">Opt. Days</Tooltip></th>
+              <th style={{ ...thStyle, textAlign: 'right', color: '#60a5fa' }}><Tooltip text="Average daily customer sales over the last 30 days. Technician refills of contracted oils are left out — they are already inside B2B.">Retail/day</Tooltip></th>
+              <th style={{ ...thStyle, textAlign: 'right', color: '#a78bfa' }}><Tooltip text="Daily B2B demand: the Salesforce forecast (120d ÷ 120), or what technicians actually drew in 30 days when that is higher.">B2B/day</Tooltip></th>
+              <th style={{ ...thStyle, textAlign: 'right', background: 'rgba(220,38,38,0.06)', color: '#f87171' }}><Tooltip text="Conservative: peak retail + 100% B2B (contract or technician refills). Use this for buy-safe decisions.">Cons. Days</Tooltip></th>
+              <th style={{ ...thStyle, textAlign: 'right', background: 'rgba(217,119,6,0.06)', color: '#fbbf24' }}><Tooltip text="Expected: avg retail + 100% B2B (contract or technician refills). Use for normal purchase planning.">Exp. Days</Tooltip></th>
+              <th style={{ ...thStyle, textAlign: 'right', background: 'rgba(22,163,74,0.06)', color: '#4ade80' }}><Tooltip text="Optimistic: min retail + 70% B2B. Best-case scenario.">Opt. Days</Tooltip></th>
               <th style={thStyle}><Tooltip text="Status based on Conservative scenario. Critical = Cons.Days &lt; LeadTime+10d | Attention = &lt; LeadTime+45d | Safe = ≥ LeadTime+45d">Status</Tooltip></th>
               <th style={{ ...thStyle, textAlign: 'right', background: 'rgba(22,163,74,0.08)' }}><Tooltip text="Order (Expected): based on avg demand scenario — normal purchase quantity.">Order Exp.</Tooltip></th>
               <th style={{ ...thStyle, textAlign: 'right', background: 'rgba(251,191,36,0.06)' }}><Tooltip text="Order (Safe): based on conservative scenario — buy this to never run out.">Order Safe</Tooltip></th>
@@ -1067,7 +1022,7 @@ export default function ReplenishmentDashboard({ user }) {
               <th style={thStyle}>Supplier</th>
               <th style={thStyle}><Tooltip text="Confidence based on retail history depth. High = 25+ days. Hover for detail.">Confidence</Tooltip></th>
               <th style={{ ...thStyle, textAlign: 'right', background: 'rgba(59,130,246,0.10)', color: '#93c5fd' }}>
-                <Tooltip text="What to actually order. Unlike Order Exp./Safe, this does not add the two demand streams together — since every order now goes through Shopify, the Salesforce forecast and recorded sales are largely the same demand counted twice, so it takes the larger of the two. Covers lead time + buffer.">
+                <Tooltip text="What to actually order: the Salesforce contract plus customer sales, over lead time + buffer. Technician refills are inside the contract, so they are counted once. Never more than Order Safe.">
                   Recommendation
                 </Tooltip>
               </th>
@@ -1139,7 +1094,7 @@ export default function ReplenishmentDashboard({ user }) {
       </div>
 
       <p style={{ marginTop: 12, fontSize: 11, color: '#94a3b8', textAlign: 'center' }}>
-        Retail = last 30 days of Shopify/transaction history. B2B = Salesforce forecast ÷ 120. Status based on Conservative scenario. Click product name to see consumption detail.
+        Retail = last 30 days of customer sales; technician refills of contracted oils are left out, because B2B already holds them. B2B = Salesforce forecast ÷ 120, or technician refills where those run higher. Status follows the Recommendation. Click product name to see consumption detail.
       </p>
 
       {/* Live Shopify Pending Orders — removed by owner 2026-07-24 ("only used it
@@ -1288,7 +1243,10 @@ function ImportReport({ result, onDismiss }) {
 //   Order Safe also           assumes the single biggest day of the month
 //                             repeats every day for the whole lead time.
 //                             FRAG_0030 consumes 91 L a month; it asked for 582.
-//   Recommendation            takes the LARGER of the two streams, not the sum.
+//   Recommendation            took the LARGER of the two streams until
+//                             2026-10-12. Since technician refills are taken
+//                             out of sales at the source, it is the sum —
+//                             contract + customer sales (PRD Part II §1).
 //
 // Three actions, because "order 0 L" and "we have no idea" are different
 // answers and a purchasing decision should not have to guess which it is.
@@ -1331,7 +1289,7 @@ function RecommendationPanel({ rec, unit, safeOrder, suggestedOrder }) {
     medium: 'reasonable — 15 to 24 days of sales history',
     low: 'thin — only 5 to 14 days of sales history',
     very_low: 'very thin — fewer than 5 days of sales history',
-    forecast_only: 'no sales history at all; the contract is the only signal',
+    forecast_only: 'no customer sales in 30 days; the B2B stream is the only signal',
     no_data: 'nothing to calculate from',
   };
   const headline = rec.action === 'order' ? `Order ${rec.litres.toLocaleString()} ${unit}`
@@ -1368,9 +1326,8 @@ function RecommendationPanel({ rec, unit, safeOrder, suggestedOrder }) {
       {rec.action === 'order' && rec.vsSafeOrder > 0 && (
         <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(59,130,246,0.25)', fontSize: 11.5, color: 'rgba(232,234,242,0.6)', lineHeight: 1.6 }}>
           <strong>Order Safe says {safeOrder?.toLocaleString()} {unit}</strong> — {rec.vsSafeOrder.toLocaleString()} {unit} more.
-          That column adds the Salesforce forecast on top of recorded sales, and
-          assumes the busiest day of the month repeats daily. Since B2B orders now
-          go through Shopify too, those are largely the same demand counted twice.
+          That column assumes the busiest day of the month repeats every day for
+          the whole period — a worst case, not a forecast.
         </div>
       )}
     </div>
