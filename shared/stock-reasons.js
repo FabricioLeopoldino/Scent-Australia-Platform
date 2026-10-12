@@ -49,6 +49,16 @@ export const ADD_REASONS = [
 // in a correction the shelf lost nothing, the number did.
 export const NON_DEMAND_REMOVE_REASONS = ['correction'];
 
+// Hand-made removals that are real but not a pattern: kept OUT of the daily
+// rate and shown beside it instead. '' is a removal with no reason at all.
+//
+// WHY (2026-10-12, the owner's call). "Other" mixes collab orders — real oil,
+// but unpredictable — with stocktakes typed under the wrong reason (Special
+// Santal's 28 L on 23 Sep said so in its own note). Neither may drive an order:
+// "manuais tipo ajuste de stock essas coisas não pode … se for pego fora de
+// ordem eu reclamo." Shown beside the prediction, the planner still sees them.
+export const UNPATTERNED_REMOVE_REASONS = ['other', ''];
+
 export function reasonsFor(type) {
   return type === 'add' ? ADD_REASONS : REMOVE_REASONS;
 }

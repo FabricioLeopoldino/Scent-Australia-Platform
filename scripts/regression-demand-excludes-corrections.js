@@ -23,7 +23,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import pkg from 'pg';
-import { NON_DEMAND_REMOVE_REASONS, REMOVE_REASONS } from '../shared/stock-reasons.js';
+import { NON_DEMAND_REMOVE_REASONS, UNPATTERNED_REMOVE_REASONS, REMOVE_REASONS } from '../shared/stock-reasons.js';
 const { Pool } = pkg;
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -70,10 +70,12 @@ try {
     'and is built from the shared list rather than a literal');
   // The subtle one, and the reason this check exists at all. NOT (x AND NULL)
   // is NULL, and SQL drops a row whose WHERE is NULL — so without COALESCE the
-  // filter silently removed every removal with no reason from demand too. That
-  // is 566 L in 90 days and a decision the owner has not taken.
+  // filter silently removed every removal with no reason from demand too. The
+  // owner has since decided those (2026-10-12) — and the decision lives in its
+  // own rule, UNPATTERNED_REMOVAL, checked in section 5. The correction rule
+  // must still never take it by accident, which is what this guards.
   check(/COALESCE\(reason, ''\) = ANY/.test(server),
-    'a removal with NO reason still counts — the NULL case is handled');
+    'the correction rule does not catch a removal with NO reason by accident — the NULL case is handled (no-reason is ruled out on purpose, by its own rule)');
 
   console.log('\n2b. And proven against the database, not only the source');
   const [n] = (await pool.query(`
@@ -112,9 +114,11 @@ try {
     `gap ${(m.before - m.after).toFixed(3)} vs corrections ${m.corrections.toFixed(3)}`);
 
   console.log('\n4. Technician refills of contracted oils are not sales (step 3, 2026-10-12)');
-  check(/const EXCLUDE_NON_DEMAND = `\$\{EXCLUDE_CORRECTIONS\}\s+AND NOT \$\{TECHNICIAN_REFILL\}`/.test(server),
-    'the demand filter carries both rules, so every demand query gets both');
-  const refill = server.slice(server.indexOf('const TECHNICIAN_REFILL'), server.indexOf('const EXCLUDE_NON_DEMAND'));
+  const composed = server.slice(server.indexOf('const EXCLUDE_NON_DEMAND'), server.indexOf('const ALLOWED_MIME_TYPES'));
+  check(['EXCLUDE_CORRECTIONS', 'TECHNICIAN_REFILL', 'REVERSED_SALE', 'UNPATTERNED_REMOVAL', 'ONE_OFF_ORDER']
+    .every((n) => composed.includes('${' + n + '}')),
+    'the demand filter carries every rule, so every demand query gets all of them');
+  const refill = server.slice(server.indexOf('const TECHNICIAN_REFILL'), server.indexOf('// A sale that was later cancelled'));
   check(!/\bIN\s*\(/.test(refill) && (refill.match(/EXISTS/g) || []).length === 2,
     'written with EXISTS, never IN — IN can return NULL and drop the row');
   check(/forecast_120_days > 0/.test(refill) && /MAX\(import_date\)/.test(refill),
@@ -128,20 +132,59 @@ try {
     await client.query('BEGIN');
     const { refreshOrderActors } = await import('../server/sa/shopify-order-actors.js');
     const cached = await refreshOrderActors(client);
-    const block = server.slice(server.indexOf('const EXCLUDE_CORRECTIONS'), server.indexOf('const ALLOWED_MIME_TYPES'));
-    const frag = new Function('NON_DEMAND_REMOVE_REASONS', `${block}; return [EXCLUDE_CORRECTIONS, TECHNICIAN_REFILL, EXCLUDE_NON_DEMAND];`);
-    const [EC, TR, END] = frag(NON_DEMAND_REMOVE_REASONS);
+    const block = server.slice(server.indexOf('const sqlTextArray'), server.indexOf('const ALLOWED_MIME_TYPES'));
+    const frag = new Function('NON_DEMAND_REMOVE_REASONS', 'UNPATTERNED_REMOVE_REASONS',
+      `${block}; return [EXCLUDE_CORRECTIONS, TECHNICIAN_REFILL, EXCLUDE_NON_DEMAND, REVERSED_SALE, UNPATTERNED_REMOVAL, ONE_OFF_ORDER];`);
+    const [EC, TR, END, RS, UR, OO] = frag(NON_DEMAND_REMOVE_REASONS, UNPATTERNED_REMOVE_REASONS);
     const w = `(created_at::timestamptz AT TIME ZONE 'Australia/Sydney')::date
                >= (NOW() AT TIME ZONE 'Australia/Sydney')::date - INTERVAL '30 days'`;
     const [t] = (await client.query(`
       SELECT COALESCE(sum(quantity) FILTER (WHERE true ${EC}), 0)::float/1000 AS no_corr,
              COALESCE(sum(quantity) FILTER (WHERE true ${END}), 0)::float/1000 AS demand,
-             COALESCE(sum(quantity) FILTER (WHERE ${TR}), 0)::float/1000 AS refills
+             COALESCE(sum(quantity) FILTER (WHERE ${TR}), 0)::float/1000 AS refills,
+             COALESCE(sum(quantity) FILTER (WHERE true ${EC} AND (${TR} OR ${RS} OR ${UR} OR ${OO})), 0)::float/1000 AS ruled_out
         FROM transactions WHERE type = ANY($1) AND ${w}`, [TY])).rows;
-    console.log(`     ${cached} orders read · 30-day demand ${t.no_corr.toFixed(1)} L → ${t.demand.toFixed(1)} L (${t.refills.toFixed(1)} L technician refills)`);
-    check(cached > 0, 'the store returned orders to classify');
-    check(Math.abs((t.no_corr - t.demand) - t.refills) < 0.001,
-      'and removes exactly the technician refills, nothing more');
+    console.log(`     ${cached} orders read · 30-day demand ${t.no_corr.toFixed(1)} L → ${t.demand.toFixed(1)} L (${t.refills.toFixed(1)} L technician refills, ${(t.ruled_out - t.refills).toFixed(1)} L more by the step 2 rules)`);
+    // The read is incremental, so it may legitimately bring 0 new orders; what
+    // must hold is that the cache it leaves is not empty, or the technician
+    // rule above measured nothing and still passed.
+    const [cacheRows] = (await client.query(`SELECT COUNT(*)::int n FROM shopify_order_actor`)).rows;
+    check(cacheRows.n > 0, `the order cache is populated (${cacheRows.n} orders, ${cached} read just now)`);
+    check(Math.abs((t.no_corr - t.demand) - t.ruled_out) < 0.001,
+      'and removes exactly what the rules name, nothing more');
+
+    console.log('\n5. Step 2: what is real but not a pattern stays out of the rate (2026-10-12)');
+    // A cancelled fulfilment is not a sale: for every order and oil, what
+    // demand counts equals what was finally shipped. #38367 was fulfilled
+    // three times and cancelled twice — 6 L, not 18. Measured over each order's
+    // WHOLE life (any order touched in the window), so a sale just before the
+    // window and its reversal just inside it are judged together. Both
+    // directions: over-counting inflates, under-counting empties a shelf.
+    const pairs = (await client.query(`
+      SELECT shopify_order_id o,
+             COALESCE(SUM(quantity) FILTER (WHERE type = 'shopify_sale' AND NOT ${RS}), 0) counted,
+             GREATEST(SUM(CASE WHEN type = 'shopify_sale' THEN quantity ELSE -quantity END), 0) net
+        FROM transactions
+       WHERE type IN ('shopify_sale', 'shopify_reversal')
+         AND shopify_order_id IN (SELECT shopify_order_id FROM transactions
+                                   WHERE shopify_order_id IS NOT NULL AND ${w})
+       GROUP BY shopify_order_id, product_id`)).rows.map((r) => ({ o: r.o, counted: +r.counted, net: +r.net }));
+    const over = pairs.filter((r) => r.counted > r.net + 1);
+    const under = pairs.filter((r) => r.counted < r.net - 1);
+    check(over.length === 0, `a cancelled fulfilment never counts as a sale (${pairs.length} order lines)`,
+      over.slice(0, 3).map((r) => `${r.o}: counts ${r.counted} of ${r.net}`).join(' | '));
+    check(under.length === 0, 'and a real shipment is never dropped with it',
+      under.slice(0, 3).map((r) => `${r.o}: counts ${r.counted} of ${r.net}`).join(' | '));
+    const [u] = (await client.query(`SELECT COUNT(*)::int n FROM transactions
+       WHERE type = 'remove' AND COALESCE(reason, '') = ANY($1) AND ${w} ${END}`, [UNPATTERNED_REMOVE_REASONS])).rows;
+    check(u.n === 0, 'no removal marked other, or with no reason, reaches the rate', `${u.n} do`);
+    const [k1] = (await client.query(`SELECT COUNT(*)::int n FROM transactions
+       WHERE type = 'shopify_sale' AND ${w} AND ${OO} ${END}`)).rows;
+    check(k1.n === 0, 'no order of 15 L or more of one oil reaches the rate', `${k1.n} do`);
+    // Loss, samples, technician service and production are real consumption
+    // and must still count — the rule is about pattern, not about removals.
+    check(['loss', 'sample', 'technician', 'production'].every((r) => !UNPATTERNED_REMOVE_REASONS.includes(r)),
+      'loss, samples, technician service and production still count');
     // A technician buying an oil with no contract stays in demand.
     const [k] = (await client.query(`
       SELECT COUNT(*)::int n FROM transactions

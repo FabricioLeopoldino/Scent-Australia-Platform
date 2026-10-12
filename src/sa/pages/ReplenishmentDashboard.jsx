@@ -322,6 +322,17 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
                 <div style={{ fontSize: 15, fontWeight: 800, color: '#4ade80' }}>{product.scenarioExpectedRate ?? '—'} L</div>
               </div>
             </div>
+            {/* Real oil, deliberately not in the rate — shown so the planner can
+                still judge it, rather than finding it silently gone. */}
+            {(product.outsideAverage?.manual > 0 || product.outsideAverage?.oneOff > 0) && (
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.08)', fontSize: 11.5, color: 'rgba(232,234,242,0.65)', lineHeight: 1.6 }}>
+                <strong style={{ color: '#fbbf24' }}>Left out of the average (30 days):</strong>{' '}
+                {[
+                  product.outsideAverage.manual > 0 && `${product.outsideAverage.manual} ${product.unit || 'L'} removed by hand as "other" or with no reason (collab and the like)`,
+                  product.outsideAverage.oneOff > 0 && `${product.outsideAverage.oneOff} ${product.unit || 'L'} in one-off orders of 15 L or more`,
+                ].filter(Boolean).join(' · ')}. Real oil, but not a pattern — judge it on its own.
+              </div>
+            )}
           </div>
 
           {/* 3 Scenarios */}

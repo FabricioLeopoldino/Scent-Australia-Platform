@@ -12,7 +12,7 @@
 import express from 'express';
 import { calcSmartDemand } from '../../shared/demand-calculator.js';
 import { bomVariantFor } from '../../shared/refurb-machines.js';
-import { isValidReason, reasonLabel, NON_DEMAND_REMOVE_REASONS } from '../../shared/stock-reasons.js';
+import { isValidReason, reasonLabel, NON_DEMAND_REMOVE_REASONS, UNPATTERNED_REMOVE_REASONS } from '../../shared/stock-reasons.js';
 import { readIncomingPurchaseOrders } from './shopify-purchase-orders.js';
 import { refreshOrderActors, TECH_REFILL_DAYS } from './shopify-order-actors.js';
 import crypto from 'crypto';
@@ -109,12 +109,11 @@ const DEMAND_TX_TYPES = [
 // evaluates to NULL when reason is NULL, and SQL drops a row whose WHERE is
 // NULL — so the first version of this silently removed every unexplained manual
 // removal from demand as well. Over half of them carry no reason (566 L in 90
-// days), and what to do with those is a decision the owner has NOT taken yet.
-// Taking it by accident, in a NULL, is the worst way to take it.
-// Empty list renders no filter at all. `ARRAY[]` is a syntax error in Postgres,
-// and emptying this list is a live possibility — it is the open decision in
-// PRD_DEMAND_PLANNING.md Part II §8. A configuration change must not 500 the
-// two screens the manager orders from.
+// days). The owner has since decided those (UNPATTERNED_REMOVAL, below) — and
+// a decision belongs in its own named rule, never taken by accident in a NULL.
+// Lists are rendered as a TYPED array (sqlTextArray): a bare `ARRAY[]` is an
+// error in Postgres, and a configuration change emptying a list must not 500
+// the two screens the manager orders from.
 //
 // A technician's refill is not a sale either (Part II §1, 2026-10-12). The
 // Salesforce forecast already predicts what service clients consume, and the
@@ -131,9 +130,9 @@ const DEMAND_TX_TYPES = [
 // excluding the order would leave that demand counted nowhere, and an
 // undercount is the failure that empties a shelf. Both tests are EXISTS, never
 // IN: EXISTS cannot return NULL, so it cannot repeat the NULL trap above.
-const EXCLUDE_CORRECTIONS = NON_DEMAND_REMOVE_REASONS.length === 0 ? '' :
-  `AND NOT (type = 'remove' AND COALESCE(reason, '') = ANY(ARRAY[${
-    NON_DEMAND_REMOVE_REASONS.map((r) => `'${r}'`).join(',')}]))`;
+const sqlTextArray = (list) => `ARRAY[${list.map((r) => `'${r}'`).join(',')}]::text[]`;
+const EXCLUDE_CORRECTIONS =
+  `AND NOT (type = 'remove' AND COALESCE(reason, '') = ANY(${sqlTextArray(NON_DEMAND_REMOVE_REASONS)}))`;
 const TECHNICIAN_REFILL = `(type = 'shopify_sale'
     AND EXISTS (SELECT 1 FROM shopify_order_actor o
                   JOIN demand_internal_actors a
@@ -144,8 +143,51 @@ const TECHNICIAN_REFILL = `(type = 'shopify_sale'
                  WHERE pr.id = transactions.product_id
                    AND f.forecast_120_days > 0
                    AND f.import_date = (SELECT MAX(import_date) FROM forecasts)))`;
+// A sale that was later cancelled is not a sale (2026-10-12). Shopify order
+// #38367 was fulfilled, cancelled and fulfilled again twice: stock was right —
+// three debits, two reversals, 6 L — but demand counted all three, 18 L. A sale
+// counts only if it is among the LAST n shipments of that order, product and
+// quantity, where n = shipments − reversals. So the totals are exact whatever
+// the order of events — #38367: 3 shipped, 2 cancelled, the last one counts —
+// and the one that counts is the re-shipment, on its real date. Two earlier
+// pairings were each wrong in one direction (any-later-reversal dropped real
+// shipments; reversal-before-next-shipment mis-paired the identical rows a BOM
+// writes in the same second); the regression checks both directions per order.
+const REVERSED_SALE = `(type = 'shopify_sale'
+    AND (SELECT COUNT(*) FROM transactions s2
+          WHERE s2.type = 'shopify_sale'
+            AND s2.shopify_order_id = transactions.shopify_order_id
+            AND s2.product_id = transactions.product_id
+            AND s2.quantity = transactions.quantity
+            AND (s2.created_at, s2.id) > (transactions.created_at, transactions.id))
+     >= (SELECT COUNT(*) FILTER (WHERE x.type = 'shopify_sale')
+              - COUNT(*) FILTER (WHERE x.type = 'shopify_reversal')
+           FROM transactions x
+          WHERE x.shopify_order_id = transactions.shopify_order_id
+            AND x.product_id = transactions.product_id
+            AND x.quantity = transactions.quantity
+            AND x.type IN ('shopify_sale', 'shopify_reversal')))`;
+// Hand-made removals marked "other" or with no reason — collab and the like.
+// Real oil, not a pattern: out of the rate, shown beside it (stock-reasons.js).
+const UNPATTERNED_REMOVAL =
+  `(type = 'remove' AND COALESCE(reason, '') = ANY(${sqlTextArray(UNPATTERNED_REMOVE_REASONS)}))`;
+// One order carrying 15 L or more of one oil, net of cancellations. Customer
+// orders are 1–6 L; above that, in 30 days, there were four lines — 48 L
+// "Initial Diffuser", 39 L and 20 L on one company order, 18 L — and they were
+// a third of all customer demand. The owner: "parecem ser pedidos não
+// habituais." Averaged, one of them asked for 106 L of Santal and White Tea.
+const ONE_OFF_ORDER_ML = 15000;
+const ONE_OFF_ORDER = `(type = 'shopify_sale' AND unit = 'mL'
+    AND (SELECT COALESCE(SUM(CASE WHEN s.type = 'shopify_sale' THEN s.quantity ELSE -s.quantity END), 0)
+           FROM transactions s
+          WHERE s.shopify_order_id = transactions.shopify_order_id
+            AND s.product_id = transactions.product_id
+            AND s.type IN ('shopify_sale', 'shopify_reversal')) >= ${ONE_OFF_ORDER_ML})`;
 const EXCLUDE_NON_DEMAND = `${EXCLUDE_CORRECTIONS}
-  AND NOT ${TECHNICIAN_REFILL}`;
+  AND NOT ${TECHNICIAN_REFILL}
+  AND NOT ${REVERSED_SALE}
+  AND NOT ${UNPATTERNED_REMOVAL}
+  AND NOT ${ONE_OFF_ORDER}`;
 
 const ALLOWED_MIME_TYPES = new Set([
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
@@ -4712,7 +4754,7 @@ router.get('/dashboard/replenishment', async (req, res) => {
     // All date calculations use Australian/Sydney timezone directly in SQL
 
     const [productsResult, salesByDayResult, forecastResult, lastForecastResult,
-      suppliersResult, droppedResult, poResult, techRefillResult, techCoverResult] = await Promise.all([
+      suppliersResult, droppedResult, poResult, techRefillResult, techCoverResult, besideResult] = await Promise.all([
       // Products with lead_time resolved: product override → supplier default → 30d fallback
       pool.query(`
         SELECT
@@ -4846,6 +4888,7 @@ router.get('/dashboard/replenishment', async (req, res) => {
                SUM(quantity) AS volume
         FROM transactions
         WHERE ${TECHNICIAN_REFILL}
+          AND NOT ${REVERSED_SALE}
           AND (created_at::timestamptz AT TIME ZONE 'Australia/Sydney')::date > (NOW() AT TIME ZONE 'Australia/Sydney')::date - make_interval(days => $1)
         GROUP BY 1, 2, 3
       `, [TECH_REFILL_DAYS]),
@@ -4858,7 +4901,19 @@ router.get('/dashboard/replenishment', async (req, res) => {
         SELECT LEAST($1, GREATEST(1,
                  (NOW() AT TIME ZONE 'Australia/Sydney')::date
                  - (MIN(ordered_at) AT TIME ZONE 'UTC' AT TIME ZONE 'Australia/Sydney')::date + 1)) AS days
-        FROM shopify_order_actor`, [TECH_REFILL_DAYS])
+        FROM shopify_order_actor`, [TECH_REFILL_DAYS]),
+      // What was left OUT of the rate on purpose, so the screen can show it
+      // beside the prediction: real oil, but not a pattern to order against.
+      pool.query(`
+        SELECT product_id,
+               COALESCE(SUM(quantity) FILTER (WHERE ${UNPATTERNED_REMOVAL}), 0) AS manual,
+               COALESCE(SUM(quantity) FILTER (WHERE ${ONE_OFF_ORDER}
+                 AND NOT ${TECHNICIAN_REFILL} AND NOT ${REVERSED_SALE}), 0) AS one_off
+        FROM transactions
+        WHERE type IN ('remove', 'shopify_sale')
+          AND (created_at::timestamptz AT TIME ZONE 'Australia/Sydney')::date >= (NOW() AT TIME ZONE 'Australia/Sydney')::date - INTERVAL '30 days'
+        GROUP BY product_id
+      `)
     ]);
 
     // ── Build per-product daily sales map { productId -> [{ date, volume }] }
@@ -4893,6 +4948,10 @@ router.get('/dashboard/replenishment', async (req, res) => {
     }
     // Null on an empty cache: nothing is classified, so nothing is divided.
     const techCoverDays = Number(techCoverResult.rows[0]?.days) || TECH_REFILL_DAYS;
+    const besideMap = {};
+    for (const row of besideResult.rows) {
+      besideMap[row.product_id] = { manual: parseFloat(row.manual) || 0, oneOff: parseFloat(row.one_off) || 0 };
+    }
     const techRefillMap = {};
     for (const row of techRefillResult.rows) {
       (techRefillMap[row.product_id] ||= []).push({ date: row.sale_date, in30: row.in_30, volume: parseFloat(row.volume) || 0 });
@@ -5157,6 +5216,11 @@ router.get('/dashboard/replenishment', async (req, res) => {
         retailDailyMin:      r3(demand.retailDailyMin / R),
         b2bDaily:            r3(demand.b2bDaily / R),
         b2bSource,                                  // contract | technicians
+        // Left out of the rate on purpose (30 days), shown beside it.
+        outsideAverage: {
+          manual: r1((besideMap[p.id]?.manual || 0) / R),
+          oneOff: r1((besideMap[p.id]?.oneOff || 0) / R),
+        },
         technicianDaily:     r3(techDaily / R),
         // ── 3 Scenarios (daily rate)
         scenarioConservativeRate: r3(conservative / R),
@@ -5181,7 +5245,11 @@ router.get('/dashboard/replenishment', async (req, res) => {
           coverDays:   coverDays === null ? null : r1(coverDays),
           basis,
           confidence:  demand.dataConfidence,
-          note:        b2bSource === 'technicians' && basis !== 'nothing_known'
+          // "No sales history" would be false when oil DID move but all of it
+          // was left out of the average on purpose (code review).
+          note:        basis === 'nothing_known' && ((besideMap[p.id]?.manual || 0) + (besideMap[p.id]?.oneOff || 0)) > 0
+            ? 'Nothing to base a pattern on: the only movement in 30 days was collab, "other" removals or one-off orders, left out of the average. Judge it on its own.'
+            : b2bSource === 'technicians' && basis !== 'nothing_known'
             ? `${NOTE[basis]} Over 120 days technicians drew more than the contract predicts, so their actual refills are used in its place.`
             : NOTE[basis],
           // What the older columns say, so the gap is visible rather than
