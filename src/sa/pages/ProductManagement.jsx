@@ -587,7 +587,11 @@ export default function ProductManagement({ user, libraryMode = false }) {
       category: libraryMode ? 'OILS' : 'RAW_MATERIALS',
       productCode: '',
       tag: '',
-      unit: 'mL',
+      // Oils are measured in mL; everything this generic page creates is
+      // counted in units. Defaulting to mL here created 'tst' (13 Oct) as a
+      // diffuser machine measured in millilitres. Raw materials can still be
+      // switched to mL by hand (Ethanol is).
+      unit: libraryMode ? 'mL' : 'units',
       currentStock: 0,
       minStockLevel: 0,
       supplier: '',
@@ -1163,7 +1167,7 @@ export default function ProductManagement({ user, libraryMode = false }) {
                     <select
                       className="input"
                       value={formData.category}
-                      onChange={(e) => setFormData({...formData, category: e.target.value, productCode: '', tag: ''})}
+                      onChange={(e) => setFormData({...formData, category: e.target.value, productCode: '', tag: '', unit: 'units'})}
                       required
                     >
                       {/* Oils removed — created only in the Fragrance Library (libraryMode) now. */}
@@ -1502,8 +1506,8 @@ export default function ProductManagement({ user, libraryMode = false }) {
                 fontSize: '13px',
                 color: '#fbbf24'
               }}>
-                <strong>💡 Reminder:</strong> After creating the PO in Shopify, add it here to track incoming stock.
-                When you receive the goods and click "Receive inventory" in Shopify, update the stock in ScentSystem via Stock Management.
+                <strong>💡 Reminder:</strong> POs raised in Shopify arrive through the "Shopify POs" screen — add one here only if it was not raised in Shopify.
+                When the goods arrive, receive them HERE with ✓ Received on the product. Never click "Receive inventory" in Shopify.
               </div>
 
               <div className="modal-footer">
