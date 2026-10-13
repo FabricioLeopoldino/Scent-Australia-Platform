@@ -473,6 +473,61 @@ router.get('/activity/export', requireRole('root', 'admin'), async (req, res) =>
   } catch (e) { console.error('[platform/activity/export]', e.message); res.status(500).json({ error: 'Failed to export' }); }
 });
 
+// ── Unmatched sales: Shopify sold it, no SA stock moved ─────────────────
+//
+// WHY (2026-10-13). A shop line whose SKU matches no product is written to
+// sa.webhook_skipped and nothing else — "where nobody looks", as the SA product
+// route says. Looking, that day: 15 ScentPro Medium Diffusers (SA_0005/0006)
+// sold since May against products that do not exist in the platform, 25 L of
+// Santal S refills to Koala Living stores, spare parts under legacy SA_DP_
+// codes. After 226 old listings were set to Unlisted, Fabricio wanted to know
+// the moment anyone sells one anyway, and who keyed it — the staff name is in
+// the order's tags, read from the order-actor cache. Here rather than on the
+// dashboard, his call: this page is where he goes for data and exports.
+//
+// Left out on purpose, by the owner's call (12–13 Oct): what SA does not
+// control — tester strips, the Christmas sample pack (leftover oil; a large
+// batch is booked out by hand), reed diffusers and the 1L room sprays.
+// COALESCE on every pattern test: a NULL never passes one, and a line with NO
+// SKU is the worst unmatched sale there is (code review). skipped_at is
+// TIMESTAMPTZ, unlike transactions.created_at — one conversion, not two.
+async function fetchUnmatched({ from, to, search, limit }) {
+  const lim = Math.min(Number(limit) || 2000, 10000);
+  const p = [];
+  let q = `
+    SELECT w.id::text AS id, to_char(w.skipped_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
+           w.shopify_order AS order_number, w.sku, w.quantity, o.customer_name, o.tags
+      FROM webhook_skipped w
+      LEFT JOIN shopify_order_actor o ON o.order_number = split_part(w.shopify_order, '.', 1)
+     WHERE COALESCE(w.topic, '') NOT ILIKE '%cancel%'
+       AND COALESCE(w.sku, '') !~ '^(SA_SS_|SA_REED_)'
+       AND COALESCE(w.sku, '') !~ '^SA_RM_[0-9]{3}$'
+       AND COALESCE(w.sku, '') <> 'XMAS2026'`;
+  if (from) { p.push(from); q += ` AND (w.skipped_at AT TIME ZONE 'Australia/Sydney')::date >= $${p.length}::date`; }
+  if (to)   { p.push(to);   q += ` AND (w.skipped_at AT TIME ZONE 'Australia/Sydney')::date <= $${p.length}::date`; }
+  if (search) {
+    p.push(`%${search}%`);
+    q += ` AND (w.sku ILIKE $${p.length} OR w.shopify_order ILIKE $${p.length}
+                OR o.customer_name ILIKE $${p.length} OR o.tags ILIKE $${p.length})`;
+  }
+  return (await saPool.query(`${q} ORDER BY w.skipped_at DESC LIMIT ${lim}`, p)).rows;
+}
+
+router.get('/unmatched-sales', requireRole('root', 'admin'), async (req, res) => {
+  try { res.json(await fetchUnmatched(req.query)); }
+  catch (e) { console.error('[platform/unmatched-sales]', e.message); res.status(500).json({ error: 'Failed to load unmatched sales' }); }
+});
+
+router.get('/unmatched-sales/export', requireRole('root', 'admin'), async (req, res) => {
+  try {
+    const rows = await fetchUnmatched({ ...req.query, limit: 10000 });
+    sendCsv(res, 'unmatched-sales',
+      ['Date (Sydney)', 'Order', 'SKU', 'Quantity', 'Customer', 'Order tags (who keyed it)'],
+      ['created_at', 'order_number', 'sku', 'quantity', 'customer_name', 'tags'],
+      rows, 'created_at');
+  } catch (e) { console.error('[platform/unmatched-sales/export]', e.message); res.status(500).json({ error: 'Failed to export' }); }
+});
+
 router.get('/reports/systems', requireRole('root', 'admin'), (_req, res) => res.json(SYSTEMS));
 
 export default router;

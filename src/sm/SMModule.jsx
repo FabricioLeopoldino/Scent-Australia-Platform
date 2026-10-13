@@ -139,6 +139,7 @@ export default function SMModule({ user, onLogout }) {
                 {/* Centralized cross-system report (owner 2026-07-28) */}
                 <Route path="/history" component={() => <HistoryActivity kind="history" />} />
                 <Route path="/activity" component={() => <HistoryActivity kind="activity" />} />
+                <Route path="/unmatched-sales" component={() => <HistoryActivity kind="unmatched" />} />
                 <Route path="/statement" component={Statement} />
                 {/* Legacy per-module pages kept for deep links; superseded in nav by /history + /activity */}
                 <Route path="/transactions" component={TransactionHistory} />

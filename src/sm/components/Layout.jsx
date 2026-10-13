@@ -7,7 +7,7 @@ import {
   BookOpen, Users, ScanBarcode, Truck, RotateCcw,
   History, ScrollText, UserCog, LogOut, ChevronLeft, ChevronRight,
   Beaker, ClipboardList, Building2, Star, Briefcase, Tag, Box, FlaskConical,
-  Sun, Moon, Send, FileText,
+  Sun, Moon, Send, FileText, AlertTriangle,
 } from 'lucide-react'
 
 function getInitialTheme() {
@@ -59,6 +59,8 @@ const NAV_SECTIONS = [
     // Centralized cross-system pages (SA + Scented + MUSE), admin/root only (owner 2026-07-28).
     { path: '/history', label: 'History', icon: History, roles: ['root','admin'] },
     { path: '/activity', label: 'Activity', icon: ScrollText, roles: ['root','admin'] },
+    // Shopify sold it, no SA stock moved (2026-10-13) — the owner keeps data here.
+    { path: '/unmatched-sales', label: 'Unmatched sales', icon: AlertTriangle, roles: ['root','admin'] },
     // The list answers "what happened"; this answers "how much was there, and
     // where did it go" — the question the owner could not get out of the list.
     { path: '/statement', label: 'Statement', icon: FileText, roles: ['root','admin'] },

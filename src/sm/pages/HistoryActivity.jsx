@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { SYSTEM_NAMES } from '../../../shared/business-names.js'
-import { Search, Download, History as HistoryIcon, ScrollText } from 'lucide-react'
+import { Search, Download, History as HistoryIcon, ScrollText, AlertTriangle } from 'lucide-react'
 import axios from 'axios'
 import { useToast } from '../SMModule.jsx'
 import { fmt } from '../utils/date.js'
@@ -38,6 +38,14 @@ const CONFIG = {
     icon: ScrollText, endpoint: 'activity', searchPlaceholder: 'Search entity or action…',
     columns: ['Date', 'System', 'By', 'Action', 'Entity', 'Details'],
     systems: ['ALL', 'SA', SYSTEM_NAMES.SM, 'MUSE', 'Platform'],
+  },
+  // Shopify sold it and no SA stock moved: the SKU matches no product (2026-10-13).
+  // SA only — there is no system to choose. See server/platform/reports.js.
+  unmatched: {
+    title: 'Unmatched sales', sub: 'Sold in Shopify, no stock reduced — the SKU matches no SA product. Items SA does not control are left out.',
+    icon: AlertTriangle, endpoint: 'unmatched-sales', searchPlaceholder: 'Search SKU, order, customer, staff…',
+    columns: ['Date', 'Order', 'SKU', 'Qty', 'Customer', 'Keyed by (order tags)'],
+    systems: [],
   },
 }
 
@@ -97,7 +105,7 @@ export default function HistoryActivity({ kind = 'history' }) {
   // Opened inside a module view (MUSE / Scented / P&O) → scope to that module's own
   // data only; the top-level "History & Activity" tile (REPORTS view) shows all systems.
   const activeModule = typeof localStorage !== 'undefined' ? localStorage.getItem('platform_active_module') : null
-  const scope = SCOPE_BY_MODULE[activeModule]  // undefined => full cross-system
+  const scope = kind === 'unmatched' ? undefined : SCOPE_BY_MODULE[activeModule]  // undefined => full cross-system
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [system, setSystem] = useState(scope || 'ALL')
@@ -208,6 +216,18 @@ export default function HistoryActivity({ kind = 'history' }) {
             </thead>
             <tbody>
               {rows.map(r => (
+                kind === 'unmatched' ? (
+                <tr key={r.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                  <td style={{ padding: '9px 14px', fontSize: 11, color: 'rgba(232,234,242,0.5)', whiteSpace: 'nowrap' }}>{fmt(r.created_at)}</td>
+                  <td style={{ padding: '9px 14px', fontSize: 13, fontWeight: 700, color: '#fbbf24', whiteSpace: 'nowrap' }}>{r.order_number}</td>
+                  <td style={{ padding: '9px 14px', fontSize: 12, fontFamily: 'monospace', color: '#e8eaf2' }}>{r.sku || '(no SKU)'}</td>
+                  <td style={{ padding: '9px 14px', fontSize: 13, fontWeight: 700, color: '#e8eaf2' }}>{r.quantity}</td>
+                  <td style={{ padding: '9px 14px', fontSize: 12, color: 'rgba(232,234,242,0.75)' }}>{r.customer_name || '—'}</td>
+                  <td style={{ padding: '9px 14px', fontSize: 12, color: 'rgba(232,234,242,0.55)' }}>
+                    {(r.tags || '').split(',').map(t => t.trim()).filter(t => t && t.toLowerCase() !== 'staff-order').join(', ') || '—'}
+                  </td>
+                </tr>
+                ) : (
                 <tr key={`${r.system}-${r.id}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
                   onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}
                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
@@ -254,6 +274,7 @@ export default function HistoryActivity({ kind = 'history' }) {
                     </>
                   )}
                 </tr>
+                )
               ))}
             </tbody>
           </table>
