@@ -18,13 +18,37 @@ export const STOCK_STATUS = {
   HEALTHY:  { key: 'HEALTHY',  label: 'In Stock',       color: 'green' },
 };
 
-/** Full status for a SA product row (`currentStock` / `minStockLevel`). */
+/**
+ * The minimum that decides "low". For an oil with a demand signal the server
+ * sends `minStockAuto` — the Demand Planning safety stock — and it wins over
+ * the typed value, which was a guess (owner, 2026-10-14). Everything else keeps
+ * its typed `minStockLevel`.
+ */
+export function effectiveMin(product) {
+  const auto = product?.minStockAuto;
+  return auto != null ? auto : (parseFloat(product?.minStockLevel) || 0);
+}
+
+/** Still to arrive on open purchase orders (`incomingOrders` from /api/products). */
+export function incomingQty(product) {
+  return (product?.incomingOrders || []).reduce((sum, o) =>
+    sum + Math.max(0, (parseFloat(o.quantity) || 0) - (parseFloat(o.quantityReceived) || 0)), 0);
+}
+
+/**
+ * Full status for a SA product row.
+ *
+ * LOW counts what is already ordered (2026-10-14): a product with a purchase
+ * order that brings it back over its minimum is not something to raise again —
+ * the owner assumed it already worked this way, and Demand Planning has since
+ * 14 Sep. Empty and negative stay empty and negative whatever is on the way:
+ * that is what is on the shelf today.
+ */
 export function getStockStatus(product) {
   const stock = parseFloat(product?.currentStock) || 0;
-  const min = parseFloat(product?.minStockLevel) || 0;
   if (stock < 0) return STOCK_STATUS.NEGATIVE;
   if (stock === 0) return STOCK_STATUS.OUT;
-  if (stock < min) return STOCK_STATUS.LOW;
+  if (stock + incomingQty(product) < effectiveMin(product)) return STOCK_STATUS.LOW;
   return STOCK_STATUS.HEALTHY;
 }
 
@@ -42,7 +66,7 @@ export const REORDER_SOON_FACTOR = 1.5;
  */
 export function isReorderSoon(product) {
   if (getStockStatus(product).key !== 'HEALTHY') return false;
-  const stock = parseFloat(product?.currentStock) || 0;
-  const min = parseFloat(product?.minStockLevel) || 0;
+  const stock = (parseFloat(product?.currentStock) || 0) + incomingQty(product);
+  const min = effectiveMin(product);
   return min > 0 && stock <= min * REORDER_SOON_FACTOR;
 }

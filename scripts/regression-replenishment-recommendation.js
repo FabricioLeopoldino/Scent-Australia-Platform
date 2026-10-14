@@ -28,6 +28,8 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import jwt from 'jsonwebtoken';
+import pkg from 'pg';
+import { getStockStatus, isReorderSoon } from '../src/sa/utils/stockStatus.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 3986;
@@ -198,6 +200,66 @@ try {
   // A refill is only taken out of sales where a contract exists to hold it.
   check(oils.every((p) => !(p.technicianDaily > 0) || p.forecastDaily > 0),
     'technician refills are only moved to B2B on oils that carry a contract');
+
+  // 2026-10-14, owner's proposal: safety stock = rate × lead × 1.25 and it
+  // becomes the oil's minimum; the modal answers "how much for N days".
+  console.log('\n9. Safety stock and "order to cover" use the recommendation\'s own rate');
+  // Tolerances: dailyRate is served at 3dp, stock and safety at 1dp.
+  const safetyWrong = oils.filter((p) => Math.abs(
+    p.safetyStockLevel - p.recommendation.dailyRate * p.leadTime * 1.25) > 0.15);
+  check(safetyWrong.length === 0, 'safety stock = rate × lead time × 1.25',
+    safetyWrong.slice(0, 3).map((p) => `${p.productCode}: ${p.safetyStockLevel} vs ${(p.recommendation.dailyRate * p.leadTime * 1.25).toFixed(2)}`).join(' | '));
+  check(oils.every((p) => JSON.stringify((p.coverage || []).map((c) => c.days)) === '[30,60,90,120]'),
+    'every oil carries the four horizons');
+  const coverOf = (rate, d, p) => Math.max(0, rate * d - effectiveOf(p));
+  const allWrong = oils.filter((p) => p.coverage.some((c) => p.recommendation.dailyRate > 0
+    ? Math.abs(c.all - coverOf(p.recommendation.dailyRate, c.days, p)) > 0.25 : c.all !== null));
+  check(allWrong.length === 0, '"all demand" column = rate × days − stock − on order (blank with no rate)',
+    allWrong.slice(0, 3).map((p) => `${p.productCode}: ${JSON.stringify(p.coverage)}`).join(' | '));
+  const sfWrong = oils.filter((p) => p.coverage.some((c) => p.forecastDaily != null
+    ? Math.abs(c.salesforce - coverOf(p.forecastDaily, c.days, p)) > 0.25 : c.salesforce !== null));
+  check(sfWrong.length === 0, '"Salesforce only" column = contract × days − stock − on order (blank with no contract)',
+    sfWrong.slice(0, 3).map((p) => `${p.productCode}: ${JSON.stringify(p.coverage)}`).join(' | '));
+  check(oils.every((p) => p.coverage.every((c, i, a) => i === 0
+    || ((c.all ?? 0) >= (a[i - 1].all ?? 0) && (c.salesforce ?? 0) >= (a[i - 1].salesforce ?? 0)))),
+    'a longer horizon never asks for less');
+
+  console.log('\n10. The automatic minimum reaches the product list, and only for oils with a rate');
+  const list = await (await fetch(`${BASE}/api/sa/products`, { headers: { Authorization: `Bearer ${token}` } })).json();
+  const byId = new Map(list.map((p) => [p.id, p]));
+  const rep = new Map(r.products.map((p) => [p.id, p]));
+  const autoWrong = list.filter((p) => {
+    const d = rep.get(p.id);
+    const expected = d && p.category === 'OILS' && d.unit === 'L' && d.recommendation?.dailyRate > 0
+      ? d.safetyStockLevel * 1000 : null;
+    // Served unrounded in whole mL; the screen's safety stock is rounded to
+    // 0.1 L, so they agree to within 50 mL.
+    return expected === null ? p.minStockAuto !== null
+      : !Number.isInteger(p.minStockAuto) || p.minStockAuto <= 0 || Math.abs(p.minStockAuto - expected) > 50;
+  });
+  check(autoWrong.length === 0, 'minStockAuto = safety stock (whole mL, never 0) on rated oils, null everywhere else',
+    autoWrong.slice(0, 3).map((p) => `${p.productCode} ${p.category}: ${p.minStockAuto}`).join(' | '));
+  check(list.some((p) => p.minStockAuto !== null), 'and some oil actually gets one');
+  const pg = new pkg.Pool({ connectionString: process.env.PLATFORM_DATABASE_URL.replace('-pooler.', '.'),
+    ssl: { rejectUnauthorized: true }, options: '-c search_path=sa,public' });
+  const typed = (await pg.query(`SELECT id, "minStockLevel"::float m FROM products`)).rows;
+  await pg.end();
+  const typedChanged = typed.filter((t) => byId.has(t.id) && Math.abs(byId.get(t.id).minStockLevel - t.m) > 0.001);
+  check(typedChanged.length === 0, 'the typed minimum is served untouched (the form never sees the automatic one)',
+    typedChanged.slice(0, 3).map((t) => t.id).join(', '));
+
+  console.log('\n11. "Low" counts what is on order, and the automatic minimum wins');
+  const S = (p) => getStockStatus(p).key;
+  const po = (q, got = 0) => [{ quantity: q, quantityReceived: got }];
+  check(S({ currentStock: 10, minStockLevel: 5 }) === 'HEALTHY', 'unchanged: no automatic minimum, no order');
+  check(S({ currentStock: 3, minStockLevel: 5 }) === 'LOW', 'unchanged: under the typed minimum is low');
+  check(S({ currentStock: 10, minStockLevel: 5, minStockAuto: 20 }) === 'LOW', 'the automatic minimum overrides the typed one');
+  check(S({ currentStock: 10, minStockAuto: 20, incomingOrders: po(15) }) === 'HEALTHY', 'an order that covers the gap clears "low"');
+  check(S({ currentStock: 10, minStockAuto: 20, incomingOrders: po(15, 10) }) === 'LOW', 'only the part still to arrive counts');
+  check(S({ currentStock: 0, minStockAuto: 20, incomingOrders: po(50) }) === 'OUT', 'empty stays empty whatever is on the way');
+  check(S({ currentStock: -2, minStockAuto: 20, incomingOrders: po(50) }) === 'NEGATIVE', 'negative stays negative');
+  check(isReorderSoon({ currentStock: 25, minStockAuto: 20 }) === true, 'reorder-soon reads the automatic minimum');
+  check(isReorderSoon({ currentStock: 25, minStockAuto: 20, incomingOrders: po(10) }) === false, 'and counts what is on order too');
 
   if (failed) {
     console.log('\n--- server log ---');

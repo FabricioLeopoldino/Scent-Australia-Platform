@@ -3,7 +3,7 @@ import { useSearch } from 'wouter';
 import { useToast } from '../components/Toast';
 import ConfirmModal from '../components/ConfirmModal';
 import { displayStock } from '../utils/unitConversion';
-import { getStockStatus as getSharedStockStatus } from '../utils/stockStatus';
+import { getStockStatus as getSharedStockStatus, effectiveMin } from '../utils/stockStatus';
 import { exportProductsToExcel } from '../utils/excelExport';
 import BinLocationInput from '../components/BinLocationInput';
 import { GlowingEffect } from '../components/GlowingEffect';
@@ -962,7 +962,7 @@ export default function ProductManagement({ user, libraryMode = false }) {
                         </div>
                       )}
                     </td>
-                    <td>{displayStock(product.minStockLevel, product.unit)}</td>
+                    <td>{displayStock(effectiveMin(product), product.unit)}{product.minStockAuto != null && ' (auto)'}</td>
                     <td>
                       {product.incomingOrders && product.incomingOrders.length > 0 ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -1263,6 +1263,12 @@ export default function ProductManagement({ user, libraryMode = false }) {
                     step="any"
                   />
                   <MlHelper value={formData.minStockLevel} unit={formData.unit} />
+                  {editingProduct?.minStockAuto != null && (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                      Automatic minimum in use: {displayStock(editingProduct.minStockAuto, editingProduct.unit)} (Demand Planning safety stock).
+                      This value only applies when the oil has no demand data.
+                    </div>
+                  )}
                 </div>
 
                 {formData.category === 'OILS' && (

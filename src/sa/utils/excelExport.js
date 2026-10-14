@@ -57,6 +57,7 @@ export function exportProductsToExcel(products, allAliases = []) {
     'Stock (Boxes)': product.stockBoxes || '-',
     'Units Per Box': product.unitPerBox || '-',
     'Min Stock Level': product.minStockLevel,
+    'Min Stock (automatic)': product.minStockAuto ?? '-',
     'Supplier': product.supplier || '-',
     'Supplier Code': product.supplier_code || '-',
     'Shopify SKUs': Object.values(product.shopifySkus || {}).filter(Boolean).join(', ') || '-',
@@ -83,6 +84,7 @@ export function exportProductsToExcel(products, allAliases = []) {
     { wch: 12 }, // Stock (Boxes)
     { wch: 12 }, // Units Per Box
     { wch: 15 }, // Min Stock Level
+    { wch: 20 }, // Min Stock (automatic)
     { wch: 20 }, // Supplier
     { wch: 15 }, // Supplier Code
     { wch: 30 }, // Shopify SKUs
@@ -167,6 +169,7 @@ export function exportFullDatabaseToExcel(products, transactions) {
     'Stock (Boxes)': product.stockBoxes || '-',
     'Units Per Box': product.unitPerBox || '-',
     'Min Stock Level': product.minStockLevel,
+    'Min Stock (automatic)': product.minStockAuto ?? '-',
     'Supplier': product.supplier || '-',
     'Supplier Code': product.supplier_code || '-',
     'Shopify SKUs': Object.values(product.shopifySkus || {}).filter(Boolean).join(', ') || '-'
@@ -175,7 +178,7 @@ export function exportFullDatabaseToExcel(products, transactions) {
   wsProducts['!cols'] = [
     { wch: 15 }, { wch: 15 }, { wch: 40 }, { wch: 10 }, { wch: 20 },
     { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 30 }, { wch: 12 },
-    { wch: 8 },  { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 20 },
+    { wch: 8 },  { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 20 }, { wch: 20 },
     { wch: 15 }, { wch: 30 }
   ];
   XLSX.utils.book_append_sheet(wb, wsProducts, 'Products');

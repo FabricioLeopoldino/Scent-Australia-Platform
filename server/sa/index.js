@@ -626,10 +626,12 @@ router.get('/products', async (req, res) => {
     // ✅ Sequential ordering
     query += ' ORDER BY tag';
     
-    const [result, posResult] = await Promise.all([
+    const [result, posResult, autoMins] = await Promise.all([
       pool.query(query, params),
       pool.query(`SELECT id, product_id, order_number, quantity, quantity_received, supplier, status, notes, added_at, added_by, estimated_delivery_date, shopify_missing_since
-                  FROM purchase_orders WHERE status IN ('pending','partial') ORDER BY added_at ASC`)
+                  FROM purchase_orders WHERE status IN ('pending','partial') ORDER BY added_at ASC`),
+      // Only oils carry one; a machines or spares list does not need it.
+      !category || category === 'ALL' || category === 'OILS' ? getAutoMinimums() : null
     ]);
 
     // Build PO map: productId → [POs]
@@ -665,6 +667,9 @@ router.get('/products', async (req, res) => {
       unit: row.unit,
       currentStock: parseFloat(row.currentStock) || 0,
       minStockLevel: parseFloat(row.minStockLevel) || 0,
+      // Decides "low" where present — see getAutoMinimums. minStockLevel stays
+      // the typed value, so the edit form never saves the automatic one over it.
+      minStockAuto: autoMins?.get(row.id) ?? null,
       supplier: row.supplier || '',
       supplier_code: row.supplier_code || '',
       unitPerBox: parseInt(row.unitPerBox) || 1,
@@ -1054,11 +1059,12 @@ router.put('/products/:id', async (req, res) => {
         exclusivitySent, finalExclusivity
       ]
     );
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Product not found' });
     }
-    
+    expireAutoMin(); // supplier or category may have changed the lead time
+
     const row = result.rows[0];
     res.json({
       id: row.id,
@@ -4156,6 +4162,7 @@ router.post('/forecast/import', upload.single('file'), async (req, res) => {
         code: r.product_code, name: r.name, litres: Math.round(Number(r.f) * 10) / 10,
       }));
 
+      expireAutoMin();
       res.json({
         success: true, inserted, skipped,
         importDate: importDate.toISOString(), importedBy,
@@ -4250,6 +4257,7 @@ router.post('/suppliers', async (req, res) => {
        RETURNING *`,
       [name.trim(), parseInt(lead_time), notes || '']
     );
+    expireAutoMin();
     res.json(result.rows[0]);
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
@@ -4272,6 +4280,7 @@ router.put('/suppliers/:id', async (req, res) => {
       [name || null, lead_time ? parseInt(lead_time) : null, notes ?? null, parseInt(id)]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Supplier not found' });
+    expireAutoMin();
     res.json(result.rows[0]);
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
@@ -4284,6 +4293,7 @@ router.delete('/suppliers/:id', async (req, res) => {
   try {
     const result = await pool.query(`DELETE FROM suppliers WHERE id = $1 RETURNING id`, [parseInt(req.params.id)]);
     if (!result.rows.length) return res.status(404).json({ error: 'Supplier not found' });
+    expireAutoMin();
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
@@ -4628,6 +4638,7 @@ router.put('/products/:id/lead-time', async (req, res) => {
       [val, id]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'Product not found' });
+    expireAutoMin();
     res.json({ success: true, id: result.rows[0].id, lead_time: result.rows[0].lead_time });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
@@ -4749,8 +4760,20 @@ router.get('/aliases', async (req, res) => {
 });
 
 // ── GET /api/dashboard/replenishment — Main data endpoint (smart demand calculation)
-router.get('/dashboard/replenishment', async (req, res) => {
-  try {
+// Safety stock = what is used while an order travels, plus 25% (owner,
+// 2026-10-14). It was 1.5 and only ever displayed; it now IS the minimum stock
+// of every oil with a demand signal, so it was chosen on purpose: the rate
+// rests on a Salesforce contract that runs about twice what leaves the
+// warehouse, so the margin on top can be small. 25% of the lead time is also
+// how late the supplier can be — FIA at 21 days, about five.
+const SAFETY_STOCK_FACTOR = 1.25;
+// "Order to cover" on the modal: the horizons the manager asks in.
+const COVER_HORIZONS = [30, 60, 90, 120];
+
+// The whole Demand Planning calculation. A function rather than the route body
+// so the automatic minimum (getAutoMinimums, below) reads the safety stock from
+// the very same arithmetic the screen shows — two copies of it would drift.
+async function buildReplenishment() {
     // All date calculations use Australian/Sydney timezone directly in SQL
 
     const [productsResult, salesByDayResult, forecastResult, lastForecastResult,
@@ -4971,6 +4994,8 @@ router.get('/dashboard/replenishment', async (req, res) => {
     // there for why. Unchanged arithmetic; the backtest imports the same function.
 
     // ── Build final product data
+    // productId → automatic minimum in mL, unrounded (see getAutoMinimums).
+    const autoMinMl = new Map();
     const data = productsResult.rows.map(p => {
       const realStock  = parseFloat(p.currentStock) || 0;
       const leadTime   = Math.max(1, parseInt(p.lead_time) || 30); // never 0 or negative
@@ -5033,9 +5058,6 @@ router.get('/dashboard/replenishment', async (req, res) => {
       const daysOfStockActual    = daysExpected;
       const projectedDaysOfStock = daysConservative;
       const gap                  = daysConservative - daysExpected;
-
-      // Safety stock = expected × lead time × 1.5
-      const safetyStockLevel = expected * leadTime * 1.5;
 
       const minStockLevel  = parseFloat(p.minStockLevel) || 0;
       const incomingStock  = poIncomingMap[p.id] || 0;
@@ -5123,6 +5145,14 @@ router.get('/dashboard/replenishment', async (req, res) => {
       const recommendedRaw = correctedDaily > 0
         ? Math.max(0, (correctedDaily * (leadTime + ORDER_BUFFER_DAYS)) - effectiveStock)
         : 0;
+
+      // On the same rate the recommendation acts on, so the minimum, the badge
+      // and the order cannot each assume a different consumption.
+      const safetyStockLevel = correctedDaily * leadTime * SAFETY_STOCK_FACTOR;
+      // Oils only, by the owner's scope; the stored unit, not the display one.
+      if (p.category === 'OILS' && p.unit === 'mL' && correctedDaily > 0) {
+        autoMinMl.set(p.id, Math.round(safetyStockLevel));
+      }
 
       // What the number rests on, so it can be argued with. The September
       // labels compared the two streams ("sales above contract"), which only
@@ -5230,6 +5260,17 @@ router.get('/dashboard/replenishment', async (req, res) => {
         daysConservative:    daysConservative >= 9999 ? 9999 : r1(daysConservative),
         daysExpected:        daysExpected     >= 9999 ? 9999 : r1(daysExpected),
         daysOptimistic:      daysOptimistic   >= 9999 ? 9999 : r1(daysOptimistic),
+        // ── "How much for N days?" — the manager's own question, answered on
+        // the screen instead of by the owner (2026-10-14). From TODAY, minus
+        // the shelf and what is already on order; lead time not added, and the
+        // modal says so. Two columns because the manager asks "according to
+        // Salesforce", and on an oil with customer sales that is not the whole
+        // demand: the contract alone, and the rate the recommendation uses.
+        coverage: COVER_HORIZONS.map(days => ({
+          days,
+          salesforce: forecastDaily != null ? r1(Math.max(0, forecastDaily * days - effectiveStock) / R) : null,
+          all:        correctedDaily > 0    ? r1(Math.max(0, correctedDaily * days - effectiveStock) / R) : null,
+        })),
         // ── Order quantities
         suggestedOrder:      r0(suggestedOrderRaw / R),   // based on expected
         safeOrder:           r0(safeOrderRaw / R),        // based on conservative
@@ -5295,7 +5336,8 @@ router.get('/dashboard/replenishment', async (req, res) => {
       return ca - cb;
     });
 
-    res.json({
+    return {
+      autoMinMl,
       products: data,
       meta: {
         totalProducts:     data.length,
@@ -5323,7 +5365,68 @@ router.get('/dashboard/replenishment', async (req, res) => {
         suppliers:         suppliersResult.rows,
         calculatedAt:      new Date().toISOString()
       }
-    });
+    };
+}
+
+// ── Automatic minimum stock ─────────────────────────────────────────────────
+//
+// WHY (2026-10-14). The typed minimum was a guess — the owner: "ninguém
+// atualiza o mínimo, quem faz sou eu e boto valores que acho que talvez façam
+// sentido, porém sem dados nenhum." 189 oils carried one, most of them 5 L:
+// Milagrito 5 L against 132 L used while an order travels. For an oil with a
+// demand signal the minimum is now the safety stock above; without one
+// (machines, spares, a new oil) the typed minimum still applies, untouched.
+//
+// Read-only: nothing is written to products. The typed value stays in its
+// column and comes back the day an oil loses its signal.
+//
+// Cached, because Products is opened all day and the calculation costs about a
+// second and ten queries; the rate moves by the day, not the minute. An
+// expired map is served while a fresh one is worked out behind it, so only the
+// very first request after a boot waits — and a product list never queues ten
+// extra queries behind itself on a ten-connection pool (code review). A failed
+// run keeps the last good map (or none: every oil falls back to its typed
+// minimum) and is not retried for a minute, rather than failing the list or
+// hammering a database that is already struggling.
+const AUTO_MIN_TTL_MS = 15 * 60 * 1000;
+const AUTO_MIN_RETRY_MS = 60 * 1000;
+let autoMin = { at: 0, map: null, pending: null, failedAt: 0 };
+
+function rememberAutoMin(map) {
+  autoMin = { ...autoMin, at: Date.now(), map, failedAt: 0 };
+  return map;
+}
+
+function refreshAutoMin() {
+  autoMin.pending ||= buildReplenishment()
+    .then(({ autoMinMl }) => rememberAutoMin(autoMinMl))
+    .catch((e) => {
+      console.error('Automatic minimum failed — last known minimums in use:', e.message);
+      autoMin.failedAt = Date.now();
+      return autoMin.map;
+    })
+    .finally(() => { autoMin.pending = null; });
+  return autoMin.pending;
+}
+
+function getAutoMinimums() {
+  const fresh = Date.now() - autoMin.at < AUTO_MIN_TTL_MS;
+  const backingOff = Date.now() - autoMin.failedAt < AUTO_MIN_RETRY_MS;
+  if (!fresh && !backingOff) {
+    const run = refreshAutoMin();
+    if (!autoMin.map) return run; // nothing to serve yet: the first one waits
+  }
+  return Promise.resolve(autoMin.map);
+}
+
+// A lead time or a forecast just changed: the next read recalculates.
+const expireAutoMin = () => { autoMin.at = 0; };
+
+router.get('/dashboard/replenishment', async (req, res) => {
+  try {
+    const { autoMinMl, ...payload } = await buildReplenishment();
+    rememberAutoMin(autoMinMl);
+    res.json(payload);
   } catch (error) {
     console.error('Replenishment dashboard error:', error);
     res.status(500).json({ error: 'Internal server error' });

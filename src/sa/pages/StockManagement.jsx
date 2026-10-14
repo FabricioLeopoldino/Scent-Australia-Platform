@@ -6,7 +6,7 @@ import { GlowingEffect } from '../components/GlowingEffect';
 import MlHelper from '../components/MlHelper';
 import { LiquidMetalButton } from '../components/LiquidMetalButton';
 import ConfirmModal from '../components/ConfirmModal';
-import { isLowStock } from '../utils/stockStatus';
+import { isLowStock, effectiveMin } from '../utils/stockStatus';
 import OperatorPicker from '../components/OperatorPicker';
 import { reasonsFor } from '../../../shared/stock-reasons.js';
 
@@ -348,7 +348,7 @@ export default function StockManagement({ user }) {
                         </div>
                       )}
                     </td>
-                    <td>{displayStock(product.minStockLevel, product.unit)}</td>
+                    <td>{displayStock(effectiveMin(product), product.unit)}{product.minStockAuto != null && ' (auto)'}</td>
                     <td>
                       {(product.status || 'active') === 'inactive' ? (
                         <span style={{ fontSize: 11, padding: '2px 8px', background: 'rgba(148,163,184,0.12)', border: '1px solid rgba(148,163,184,0.3)', borderRadius: 4, color: '#94a3b8', fontWeight: 700 }}>INACTIVE</span>
@@ -447,7 +447,7 @@ export default function StockManagement({ user }) {
                   </div>
                   <div>
                     <div style={{ fontSize: '12px', color: 'rgba(232,234,242,0.45)', marginBottom: '4px' }}>Min Level</div>
-                    <div style={{ fontWeight: '600' }}>{displayStock(selectedProduct.minStockLevel, selectedProduct.unit)}</div>
+                    <div style={{ fontWeight: '600' }}>{displayStock(effectiveMin(selectedProduct), selectedProduct.unit)}{selectedProduct.minStockAuto != null && ' (auto)'}</div>
                   </div>
                 </div>
               </div>

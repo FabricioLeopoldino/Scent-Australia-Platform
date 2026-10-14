@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { exportToShopifyCSV, exportLowStockToShopifyCSV } from '../utils/shopifyExport';
 import { displayStock, displayUnit } from '../utils/unitConversion';
-import { isLowStock, getStockStatus as sharedStockStatus, isReorderSoon, REORDER_SOON_FACTOR } from '../utils/stockStatus';
+import { isLowStock, getStockStatus as sharedStockStatus, isReorderSoon, REORDER_SOON_FACTOR, effectiveMin } from '../utils/stockStatus';
 import { GlowingEffect } from '../components/GlowingEffect';
 
 export default function Dashboard({ user }) {
@@ -119,14 +119,16 @@ export default function Dashboard({ user }) {
     saveWatchlist(watchlist.filter(id => id !== productId));
   };
 
-  const getStockPercentage = (current, min) => min === 0 ? 100 : Math.round((current / (min * 2)) * 100);
-
-  const getStockStatus = (current, min) => {
-    if (current <= 0) return { label: 'Out of Stock', class: 'red', badge: 'badge-danger' };
-    const percentage = getStockPercentage(current, min);
-    if (percentage < 30) return { label: 'Low Stock', class: 'yellow', badge: 'badge-warning' };
-    if (percentage < 60) return { label: 'Reorder Soon', class: 'yellow', badge: 'badge-warning' };
-    return { label: 'Healthy', class: 'green', badge: 'badge-success' };
+  // The watchlist badge, on the SHARED rule that also decides this page's
+  // low-stock list and counts (2026-10-14). It had its own percentage rule that
+  // ignored purchase orders and the automatic minimum, so one product could be
+  // left out of the low-stock count and badged "Low Stock" at once (code review).
+  const getStockStatus = (product) => {
+    const s = sharedStockStatus(product);
+    if (s.key === 'NEGATIVE' || s.key === 'OUT') return { label: s.label, badge: 'badge-danger' };
+    if (s.key === 'LOW') return { label: 'Low Stock', badge: 'badge-warning' };
+    if (isReorderSoon(product)) return { label: 'Reorder Soon', badge: 'badge-warning' };
+    return { label: 'Healthy', badge: 'badge-success' };
   };
 
   const calculateTotalOilVolume = () =>
@@ -611,7 +613,7 @@ export default function Dashboard({ user }) {
         {watchlistProducts.length > 0 ? (
           <div style={{ display: 'grid', gap: 10 }}>
             {watchlistProducts.map(product => {
-              const status = getStockStatus(product.currentStock, product.minStockLevel);
+              const status = getStockStatus(product);
               const hasIncoming = product.incomingOrders && product.incomingOrders.length > 0;
               return (
                 <div key={product.id} style={{
@@ -632,7 +634,7 @@ export default function Dashboard({ user }) {
                       </div>
                       <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--text-secondary)', flexWrap: 'wrap' }}>
                         <span>Current: <strong style={{ color: 'var(--text-primary)' }}>{displayStock(product.currentStock, product.unit)}</strong></span>
-                        <span>Min: <strong style={{ color: 'var(--text-primary)' }}>{displayStock(product.minStockLevel, product.unit)}</strong></span>
+                        <span>Min: <strong style={{ color: 'var(--text-primary)' }}>{displayStock(effectiveMin(product), product.unit)}</strong>{product.minStockAuto != null && ' (auto)'}</span>
                         <span>Supplier: <strong style={{ color: 'var(--text-primary)' }}>{product.supplier || '—'}</strong></span>
                       </div>
                       {hasIncoming && (
@@ -772,7 +774,6 @@ export default function Dashboard({ user }) {
           </h3>
           <div style={{ display: 'grid', gap: 8 }}>
             {lowStockProducts.slice(0, 10).map(product => {
-              const status = getStockStatus(product.currentStock, product.minStockLevel);
               return (
                 <div key={product.id} style={{
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -787,7 +788,7 @@ export default function Dashboard({ user }) {
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontWeight: 700, color: '#f87171', fontSize: 14 }}>{displayStock(product.currentStock, product.unit)}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Min: {displayStock(product.minStockLevel, product.unit)}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Min: {displayStock(effectiveMin(product), product.unit)}{product.minStockAuto != null && ' (auto)'}</div>
                   </div>
                 </div>
               );

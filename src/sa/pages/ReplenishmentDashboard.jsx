@@ -264,7 +264,9 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
             <div style={{ display: 'flex', gap: 8 }}>
               <span style={{ background: statusColor, color: 'white', fontSize: 11, fontWeight: 700, padding: '2px 10px', borderRadius: 20 }}>{product.safetyStatus}</span>
               <span style={{ background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 11, padding: '2px 10px', borderRadius: 20 }}>{product.supplier || 'No supplier'}</span>
-              <span style={{ background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 11, padding: '2px 10px', borderRadius: 20 }}>Lead time: {product.leadTime}d</span>
+              <span style={{ background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 11, padding: '2px 10px', borderRadius: 20 }}>
+                Lead time: {product.leadTime}d{product.leadTimeSource === 'fallback' && ' (default, no supplier)'}
+              </span>
             </div>
           </div>
           <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: 8, color: 'white', fontSize: 20, cursor: 'pointer', width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
@@ -273,16 +275,18 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
         <div style={{ padding: 24 }}>
 
           {/* Key metrics row */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
+          {/* Order (Expected) and Order (Safe) left this row on 2026-10-14: the
+              recommendation below is the order, and "Order to cover" answers
+              the manager's own question — how much for 30/60/90/120 days. Order
+              Safe was a worst-case ceiling, never advice. */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
             {[
               { label: 'Real Stock', value: `${product.realStock} ${product.unit}`, color: product.realStock <= 0 ? '#dc2626' : '#16a34a' },
-              { label: 'Safety Stock', value: `${product.safetyStockLevel} ${product.unit}`, color: '#d97706' },
-              ...(product.safetyStatus !== 'Safe' && product.suggestedOrder > 0 ? [
-                { label: 'Order (Expected)', value: `${product.suggestedOrder.toLocaleString()} ${product.unit}`, color: '#4ade80' },
-                { label: 'Order (Safe)', value: `${product.safeOrder?.toLocaleString() || '—'} ${product.unit}`, color: '#fbbf24' },
-              ] : []),
+              { label: 'Safety Stock', value: `${product.safetyStockLevel} ${product.unit}`, color: '#d97706',
+                title: 'Used per day × lead time × 1.25. For an oil with demand data this is also its minimum stock.' },
+              { label: 'On Order', value: `${product.incomingStock} ${product.unit}`, color: '#93c5fd' },
             ].map(m => (
-              <div key={m.label} style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 10, padding: '12px 14px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.1)' }}>
+              <div key={m.label} title={m.title} style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 10, padding: '12px 14px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.1)' }}>
                 <div style={{ fontSize: 10, color: 'rgba(232,234,242,0.45)', fontWeight: 600, marginBottom: 4, textTransform: 'uppercase' }}>{m.label}</div>
                 <div style={{ fontSize: 18, fontWeight: 800, color: m.color }}>{m.value}</div>
               </div>
@@ -295,9 +299,9 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
           <RecommendationPanel
             rec={product.recommendation}
             unit={product.unit || 'L'}
-            safeOrder={product.safeOrder}
-            suggestedOrder={product.suggestedOrder}
           />
+
+          <CoverageTable product={product} />
 
           {/* Demand streams breakdown */}
           <div style={{ marginTop: 16, marginBottom: 16, padding: '14px 16px', background: 'rgba(255,255,255,0.04)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)' }}>
@@ -1293,7 +1297,51 @@ function RecommendationCell({ rec, unit }) {
 
 // The same recommendation, with its reasoning shown rather than hidden in a
 // tooltip — the modal is where somebody goes to decide, not to scan.
-function RecommendationPanel({ rec, unit, safeOrder, suggestedOrder }) {
+// "How much do we need for N days?" — asked by the manager often enough that
+// the owner wanted it on the screen (2026-10-14). Both columns, labelled: she
+// asks "according to Salesforce", and on an oil that also sells to customers
+// the contract alone is not the whole demand.
+function CoverageTable({ product }) {
+  const rows = product.coverage || [];
+  if (rows.length === 0) return null;
+  const unit = product.unit || 'L';
+  const show = (v) => v == null ? '—' : `${v.toLocaleString()} ${unit}`;
+  // Named after what the rate actually rests on: an oil with no contract must
+  // not read "Salesforce + …" beside a blank Salesforce column (code review).
+  const allLabel = !product.hasForecast ? 'Customer sales'
+    : product.b2bSource === 'technicians' ? 'Technician refills + customer sales'
+    : 'Salesforce + customer sales';
+  const th = { padding: '6px 10px', fontSize: 10.5, fontWeight: 700, color: '#94a3b8', textAlign: 'right' };
+  const td = { padding: '6px 10px', fontSize: 13, fontWeight: 700, color: '#e8eaf2', textAlign: 'right' };
+  return (
+    <div style={{ marginTop: 16, padding: '14px 16px', background: 'rgba(255,255,255,0.04)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)' }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#cbd5e1', marginBottom: 4 }}>Order to cover (from today)</div>
+      <div style={{ fontSize: 11, color: 'rgba(232,234,242,0.5)', marginBottom: 8 }}>
+        Days counted from today, minus real stock and what is already on order. Delivery time is not added.
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={{ ...th, textAlign: 'left' }}>Cover</th>
+            <th style={th}>Salesforce only</th>
+            <th style={th}>{allLabel}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.days} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+              <td style={{ ...td, textAlign: 'left', fontWeight: 600, color: '#cbd5e1' }}>{r.days} days</td>
+              <td style={td}>{show(r.salesforce)}</td>
+              <td style={td}>{show(r.all)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function RecommendationPanel({ rec, unit }) {
   if (!rec) return null;
   const CONF = {
     high: 'solid — 25+ days of sales history',
@@ -1331,16 +1379,6 @@ function RecommendationPanel({ rec, unit, safeOrder, suggestedOrder }) {
         </div>
       )}
 
-      {/* Why this differs from the two columns beside it. Stated, not implied —
-          somebody who has been reading Order Safe for months deserves to know
-          what changed and by how much, rather than finding a smaller number. */}
-      {rec.action === 'order' && rec.vsSafeOrder > 0 && (
-        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(59,130,246,0.25)', fontSize: 11.5, color: 'rgba(232,234,242,0.6)', lineHeight: 1.6 }}>
-          <strong>Order Safe says {safeOrder?.toLocaleString()} {unit}</strong> — {rec.vsSafeOrder.toLocaleString()} {unit} more.
-          That column assumes the busiest day of the month repeats every day for
-          the whole period — a worst case, not a forecast.
-        </div>
-      )}
     </div>
   );
 }
