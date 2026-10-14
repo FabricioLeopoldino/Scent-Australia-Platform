@@ -702,6 +702,8 @@ export default function ReplenishmentDashboard({ user }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filterStatus, setFilterStatus] = useState('ALL');
+  // Only the oils in the latest Salesforce report (owner, 2026-10-15).
+  const [sfOnly, setSfOnly] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [productDetail, setProductDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -803,6 +805,7 @@ export default function ReplenishmentDashboard({ user }) {
       const filterInfo = [
         filterStatus !== 'ALL' ? `Status: ${filterStatus}` : null,
         search ? `Search: "${search}"` : null,
+        sfOnly ? 'Salesforce only' : null,
       ].filter(Boolean).join(' | ') || 'All Products';
 
       const wb = XLSX.utils.book_new();
@@ -881,12 +884,13 @@ export default function ReplenishmentDashboard({ user }) {
 
   // Oils only — Scent Machines have their own dedicated page/calculation
   const oilsOnly = (data?.products || []).filter(p => p.category === 'OILS');
+  const sfCount = oilsOnly.filter(p => p.hasForecast).length;
 
   const filtered = oilsOnly.filter(p => {
     const matchStatus = filterStatus === 'ALL' || p.safetyStatus === filterStatus;
     const q = search.toLowerCase();
     const matchSearch = !q || p.productCode?.toLowerCase().includes(q) || p.name?.toLowerCase().includes(q) || p.supplier?.toLowerCase().includes(q);
-    return matchStatus && matchSearch;
+    return matchStatus && matchSearch && (!sfOnly || p.hasForecast);
   });
 
   const thStyle = { padding: '10px 12px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: '#94a3b8', background: 'rgba(14,14,26,0.95)', borderBottom: '2px solid rgba(255,255,255,0.08)', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 10 };
@@ -1020,6 +1024,17 @@ export default function ReplenishmentDashboard({ user }) {
         >
           📊 Export Report (.xlsx)
         </button>
+        <button
+          onClick={() => setSfOnly(v => !v)}
+          title="Show only the oils in the latest Salesforce forecast report"
+          style={{ padding: '9px 18px', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6,
+            background: sfOnly ? 'rgba(0,161,224,0.18)' : 'rgba(255,255,255,0.04)',
+            color: sfOnly ? '#7dd3fc' : '#cbd5e1',
+            border: `1px solid ${sfOnly ? 'rgba(0,161,224,0.55)' : 'rgba(255,255,255,0.15)'}` }}
+        >
+          <img src="/logos/salesforce.svg" alt="" style={{ width: 18, height: 18 }} />
+          Salesforce only ({sfCount})
+        </button>
         {/* While it runs: say which step, not just that something is happening. */}
         {importing && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 500,
@@ -1052,7 +1067,7 @@ export default function ReplenishmentDashboard({ user }) {
         <input type="text" placeholder="Search product, code or supplier..." value={search} onChange={e => setSearch(e.target.value)}
           style={{ border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, padding: '7px 14px', fontSize: 13, width: 280, background: 'rgba(255,255,255,0.06)', color: '#e2e8f0' }} />
 
-        <span style={{ fontSize: 12, color: 'rgba(232,234,242,0.45)' }}>Showing {filtered.length} of {(data?.products || []).length} products</span>
+        <span style={{ fontSize: 12, color: 'rgba(232,234,242,0.45)' }}>Showing {filtered.length} of {(data?.products || []).length} products{sfOnly && ' · Salesforce only'}</span>
       </div>
 
       {/* ── Legend ── */}
@@ -1073,6 +1088,7 @@ export default function ReplenishmentDashboard({ user }) {
           <thead>
             <tr>
               <th style={thStyle}>Product Code</th>
+              <th style={{ ...thStyle, padding: '10px 4px' }}><Tooltip text="In the latest Salesforce forecast report. Blank = not in the report.">SF</Tooltip></th>
               <th style={thStyle}>Product Name</th>
               <th style={{ ...thStyle, textAlign: 'right' }}><Tooltip text="Current physical stock. Oils in L, machines/materials in units.">Real Stock</Tooltip></th>
               <th style={{ ...thStyle, textAlign: 'right', color: '#60a5fa' }}><Tooltip text="Average daily customer sales over the last 30 days. Technician refills of contracted oils are left out — they are already inside B2B.">Retail/day</Tooltip></th>
@@ -1095,11 +1111,18 @@ export default function ReplenishmentDashboard({ user }) {
           </thead>
           <tbody>
             {filtered.length === 0 ? (
-              <tr><td colSpan={16} style={{ textAlign: 'center', padding: 48, color: '#94a3b8' }}>No products found for the selected filters.</td></tr>
+              <tr><td colSpan={17} style={{ textAlign: 'center', padding: 48, color: '#94a3b8' }}>No products found for the selected filters.</td></tr>
             ) : (
               filtered.map(p => (
                 <tr key={p.id} style={{ background: rowBg(p), borderLeft: rowBorderLeft(p) }}>
                   <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 11, color: 'rgba(232,234,242,0.45)' }}>{p.productCode}</td>
+                  <td style={{ ...tdStyle, padding: '10px 4px' }}>
+                    {p.hasForecast && (
+                      <img src="/logos/salesforce.svg" alt="In the Salesforce report"
+                        title={`Salesforce report: ${p.forecast120Days} L over 120 days`}
+                        style={{ width: 18, height: 18, display: 'block' }} />
+                    )}
+                  </td>
                   <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     <span onClick={() => openProductDetail(p)} style={{ cursor: 'pointer', color: '#93c5fd', textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: 3 }} title="Click to see consumption detail">
                       {p.name}
