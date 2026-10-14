@@ -30,6 +30,7 @@ import { dirname, join } from 'node:path';
 import jwt from 'jsonwebtoken';
 import pkg from 'pg';
 import { getStockStatus, isReorderSoon } from '../src/sa/utils/stockStatus.js';
+import { shelfOutlook } from '../src/sa/utils/shelfOutlook.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 3986;
@@ -260,6 +261,26 @@ try {
   check(S({ currentStock: -2, minStockAuto: 20, incomingOrders: po(50) }) === 'NEGATIVE', 'negative stays negative');
   check(isReorderSoon({ currentStock: 25, minStockAuto: 20 }) === true, 'reorder-soon reads the automatic minimum');
   check(isReorderSoon({ currentStock: 25, minStockAuto: 20, incomingOrders: po(10) }) === false, 'and counts what is on order too');
+
+  // 2026-10-15: the modal's alarm reads each open order's own date and quantity.
+  console.log('\n12. The run-out alarm follows the orders already raised');
+  const ordersWrong = oils.filter((p) => !Array.isArray(p.openOrders)
+    || p.openOrders.reduce((s, o) => s + o.qty, 0) + 0.1 < p.incomingStock
+    || p.openOrders.some((o) => !(o.qty > 0) || (o.date == null) !== (o.days == null)));
+  check(ordersWrong.length === 0, 'every oil lists its open orders, together at least On Order, each with a date and days or neither',
+    ordersWrong.slice(0, 3).map((p) => `${p.productCode}: ${JSON.stringify(p.openOrders)} vs ${p.incomingStock}`).join(' | '));
+  const O = (qty, days) => ({ qty, days, date: days == null ? null : 'x' });
+  const milagrito = shelfOutlook(100, 5.157, [O(200, 13)]);
+  check(milagrito.next === null && milagrito.firstArrival?.days === 13, 'Milagrito: 200 L due in 13 days lands before 100 L runs out (~19)');
+  const dream = shelfOutlook(21.6, 5.104, [O(200, 13)]);
+  check(dream.next?.days === 13 && Math.abs(dream.gapDays - (13 - 21.6 / 5.104)) < 0.01, 'Dream: runs out at ~4 days, nine before its order');
+  const small = shelfOutlook(10, 1, [O(5, 3), O(200, 60)]);
+  check(small.next?.qty === 200 && Math.abs(small.runsOutIn - 15) < 0.001, 'a small early order does not vouch for the large late one');
+  const undated = shelfOutlook(10, 1, [O(150, null), O(10, 5)]);
+  check(undated.undatedQty === 150 && undated.firstArrival.qty === 10, 'an order with no date is named, not assumed to arrive');
+  const late = shelfOutlook(10, 1, [O(50, -3)]);
+  check(late.overdue.length === 1 && late.firstArrival === null && late.next === null, 'an overdue order is named, not counted');
+  check(shelfOutlook(6, 1, [O(50, 6)]).next !== null, 'delivered the day it runs out still leaves a day with an empty shelf');
 
   if (failed) {
     console.log('\n--- server log ---');

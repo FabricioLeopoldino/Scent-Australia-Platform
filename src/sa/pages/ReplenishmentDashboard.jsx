@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useToast } from '../components/Toast';
 import ConfirmModal from '../components/ConfirmModal';
 import * as XLSX from 'xlsx';
+import { shelfOutlook } from '../utils/shelfOutlook';
 import { GlowingEffect } from '../components/GlowingEffect';
 
 // ─── Tooltip ─────────────────────────────────────────────────────────────────
@@ -386,25 +387,55 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
               <span style={{ color: 'rgba(232,234,242,0.45)' }}>▲ Lead time ({product.leadTime}d)</span>
               <span>90 days (Safe)</span>
             </div>
-            {daysStock < product.leadTime && daysStock > 0 && !incomingCovers && (
-              <div style={{ marginTop: 8, padding: '6px 12px', background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 8, fontSize: 12, color: '#f87171', fontWeight: 600 }}>
-                ⚠️ Stock will run out before order arrives — reorder immediately!
-              </div>
-            )}
+            {/* The alarm reads the date of the order already raised, not only
+                the supplier's lead time (owner, 2026-10-15). Milagrito: 100 L
+                lasting ~19 days, 200 L due in 13 — the old line said "reorder
+                immediately" about a shelf that is refilled six days early. */}
             {/* "Reorder immediately" is wrong when a reorder is already on the
                 way. FRAG_0072 holds 0.7 L on the shelf and 20 L inbound: the
-                bar reads 8.4 days and fired the alarm, while the recommendation
+                bar read 8.4 days and fired the alarm while the recommendation
                 correctly said no order was needed. The bar still shows what is
-                physically there, which is honest — the alarm is what had to
-                stop shouting. Found by the regression written for the first
-                contradiction, on the same afternoon. */}
-            {daysStock < product.leadTime && daysStock > 0 && incomingCovers && (
-              <div style={{ marginTop: 8, padding: '6px 12px', background: 'rgba(37,99,235,0.1)', border: '1px solid rgba(37,99,235,0.3)', borderRadius: 8, fontSize: 12, color: '#93c5fd', fontWeight: 600 }}>
-                Low on the shelf{product.incomingStock > 0
-                  ? `, but ${product.incomingStock.toLocaleString()} ${product.unit} is already on its way — that covers ${Math.round((product.realStock + product.incomingStock) / recRate)} days`
-                  : ' at today\'s rate, but the corrected demand still covers the lead time'}. No new order needed.
-              </div>
-            )}
+                physically there — the alarm is what had to stop shouting.
+                Both branches read the order dates since 2026-10-15: "on its
+                way" said nothing about a PO due after the shelf is empty. */}
+            {daysStock < product.leadTime && daysStock > 0 && recRate > 0 && (() => {
+              const o = shelfOutlook(product.realStock, recRate, product.openOrders);
+              const unit = product.unit || 'L';
+              const q = (v) => `${(Math.round(v * 10) / 10).toLocaleString('en-AU')} ${unit}`;
+              const day = (iso) => {
+                const [y, m, d] = iso.split('-').map(Number);
+                return new Date(y, m - 1, d).toLocaleDateString('en-AU', { day: '2-digit', month: 'short' });
+              };
+              const red = { background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', color: '#f87171' };
+              const blue = { background: 'rgba(37,99,235,0.1)', border: '1px solid rgba(37,99,235,0.3)', color: '#93c5fd' };
+              const amber = { background: 'rgba(217,119,6,0.12)', border: '1px solid rgba(217,119,6,0.35)', color: '#fbbf24' };
+              const box = (c, text, key) => (
+                <div key={key} style={{ marginTop: 8, padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, ...c }}>{text}</div>
+              );
+              const days = (n) => n < 1 ? 'less than a day' : n < 2 ? '1 day' : `${Math.floor(n)} days`;
+              const notes = [
+                ...(o.undatedQty > 0 ? [`${q(o.undatedQty)} on order has no delivery date — confirm when it arrives.`] : []),
+                ...o.overdue.map((od) => `${q(od.qty)} due ${day(od.date)} has not arrived — check with the supplier.`),
+              ];
+              let main;
+              if (o.next) {
+                const gap = Math.max(1, Math.ceil(o.gapDays));
+                main = o.next === o.firstArrival
+                  ? `⚠️ The shelf runs out in about ${days(o.runsOutIn)}, but the next order (${q(o.next.qty)}) is due ${day(o.next.date)}, ${o.next.days === 0 ? 'today' : `in ${days(o.next.days)}`} — about ${days(gap)} without stock. Chase the supplier or order more.`
+                  : `⚠️ Earlier orders refill the shelf, but it runs out again in about ${days(o.runsOutIn)}, before ${q(o.next.qty)} due ${day(o.next.date)} — about ${days(gap)} without stock.`;
+                main = box(red, main, 'main');
+              } else if (incomingCovers) {
+                main = box(blue, `Low on the shelf, but ${q(product.incomingStock)} is already on its way — that covers ${days((product.realStock + product.incomingStock) / recRate)}. No new order needed.`, 'main');
+              } else if (o.firstArrival) {
+                const when = o.firstArrival.days === 0 ? 'today' : `in ${days(o.firstArrival.days)}`;
+                main = box(blue, `Low on the shelf (about ${days(daysStock)}), but ${q(o.firstArrival.qty)} on order is due ${day(o.firstArrival.date)}, ${when}, before it runs out. The recommendation above is for the period after.`, 'main');
+              } else if (notes.length) {
+                main = box(amber, `⚠️ The shelf lasts about ${days(daysStock)} and no order has a delivery date ahead.`, 'main');
+              } else {
+                main = box(red, '⚠️ Stock will run out before an order could arrive — reorder immediately!', 'main');
+              }
+              return <>{main}{notes.map((n, i) => box(amber, n, i))}</>;
+            })()}
             {daysStock <= 0 && (
               <div style={{ marginTop: 8, padding: '6px 12px', background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 8, fontSize: 12, color: '#f87171', fontWeight: 600 }}>
                 🚨 Stock is in deficit — already oversold!

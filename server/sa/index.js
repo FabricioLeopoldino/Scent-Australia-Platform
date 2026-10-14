@@ -4884,11 +4884,19 @@ async function buildReplenishment() {
         ORDER BY p.f DESC
       `),
       // Pending purchase orders: quantity still on the way per product
+      // One row per order, each with what is still to arrive and its own
+      // delivery date, so the modal can tell "runs out before anything
+      // arrives" from "an order lands first" (Milagrito, 2026-10-15: 200 L due
+      // 28 Oct, shelf lasting to ~3 Nov, and the modal said reorder
+      // immediately). Per order, not MIN(date) beside SUM(qty): that told a
+      // 5 L order's date for a 205 L total (code review). Dates as text, days
+      // counted in Sydney time.
       pool.query(`
-        SELECT product_id, SUM(quantity - COALESCE(quantity_received, 0)) AS pending_qty
+        SELECT product_id, quantity - COALESCE(quantity_received, 0) AS pending_qty,
+               estimated_delivery_date::text AS eta,
+               estimated_delivery_date - (NOW() AT TIME ZONE 'Australia/Sydney')::date AS eta_days
         FROM purchase_orders
         WHERE status IN ('pending', 'partial')
-        GROUP BY product_id
       `),
       // What technicians actually drew on contracted oils — the forecast as it
       // really happened. See the B2B stream below.
@@ -4967,8 +4975,16 @@ async function buildReplenishment() {
 
     // ── Pending PO map: productId → pending quantity still on the way
     const poIncomingMap = {};
+    const poOrdersMap = {};
     for (const row of poResult.rows) {
-      poIncomingMap[row.product_id] = parseFloat(row.pending_qty) || 0;
+      const qty = parseFloat(row.pending_qty) || 0;
+      // Summed exactly as before — an over-received order still nets off —
+      // so On Order and everything built on it are unchanged (code review).
+      poIncomingMap[row.product_id] = (poIncomingMap[row.product_id] || 0) + qty;
+      if (qty <= 0) continue;
+      (poOrdersMap[row.product_id] ||= []).push({
+        qty, date: row.eta || null, days: row.eta == null ? null : Number(row.eta_days),
+      });
     }
     // Null on an empty cache: nothing is classified, so nothing is divided.
     const techCoverDays = Number(techCoverResult.rows[0]?.days) || TECH_REFILL_DAYS;
@@ -5240,6 +5256,10 @@ async function buildReplenishment() {
         unit:                isML ? 'L' : (p.unit || 'units'),
         realStock:           r1(realStock / R),
         incomingStock:       r1(incomingStock / R),
+        // Each open order: still to arrive (display unit, unrounded), delivery
+        // date, days away. Not "incomingOrders": /api/products uses that name
+        // for a different shape that utils/stockStatus reads (code review).
+        openOrders:          (poOrdersMap[p.id] || []).map(o => ({ ...o, qty: o.qty / R })),
         safetyStockLevel:    r1(safetyStockLevel / R),
         // ── Demand streams (separated)
         retailDailyAvg:      r3(demand.retailDailyAvg / R),
