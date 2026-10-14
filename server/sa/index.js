@@ -4661,7 +4661,8 @@ router.get('/products/:id/transactions', async (req, res) => {
       WHERE product_id = $1
         AND type = ANY($3)
         ${EXCLUDE_NON_DEMAND}
-        AND (created_at::timestamptz AT TIME ZONE 'Australia/Sydney')::date >= ((NOW() AT TIME ZONE 'Australia/Sydney') - make_interval(days => $2))::date
+        -- ">" not ">=": today and the 29 days before it, the "last 30 days" the modal says.
+        AND (created_at::timestamptz AT TIME ZONE 'Australia/Sydney')::date > ((NOW() AT TIME ZONE 'Australia/Sydney') - make_interval(days => $2))::date
       GROUP BY DATE(created_at::timestamptz AT TIME ZONE 'Australia/Sydney'), type
       ORDER BY date ASC
     `, [id, days, DEMAND_TX_TYPES]);
@@ -4675,7 +4676,7 @@ router.get('/products/:id/transactions', async (req, res) => {
 
     const dailySales = result.rows.map(r => ({
       date: new Date(r.date).toLocaleDateString('en-AU', { day: '2-digit', month: 'short' }),
-      volume_l: parseFloat((parseFloat(r.volume_raw) / R).toFixed(3)),
+      volume_l: parseFloat((parseFloat(r.volume_raw) / R).toFixed(6)), // 6dp: a 2.5 mL MUSE run must survive
       type: r.type === 'shopify_sale' ? 'Shopify'
           : r.type === 'remove' ? 'Manual'
           : r.type === 'muse_production' ? 'MUSE prod.'

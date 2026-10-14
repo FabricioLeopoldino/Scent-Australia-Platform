@@ -211,6 +211,20 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
   // Build bar chart data from daily sales
   const dailySales = detail?.dailySales || [];
   const maxVol = dailySales.length > 0 ? Math.max(...dailySales.map(d => d.volume_l)) : 1;
+  // Small MUSE productions are a few mL: 2.5 mL printed as "0.00 L" read as a
+  // row of nothing (owner, 2026-10-15).
+  const volUnit = product.unit || 'L';
+  const fmtVolume = (v) => volUnit !== 'L' ? `${v.toLocaleString('en-AU')} ${volUnit}`
+    : v < 0.1 ? `${(Math.round(v * 10000) / 10).toLocaleString('en-AU')} mL`
+    : `${v.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} L`;
+  // The list is split by movement type; a day is not. One total per date, and
+  // "high volume" against the average SALE day — a calendar average full of
+  // zero days flagged every ordinary sale on a sporadic oil (code review).
+  const dayTotals = new Map();
+  for (const d of dailySales) dayTotals.set(d.date, (dayTotals.get(d.date) || 0) + d.volume_l);
+  const total30 = [...dayTotals.values()].reduce((s, v) => s + v, 0);
+  const largeThreshold = dayTotals.size > 0 ? (total30 / dayTotals.size) * 1.5 : Infinity;
+  const isLargeDay = (d) => dayTotals.get(d.date) > largeThreshold;
 
   // Days of stock progress bar.
   //
@@ -451,10 +465,10 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
                 <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 120, background: 'rgba(255,255,255,0.04)', borderRadius: 10, padding: '12px 12px 0', marginBottom: 8, overflow: 'hidden' }}>
                   {dailySales.map((d, i) => {
                     const h = maxVol > 0 ? Math.max(4, (d.volume_l / maxVol) * 96) : 4;
-                    const isLarge = d.volume_l > product.avgDailyDemand * 1.5;
+                    const isLarge = isLargeDay(d);
                     return (
                       <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
-                        <div title={`${d.date}: ${d.volume_l.toFixed(2)} L`} style={{
+                        <div title={`${d.date}: ${fmtVolume(d.volume_l)}`} style={{
                           width: '100%', height: h, borderRadius: '3px 3px 0 0',
                           background: isLarge ? '#f59e0b' : '#3b82f6',
                           cursor: 'default', transition: 'opacity 0.2s'
@@ -467,7 +481,7 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
                 {/* Avg daily line label */}
                 <div style={{ display: 'flex', gap: 16, fontSize: 11, color: 'rgba(232,234,242,0.45)', marginBottom: 8 }}>
                   <span>🔵 Normal day</span>
-                  <span>🟡 High volume day (&gt;1.5× avg)</span>
+                  <span>🟡 High volume day (&gt;1.5× the average sale day)</span>
                 </div>
 
                 {/* Date labels - show first and last */}
@@ -481,7 +495,7 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
                   <thead>
                     <tr style={{ background: 'rgba(255,255,255,0.06)' }}>
                       <th style={{ padding: '6px 10px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>Date</th>
-                      <th style={{ padding: '6px 10px', textAlign: 'right', color: '#94a3b8', fontWeight: 600 }}>Volume (L)</th>
+                      <th style={{ padding: '6px 10px', textAlign: 'right', color: '#94a3b8', fontWeight: 600 }}>Volume</th>
                       <th style={{ padding: '6px 10px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>Type</th>
                     </tr>
                   </thead>
@@ -489,8 +503,8 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
                     {dailySales.map((d, i) => (
                       <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                         <td style={{ padding: '5px 10px', color: '#cbd5e1' }}>{d.date}</td>
-                        <td style={{ padding: '5px 10px', textAlign: 'right', fontWeight: 700, color: d.volume_l > product.avgDailyDemand * 1.5 ? '#f59e0b' : '#60a5fa' }}>
-                          {d.volume_l.toFixed(2)} L
+                        <td style={{ padding: '5px 10px', textAlign: 'right', fontWeight: 700, color: isLargeDay(d) ? '#f59e0b' : '#60a5fa' }}>
+                          {fmtVolume(d.volume_l)}
                         </td>
                         <td style={{ padding: '5px 10px', color: '#94a3b8', fontSize: 11 }}>{d.type}</td>
                       </tr>
@@ -498,11 +512,16 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
                   </tbody>
                   <tfoot>
                     <tr style={{ background: 'rgba(255,255,255,0.05)', fontWeight: 700 }}>
-                      <td style={{ padding: '6px 10px', color: '#e2e8f0' }}>Total ({dailySales.length} days)</td>
+                      {/* Only this list's own numbers: the total rate (with the
+                          contract) beside a customers-only total read as a sum
+                          that did not add up (owner, 2026-10-15). */}
+                      <td style={{ padding: '6px 10px', color: '#e2e8f0' }}>Total, last 30 days</td>
                       <td style={{ padding: '6px 10px', textAlign: 'right', color: '#93c5fd' }}>
-                        {dailySales.reduce((s, d) => s + d.volume_l, 0).toFixed(2)} L
+                        {fmtVolume(total30)}
                       </td>
-                      <td style={{ padding: '6px 10px', color: '#e2e8f0' }} title="Projected demand rate: 30-day customer average + daily B2B">Rate: {product.avgDailyDemand} L/d</td>
+                      <td style={{ padding: '6px 10px', color: '#e2e8f0' }}>
+                        Average: {fmtVolume(total30 / 30)}/day
+                      </td>
                     </tr>
                   </tfoot>
                 </table>
