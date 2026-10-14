@@ -25,6 +25,9 @@ export default function ProductManagement({ user, libraryMode = false }) {
   const [showInactive, setShowInactive]     = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [showIncomingOnly, setShowIncomingOnly] = useState(false);
+  // Same chips as the Stock page (owner, 2026-10-15). "Out of Stock" takes
+  // negative too: both mean nothing on the shelf.
+  const [statusFilter, setStatusFilter] = useState('ALL');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
 
@@ -112,7 +115,7 @@ export default function ProductManagement({ user, libraryMode = false }) {
   // break again if someone removes the keys.
   useEffect(() => {
     filterProducts();
-  }, [products, categoryFilter, searchTerm, showIncomingOnly, showInactive, libraryMode]);
+  }, [products, categoryFilter, searchTerm, showIncomingOnly, showInactive, libraryMode, statusFilter]);
 
   // Compute next Tag/ProductCode suggestion when category changes (new product only)
   useEffect(() => {
@@ -179,6 +182,13 @@ export default function ProductManagement({ user, libraryMode = false }) {
 
     if (showIncomingOnly) {
       filtered = filtered.filter(p => Array.isArray(p.incomingOrders) && p.incomingOrders.length > 0);
+    }
+
+    if (statusFilter !== 'ALL') {
+      filtered = filtered.filter(p => {
+        const key = getSharedStockStatus(p).key;
+        return statusFilter === 'OUT' ? (key === 'OUT' || key === 'NEGATIVE') : key === statusFilter;
+      });
     }
 
     if (showInactive) {
@@ -628,10 +638,6 @@ export default function ProductManagement({ user, libraryMode = false }) {
     return badges[category] || 'badge-gray';
   };
 
-  // Shared definition (utils/stockStatus) — this page previously had no
-  // negative-stock branch, so an overdrawn product showed as plain "Low Stock".
-  const getStockStatus = (product) => getSharedStockStatus(product);
-
   if (loading) {
     return (
       <div className="container" style={{ paddingTop: '40px' }}>
@@ -847,6 +853,28 @@ export default function ProductManagement({ user, libraryMode = false }) {
             >
               {showInactive ? '● Inactive Only' : '○ Show Inactive'}
             </button>
+            {[
+              { value: 'ALL',     label: 'All Status',     color: null },
+              { value: 'HEALTHY', label: '✅ Healthy',      color: '#22c55e' },
+              { value: 'LOW',     label: '⚠️ Low Stock',    color: '#fbbf24' },
+              { value: 'OUT',     label: '🔴 Out of Stock', color: '#ef4444' },
+            ].map(st => (
+              <button
+                key={st.value}
+                onClick={() => setStatusFilter(st.value)}
+                className="btn"
+                style={{
+                  fontSize: '13px',
+                  padding: '8px 16px',
+                  background: statusFilter === st.value ? (st.color ? `${st.color}22` : 'rgba(59,130,246,0.18)') : 'rgba(255,255,255,0.04)',
+                  color: statusFilter === st.value ? (st.color || '#3b82f6') : 'rgba(232,234,242,0.45)',
+                  border: `1px solid ${statusFilter === st.value ? (st.color || '#3b82f6') + '66' : 'rgba(255,255,255,0.07)'}`,
+                  fontWeight: statusFilter === st.value ? '700' : 'normal',
+                }}
+              >
+                {st.label}
+              </button>
+            ))}
           </div>
         </div>
       </div>
@@ -873,6 +901,7 @@ export default function ProductManagement({ user, libraryMode = false }) {
                 <th>Bin Location</th>
                 <th>Stock</th>
                 <th>Min Level</th>
+                <th>Status</th>
                 <th>Incoming Orders</th>
                 <th>Supplier</th>
                 <th>Supplier Code</th>
@@ -963,6 +992,14 @@ export default function ProductManagement({ user, libraryMode = false }) {
                       )}
                     </td>
                     <td>{displayStock(effectiveMin(product), product.unit)}{product.minStockAuto != null && ' (auto)'}</td>
+                    <td>
+                      {(() => {
+                        // Low counts what is on order and reads the automatic minimum (utils/stockStatus).
+                        const st = getSharedStockStatus(product);
+                        const badge = st.key === 'HEALTHY' ? 'success' : st.key === 'LOW' ? 'warning' : 'danger';
+                        return <span className={`badge badge-${badge}`}>{st.key === 'HEALTHY' ? 'Healthy' : st.label}</span>;
+                      })()}
+                    </td>
                     <td>
                       {product.incomingOrders && product.incomingOrders.length > 0 ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>

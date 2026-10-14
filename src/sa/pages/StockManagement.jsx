@@ -6,19 +6,9 @@ import { GlowingEffect } from '../components/GlowingEffect';
 import MlHelper from '../components/MlHelper';
 import { LiquidMetalButton } from '../components/LiquidMetalButton';
 import ConfirmModal from '../components/ConfirmModal';
-import { isLowStock, effectiveMin } from '../utils/stockStatus';
+import { getStockStatus as sharedStockStatus, effectiveMin } from '../utils/stockStatus';
 import OperatorPicker from '../components/OperatorPicker';
 import { reasonsFor } from '../../../shared/stock-reasons.js';
-
-// Colours for the replenishment status shown beside a product. A lookup rather
-// than nested ternaries because there are now four values: "No data" was added
-// 2026-09-14 and would otherwise have painted green — the one thing it is not.
-const SAFETY_BADGE = {
-  Critical:  { background: 'rgba(220,38,38,0.15)',  color: '#f87171', border: '1px solid rgba(220,38,38,0.3)' },
-  Attention: { background: 'rgba(217,119,6,0.15)',  color: '#fbbf24', border: '1px solid rgba(217,119,6,0.3)' },
-  Safe:      { background: 'rgba(22,163,74,0.15)',  color: '#4ade80', border: '1px solid rgba(22,163,74,0.3)' },
-  'No data': { background: 'rgba(148,163,184,0.15)', color: '#94a3b8', border: '1px solid rgba(148,163,184,0.3)' },
-};
 
 export default function StockManagement({ user }) {
   const showToast = useToast();
@@ -43,7 +33,6 @@ export default function StockManagement({ user }) {
   const [locationProduct, setLocationProduct] = useState(null);
   const [newLocation, setNewLocation] = useState('');
 
-  const [safetyMap, setSafetyMap] = useState({});
   const [submitting, setSubmitting] = useState(false);
 
   // Fails softly: if the list cannot be read the picker offers a name field, the
@@ -68,18 +57,6 @@ export default function StockManagement({ user }) {
       console.error('Error fetching products:', error);
     } finally {
       setLoading(false);
-    }
-    // Fetch replenishment data separately so it never blocks product loading
-    try {
-      const replRes = await fetch('/api/dashboard/replenishment');
-      if (replRes.ok) {
-        const replData = await replRes.json();
-        const map = {};
-        (replData.products || []).forEach(p => { map[p.id] = p.safetyStatus; });
-        setSafetyMap(map);
-      }
-    } catch (error) {
-      console.error('Error fetching replenishment:', error);
     }
   };
 
@@ -174,9 +151,16 @@ export default function StockManagement({ user }) {
     return labels[category] || category;
   };
 
+  // ONE rule for the badge and the filter, the same as the Fragrance Library
+  // (owner, 2026-10-15: "funcionando e com a lógica correta"). Oils used to be
+  // badged with the Demand Planning status while the chips filtered on this
+  // rule, so "Low Stock" listed rows badged Attention or Safe — and a negative
+  // product counted as Healthy here. Demand Planning keeps its own status on
+  // its own screen. Low reads the automatic minimum and open orders.
   const getStockStatus = (product) => {
-    if (product.currentStock === 0) return { label: 'Out of Stock', class: 'red' };
-    if (isLowStock(product)) return { label: 'Low Stock', class: 'yellow' };
+    const key = sharedStockStatus(product).key;
+    if (key === 'OUT' || key === 'NEGATIVE') return { label: 'Out of Stock', class: 'red' };
+    if (key === 'LOW') return { label: 'Low Stock', class: 'yellow' };
     return { label: 'Healthy', class: 'green' };
   };
 
@@ -185,7 +169,10 @@ export default function StockManagement({ user }) {
                          (product.productCode?.toLowerCase() ?? '').includes(search.toLowerCase()) ||
                          (product.tag?.toLowerCase() ?? '').includes(search.toLowerCase());
     const matchesCategory = categoryFilter === 'ALL' || product.category === categoryFilter;
-    const matchesStatus = statusFilter === 'ALL' || getStockStatus(product).label === statusFilter;
+    // An inactive row is badged INACTIVE, not by stock — keep it out of the
+    // stock chips so the list and the badges agree (code review).
+    const matchesStatus = statusFilter === 'ALL'
+      || ((product.status || 'active') === 'active' && getStockStatus(product).label === statusFilter);
     return matchesSearch && matchesCategory && matchesStatus;
   });
 
@@ -355,10 +342,6 @@ export default function StockManagement({ user }) {
                       ) : isNegative ? (
                         <span className="badge" style={{ background: '#dc2626', color: 'white', fontWeight: '700' }}>
                           NEGATIVE STOCK
-                        </span>
-                      ) : safetyMap[product.id] ? (
-                        <span className="badge" style={SAFETY_BADGE[safetyMap[product.id]] || SAFETY_BADGE.Safe}>
-                          {safetyMap[product.id]}
                         </span>
                       ) : (
                         <span className={`badge badge-${status.class === 'green' ? 'success' : status.class === 'yellow' ? 'warning' : 'danger'}`}>
