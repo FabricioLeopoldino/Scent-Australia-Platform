@@ -10,6 +10,8 @@ import { displayStock, displayUnit } from '../utils/unitConversion';
 import { isLowStock, getStockStatus as sharedStockStatus, isReorderSoon, REORDER_SOON_FACTOR, effectiveMin, coveredStock } from '../utils/stockStatus';
 import { GlowingEffect } from '../components/GlowingEffect';
 
+const LOW_PREVIEW = 10; // Low Stock Alerts rows shown before "Show all"
+
 export default function Dashboard({ user }) {
   const showToast = useToast();
   const [data, setData] = useState(null);
@@ -17,6 +19,8 @@ export default function Dashboard({ user }) {
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [scentedDash, setScentedDash] = useState(null);
   const [loading, setLoading] = useState(true);
+  // Low Stock Alerts shows the most urgent first; the owner wanted the rest one click away.
+  const [showAllLow, setShowAllLow] = useState(false);
   const [watchlist, setWatchlist] = useState([]);
   const [showWatchlistModal, setShowWatchlistModal] = useState(false);
   const [managingMachines, setManagingMachines] = useState(false);
@@ -167,16 +171,17 @@ export default function Dashboard({ user }) {
   // If the automatic minimums could not be worked out at all (none arrived),
   // every oil falls back to its typed minimum, as the server promises —
   // rather than the card going silent on oils (code review).
-  // Most urgent first — only ten are shown: Critical before Low, then the
-  // least covered against its own minimum.
+  // Most urgent first — the top LOW_PREVIEW show until "Show all": Critical
+  // before Low, then the least covered against its own minimum.
   const autoKnown = products.some(p => p.minStockAuto != null);
-  const lowStockProducts = products
+  const lowStockItems = products
     .filter(p => p.category !== 'OILS' || !autoKnown || p.minStockAuto != null)
     .map(p => ({ p, key: sharedStockStatus(p).key }))
     .filter(x => x.key === 'LOW' || x.key === 'CRITICAL')
     .map(x => ({ ...x, share: coveredStock(x.p) / (effectiveMin(x.p) || 1) }))
-    .sort((a, b) => ((b.key === 'CRITICAL') - (a.key === 'CRITICAL')) || (a.share - b.share))
-    .map(x => x.p);
+    .sort((a, b) => ((b.key === 'CRITICAL') - (a.key === 'CRITICAL')) || (a.share - b.share));
+  const lowStockProducts = lowStockItems.map(x => x.p);
+  const showingAllLow = showAllLow && lowStockItems.length > LOW_PREVIEW;
 
   // ── Machines: the reorder watch ────────────────────────────────────────────
   // Asked for directly by the business on 2026-09-17 — "super important we don't
@@ -785,12 +790,25 @@ export default function Dashboard({ user }) {
       {lowStockProducts.length > 0 && (
         <div className="card" style={{ marginBottom: 28, borderLeft: '3px solid #f59e0b', position: 'relative', overflow: 'visible' }}>
           <GlowingEffect spread={35} glow={false} disabled={false} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
-          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 16, color: '#fbbf24', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <AlertTriangle size={16} color="#fbbf24" />
-            Low Stock Alerts ({lowStockProducts.length})
-          </h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: '#fbbf24', display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+              <AlertTriangle size={16} color="#fbbf24" />
+              Low Stock Alerts ({lowStockProducts.length})
+            </h3>
+            {lowStockItems.length > LOW_PREVIEW && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                aria-expanded={showingAllLow}
+                onClick={() => setShowAllLow(!showingAllLow)}
+                style={{ marginLeft: 'auto', fontSize: 12, padding: '5px 12px' }}
+              >
+                {showingAllLow ? `Show top ${LOW_PREVIEW}` : `Show all ${lowStockItems.length}`}
+              </button>
+            )}
+          </div>
           <div style={{ display: 'grid', gap: 8 }}>
-            {lowStockProducts.slice(0, 10).map(product => {
+            {(showingAllLow ? lowStockItems : lowStockItems.slice(0, LOW_PREVIEW)).map(({ p: product, key }) => {
               return (
                 <div key={product.id} style={{
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -800,7 +818,7 @@ export default function Dashboard({ user }) {
                   <div>
                     <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 13, color: 'var(--text-primary)' }}>
                       {product.name}
-                      {sharedStockStatus(product).key === 'CRITICAL' && (
+                      {key === 'CRITICAL' && (
                         <span className="badge badge-danger" style={{ fontSize: 10, marginLeft: 8 }}>Critical</span>
                       )}
                     </div>
