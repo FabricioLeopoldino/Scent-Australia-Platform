@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useToast } from '../components/Toast';
 import ConfirmModal from '../components/ConfirmModal';
 import * as XLSX from 'xlsx';
-import { shelfOutlook } from '../utils/shelfOutlook';
+import { shelfOutlook } from '../../../shared/shelf-outlook.js';
 import { GlowingEffect } from '../components/GlowingEffect';
 
 // ─── Tooltip ─────────────────────────────────────────────────────────────────
@@ -398,7 +398,8 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
                 physically there — the alarm is what had to stop shouting.
                 Both branches read the order dates since 2026-10-15: "on its
                 way" said nothing about a PO due after the shelf is empty. */}
-            {daysStock < product.leadTime && daysStock > 0 && recRate > 0 && (() => {
+            {recRate > 0 && (() => {
+              const inAlarm = daysStock < product.leadTime && daysStock > 0;
               const o = shelfOutlook(product.realStock, recRate, product.openOrders);
               const unit = product.unit || 'L';
               const q = (v) => `${(Math.round(v * 10) / 10).toLocaleString('en-AU')} ${unit}`;
@@ -421,10 +422,12 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
               if (o.next) {
                 const gap = Math.max(1, Math.ceil(o.gapDays));
                 main = o.next === o.firstArrival
-                  ? `⚠️ The shelf runs out in about ${days(o.runsOutIn)}, but the next order (${q(o.next.qty)}) is due ${day(o.next.date)}, ${o.next.days === 0 ? 'today' : `in ${days(o.next.days)}`} — about ${days(gap)} without stock. Chase the supplier or order more.`
+                  ? `⚠️ The shelf runs out in about ${days(o.runsOutIn)}, but the next order (${q(o.next.qty)}) is due ${day(o.next.date)}, ${o.next.days === 0 ? 'today' : `in ${days(o.next.days)}`} — about ${days(gap)} without stock. ${o.next.days <= product.leadTime ? 'Chase the supplier — an order placed today would land after it.' : 'Chase the supplier or order more.'}`
                   : `⚠️ Earlier orders refill the shelf, but it runs out again in about ${days(o.runsOutIn)}, before ${q(o.next.qty)} due ${day(o.next.date)} — about ${days(gap)} without stock.`;
                 main = box(red, main, 'main');
-              } else if (incomingCovers) {
+              } else if (incomingCovers && notes.length === 0) {
+                // Only an order with a date ahead can say this. One with no
+                // date, or overdue, is named below instead (code review).
                 main = box(blue, `Low on the shelf, but ${q(product.incomingStock)} is already on its way — that covers ${days((product.realStock + product.incomingStock) / recRate)}. No new order needed.`, 'main');
               } else if (o.firstArrival) {
                 const when = o.firstArrival.days === 0 ? 'today' : `in ${days(o.firstArrival.days)}`;
@@ -434,7 +437,10 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
               } else {
                 main = box(red, '⚠️ Stock will run out before an order could arrive — reorder immediately!', 'main');
               }
-              return <>{main}{notes.map((n, i) => box(amber, n, i))}</>;
+              // Orders with no date, or overdue, are named whenever they exist —
+              // not only when the shelf is short — because they are what a
+              // "No order needed" or an Attention badge may be resting on.
+              return <>{inAlarm && main}{notes.map((n, i) => box(amber, n, i))}</>;
             })()}
             {daysStock <= 0 && (
               <div style={{ marginTop: 8, padding: '6px 12px', background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 8, fontSize: 12, color: '#f87171', fontWeight: 600 }}>
@@ -1354,14 +1360,14 @@ function RecommendationCell({ rec, unit }) {
   }
   if (rec.action === 'hold') {
     return (
-      <span title={`Stock already covers ${rec.coversDays} days at ${rec.dailyRate} ${unit}/day. ${rec.note}`}
+      <span title={`Stock and the orders already raised cover ${rec.coversDays} days at ${rec.dailyRate} ${unit}/day — check the status: an order that lands late can still leave the shelf empty first. ${rec.note}`}
         style={{ fontSize: 11, fontWeight: 700, color: '#4ade80', cursor: 'help' }}>
         no order
       </span>
     );
   }
   return (
-    <span title={`${rec.dailyRate} ${unit}/day × ${rec.coversDays} days, less what is on hand and on the way. ${rec.note}${rec.vsSafeOrder > 0 ? ` Order Safe asks for ${rec.vsSafeOrder} ${unit} more.` : ''}`}
+    <span title={`${rec.bridge ? `Sized so the shelf does not run dry before the order due in ${rec.bridge.dueInDays} days lands, at ${rec.dailyRate} ${unit}/day.` : `${rec.dailyRate} ${unit}/day × ${rec.coversDays} days, less what is on hand and on the way.`} ${rec.note}${rec.vsSafeOrder > 0 ? ` Order Safe asks for ${rec.vsSafeOrder} ${unit} more.` : ''}`}
       style={{ fontSize: 12.5, fontWeight: 800, color: '#93c5fd', cursor: 'help' }}>
       {rec.litres.toLocaleString()} {unit}
     </span>
@@ -1390,7 +1396,7 @@ function CoverageTable({ product }) {
     <div style={{ marginTop: 16, padding: '14px 16px', background: 'rgba(255,255,255,0.04)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)' }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: '#cbd5e1', marginBottom: 4 }}>Order to cover (from today)</div>
       <div style={{ fontSize: 11, color: 'rgba(232,234,242,0.5)', marginBottom: 8 }}>
-        Days counted from today, minus real stock and what is already on order. Delivery time is not added.
+        Days counted from today, minus real stock and the orders due within the period (orders with no date are counted — confirm them). Delivery time is not added.
       </div>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
@@ -1438,7 +1444,12 @@ function RecommendationPanel({ rec, unit }) {
 
       {rec.action !== 'count_first' && (
         <div style={{ fontSize: 12.5, color: 'rgba(232,234,242,0.8)', lineHeight: 1.7 }}>
-          <div>Based on <strong>{rec.dailyRate} {unit}/day</strong>, covering <strong>{rec.coversDays} days</strong> (lead time plus buffer).</div>
+          {rec.bridge
+            ? <div>
+                Sized so the shelf does not run dry before the order due in <strong>{rec.bridge.dueInDays} days</strong> lands, at <strong>{rec.dailyRate} {unit}/day</strong>.
+                {rec.bridge.emptyBeforeItLands && ' The shelf still runs out before this order can arrive — chase the supplier too.'}
+              </div>
+            : <div>Based on <strong>{rec.dailyRate} {unit}/day</strong>, covering <strong>{rec.coversDays} days</strong> (lead time plus buffer).</div>}
           <div style={{ marginTop: 4 }}>{rec.note}</div>
           <div style={{ marginTop: 4, color: 'rgba(232,234,242,0.55)' }}>
             Confidence: {CONF[rec.confidence] || rec.confidence}.

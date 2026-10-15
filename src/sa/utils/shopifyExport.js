@@ -1,4 +1,3 @@
-import { isLowStock } from './stockStatus';
 import { SA_SKU_VARIANTS, SA_SKU_KEYS } from '../../../shared/sa-sku-variants.js';
 /**
  * Export products to Shopify CSV format for inventory sync
@@ -118,14 +117,6 @@ export function exportToShopifyCSV(products) {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-}
-
-/**
- * Export only products with low stock to Shopify CSV
- */
-export function exportLowStockToShopifyCSV(products) {
-  const lowStockProducts = products.filter(isLowStock);
-  exportToShopifyCSV(lowStockProducts);
 }
 
 /**

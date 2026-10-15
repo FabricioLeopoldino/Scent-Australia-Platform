@@ -15,6 +15,7 @@ import { bomVariantFor } from '../../shared/refurb-machines.js';
 import { isValidReason, reasonLabel, NON_DEMAND_REMOVE_REASONS, UNPATTERNED_REMOVE_REASONS } from '../../shared/stock-reasons.js';
 import { readIncomingPurchaseOrders } from './shopify-purchase-orders.js';
 import { refreshOrderActors, TECH_REFILL_DAYS } from './shopify-order-actors.js';
+import { shelfOutlook, orderToCover, SAFETY_STOCK_FACTOR } from '../../shared/shelf-outlook.js';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import multer from 'multer';
@@ -628,7 +629,10 @@ router.get('/products', async (req, res) => {
     
     const [result, posResult, autoMins] = await Promise.all([
       pool.query(query, params),
-      pool.query(`SELECT id, product_id, order_number, quantity, quantity_received, supplier, status, notes, added_at, added_by, estimated_delivery_date, shopify_missing_since
+      // eta_days in Sydney time, from Postgres: a DATE handed to the browser as
+      // a JS Date lands a day off depending on the server's own timezone.
+      pool.query(`SELECT id, product_id, order_number, quantity, quantity_received, supplier, status, notes, added_at, added_by, estimated_delivery_date, shopify_missing_since,
+                         estimated_delivery_date - (NOW() AT TIME ZONE 'Australia/Sydney')::date AS eta_days
                   FROM purchase_orders WHERE status IN ('pending','partial') ORDER BY added_at ASC`),
       // Only oils carry one; a machines or spares list does not need it.
       !category || category === 'ALL' || category === 'OILS' ? getAutoMinimums() : null
@@ -649,6 +653,7 @@ router.get('/products', async (req, res) => {
         addedAt: po.added_at,
         addedBy: po.added_by || '',
         estimatedDeliveryDate: po.estimated_delivery_date || null,
+        etaDays: po.eta_days == null ? null : Number(po.eta_days),
         shopifyMissingSince: po.shopify_missing_since || null
       });
     }
@@ -669,7 +674,8 @@ router.get('/products', async (req, res) => {
       minStockLevel: parseFloat(row.minStockLevel) || 0,
       // Decides "low" where present — see getAutoMinimums. minStockLevel stays
       // the typed value, so the edit form never saves the automatic one over it.
-      minStockAuto: autoMins?.get(row.id) ?? null,
+      minStockAuto: autoMins?.get(row.id)?.min ?? null,
+      autoDailyRate: autoMins?.get(row.id)?.rate ?? null, // same unit as stock, per day
       supplier: row.supplier || '',
       supplier_code: row.supplier_code || '',
       unitPerBox: parseInt(row.unitPerBox) || 1,
@@ -4766,8 +4772,9 @@ router.get('/aliases', async (req, res) => {
 // of every oil with a demand signal, so it was chosen on purpose: the rate
 // rests on a Salesforce contract that runs about twice what leaves the
 // warehouse, so the margin on top can be small. 25% of the lead time is also
-// how late the supplier can be — FIA at 21 days, about five.
-const SAFETY_STOCK_FACTOR = 1.25;
+// how late the supplier can be — FIA at 21 days, about five. The factor lives
+// in shared/shelf-outlook.js: the screens derive Critical (below 1/1.25 = 80%
+// of the minimum) from the same number.
 // "Order to cover" on the modal: the horizons the manager asks in.
 const COVER_HORIZONS = [30, 60, 90, 120];
 
@@ -5011,7 +5018,7 @@ async function buildReplenishment() {
     // there for why. Unchanged arithmetic; the backtest imports the same function.
 
     // ── Build final product data
-    // productId → automatic minimum in mL, unrounded (see getAutoMinimums).
+    // productId → { min: automatic minimum in mL, rate: mL/day } (see getAutoMinimums).
     const autoMinMl = new Map();
     const data = productsResult.rows.map(p => {
       const realStock  = parseFloat(p.currentStock) || 0;
@@ -5159,16 +5166,46 @@ async function buildReplenishment() {
       // should ever do, and the tooltip says as much (code review, 11 Sep).
       const trendedRetail = demand.retailDailyAvg * (demand.trendMultiplier || 1);
       const correctedDaily = Math.min(expected, conservative);
-      const recommendedRaw = correctedDaily > 0
-        ? Math.max(0, (correctedDaily * (leadTime + ORDER_BUFFER_DAYS)) - effectiveStock)
-        : 0;
+
+      // ── Orders on the calendar (2026-10-15). Walk the open orders in delivery
+      // order: does the shelf empty before one of them lands? Undated and
+      // overdue orders are not on the walk — "PO não chegou" does not hold an
+      // alarm (owner, after Dream read Attention/Healthy with its 200 L due
+      // nine days after its 22.6 L ran out).
+      const outlook = correctedDaily > 0 ? shelfOutlook(realStock, correctedDaily, poOrdersMap[p.id] || []) : null;
+      // Stock as recorded (negative included, like coverDays), capped at shelf
+      // + everything on order: an over-received open order nets off in
+      // incomingStock, and the timely count must never cover MORE.
+      const inTimeCoverDays = outlook
+        ? Math.min(realStock + outlook.inTimeQty, effectiveStock) / correctedDaily
+        : null;
+      // The order: enough that the shelf never runs dry from the day it lands
+      // to the end of the period, on the real calendar of open orders
+      // (shared/shelf-outlook.js — identical to rate × period − shelf − on
+      // order whenever every order lands before the lead time, as all did on
+      // 15 Oct). Counting a late order as stock from today had said "Safe, no
+      // order needed" over empty days (code review). An over-received open
+      // order still nets off, as it does in On Order.
+      //
+      // Demand on days the shelf is already empty before an order can land
+      // is counted too: the team holds the client's order and fills it when
+      // stock arrives (owner, 2026-10-13: "a gente segura order do client e
+      // solicita") — so that oil is still owed.
+      const positiveOnOrder = (poOrdersMap[p.id] || []).reduce((sum, o) => sum + o.qty, 0);
+      const stockForOrders = realStock + (incomingStock - positiveOnOrder);
+      const cover = correctedDaily > 0
+        ? orderToCover(stockForOrders, correctedDaily, poOrdersMap[p.id] || [], leadTime, leadTime + ORDER_BUFFER_DAYS)
+        : { qty: 0, bindingDays: null };
+      const recommendedRaw = cover.qty;
 
       // On the same rate the recommendation acts on, so the minimum, the badge
       // and the order cannot each assume a different consumption.
       const safetyStockLevel = correctedDaily * leadTime * SAFETY_STOCK_FACTOR;
       // Oils only, by the owner's scope; the stored unit, not the display one.
+      // The rate goes with it: a screen needs it to tell whether an open order
+      // lands before the shelf is empty (shared/shelf-outlook.js).
       if (p.category === 'OILS' && p.unit === 'mL' && correctedDaily > 0) {
-        autoMinMl.set(p.id, Math.round(safetyStockLevel));
+        autoMinMl.set(p.id, { min: Math.round(safetyStockLevel), rate: correctedDaily });
       }
 
       // What the number rests on, so it can be argued with. The September
@@ -5195,9 +5232,12 @@ async function buildReplenishment() {
       // Rounding dust on a well-stocked product still reads "hold" — asking for
       // 1 L against 50 L on the shelf would be noise.
       const coverDays = correctedDaily > 0 ? effectiveStock / correctedDaily : null;
-      const runsOut = coverDays !== null && coverDays < leadTime;
+      // On the stock that lands in time — the same line as Critical — so a
+      // Critical oil's small shortfall cannot round to "No order needed".
+      const runsOut = inTimeCoverDays !== null && inTimeCoverDays < leadTime;
       const recommendedRounded = Math.round(recommendedRaw / (p.unit === 'mL' ? 1000 : 1));
-      const recommendedDisplay = recommendedRaw > 0 && runsOut
+      // A known empty-shelf gap is a real stockout too: it never rounds away.
+      const recommendedDisplay = recommendedRaw > 0 && (runsOut || cover.bindingDays != null)
         ? Math.max(1, recommendedRounded) : recommendedRounded;
       const action = correctedDaily <= 0 ? 'count_first'
         : recommendedDisplay <= 0 ? 'hold'
@@ -5229,9 +5269,21 @@ async function buildReplenishment() {
       //
       // Safety, measured before shipping: of the 18 oils that move from Critical
       // to Safe, the least covered has 61 days against a 21-day lead time.
+      //
+      // 2026-10-15: "stock already on its way" means on its way IN TIME (see
+      // the walk above). Critical = the shelf plus what lands in time does not
+      // last the lead time: even an order placed today arrives to an empty
+      // shelf — chase the supplier. A late order whose gap a new order CAN
+      // close makes the recommendation an order (orderToCover), hence Attention.
+      // A late order too big to re-buy can still leave "No order needed"
+      // beside Critical: chase it, do not buy it twice.
       const safetyStatus = correctedDaily <= 0 ? (realStock > 0 ? 'Safe' : 'No data')
-        : coverDays < leadTime  ? 'Critical'   // will not survive until an order lands
+        : inTimeCoverDays < leadTime ? 'Critical'   // will not survive until an order lands
         : action === 'order'    ? 'Attention'  // there is time, but it must be planned
+        // Below the minimum on what lands in time: an order with no date, or
+        // overdue, may be why the order says hold — it must not make that
+        // Safe (code review; same line as Low Stock on the product screens).
+        : inTimeCoverDays < leadTime * SAFETY_STOCK_FACTOR ? 'Attention'
         : 'Safe';
 
       const NOTE = {
@@ -5287,11 +5339,22 @@ async function buildReplenishment() {
         // modal says so. Two columns because the manager asks "according to
         // Salesforce", and on an oil with customer sales that is not the whole
         // demand: the contract alone, and the rate the recommendation uses.
-        coverage: COVER_HORIZONS.map(days => ({
-          days,
-          salesforce: forecastDaily != null ? r1(Math.max(0, forecastDaily * days - effectiveStock) / R) : null,
-          all:        correctedDaily > 0    ? r1(Math.max(0, correctedDaily * days - effectiveStock) / R) : null,
-        })),
+        // A volume answer — "how much for N days?" — counting the orders the
+        // recommendation counts: due within the period, or with no date or
+        // overdue (the modal names those so someone confirms when they land);
+        // an order due after the period does not count toward it. Timing gaps
+        // inside the period are the status's and the alarm's job, not this
+        // table's: Dream, 200 L due in 13 days, read "order 60 L for 30 days"
+        // when it was a timing question. Stock as recorded, debt included.
+        coverage: COVER_HORIZONS.map(days => {
+          const have = stockForOrders + (poOrdersMap[p.id] || [])
+            .filter(o => o.days == null || o.days <= days).reduce((sum, o) => sum + o.qty, 0); // overdue: days < 0
+          return {
+            days,
+            salesforce: forecastDaily != null ? r1(Math.max(0, forecastDaily * days - have) / R) : null,
+            all:        correctedDaily > 0    ? r1(Math.max(0, correctedDaily * days - have) / R) : null,
+          };
+        }),
         // ── Order quantities
         suggestedOrder:      r0(suggestedOrderRaw / R),   // based on expected
         safeOrder:           r0(safeOrderRaw / R),        // based on conservative
@@ -5301,10 +5364,20 @@ async function buildReplenishment() {
           litres:      recommendedDisplay,          // in the product's display unit
           dailyRate:   r3(correctedDaily / R),
           coversDays:  leadTime + ORDER_BUFFER_DAYS,
-          // Days the shelf (plus anything already on its way) lasts at the
-          // corrected rate. This is what decides safetyStatus — served rather
-          // than recomputed, so the badge and the screen cannot drift apart.
+          // Days the shelf plus EVERY open order lasts at the corrected rate —
+          // what the order quantity is built on.
           coverDays:   coverDays === null ? null : r1(coverDays),
+          // The same, counting only orders that land before the shelf is empty.
+          // This is what decides Critical — served rather than recomputed, so
+          // the badge and the screen cannot drift apart.
+          coverDaysInTime: inTimeCoverDays === null ? null : r1(inTimeCoverDays),
+          // Set when a late order, not the period, sized the order: it is what
+          // keeps the shelf stocked until that order (due in N days) lands.
+          bridge: cover.bindingDays != null
+            ? { dueInDays: cover.bindingDays,
+                // The shelf empties before even this order lands: it shortens
+                // the gap, it does not close it.
+                emptyBeforeItLands: inTimeCoverDays < leadTime } : null,
           basis,
           confidence:  demand.dataConfidence,
           // "No sales history" would be false when oil DID move but all of it
@@ -5350,10 +5423,11 @@ async function buildReplenishment() {
     data.sort((a, b) => {
       const diff = statusOrder[a.safetyStatus] - statusOrder[b.safetyStatus];
       if (diff !== 0) return diff;
-      // Within a band, least cover first — on the same corrected rate the status
-      // was decided on. Nulls (no rate) go last.
-      const ca = a.recommendation?.coverDays ?? Infinity;
-      const cb = b.recommendation?.coverDays ?? Infinity;
+      // Within a band, least cover first — on the cover the status was decided
+      // on (orders that land in time), or Dream, empty in four days, would sort
+      // last among the Critical (code review). Nulls (no rate) go last.
+      const ca = a.recommendation?.coverDaysInTime ?? Infinity;
+      const cb = b.recommendation?.coverDaysInTime ?? Infinity;
       return ca - cb;
     });
 

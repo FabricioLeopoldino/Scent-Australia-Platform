@@ -96,7 +96,7 @@ export default function RawMaterials({ user }) {
   // rest of the app (it used to define its own `<=` rule, a third variant).
   const getStatusColor = (product) => {
     const s = getStockStatus(product);
-    if (s.key === 'NEGATIVE' || s.key === 'OUT' || s.key === 'LOW') return '#ef4444';
+    if (s.key !== 'HEALTHY') return '#ef4444';
     if (isReorderSoon(product)) return '#f59e0b';
     return '#10b981';
   };

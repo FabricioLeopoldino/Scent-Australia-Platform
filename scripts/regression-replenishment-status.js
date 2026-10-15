@@ -82,9 +82,14 @@ try {
 
   console.log('\n2. The badge and the recommendation cannot disagree');
   // The defect this whole change exists to remove. Two numbers, one row.
+  // One exception since 2026-10-15: an order that would cover the period but
+  // does not land in time — dated after the shelf empties, or with no date, or
+  // overdue. Re-buying it would be wrong (hold), and the shelf still empties
+  // (Critical): chase it or confirm its date. Only that case may pair them.
   const shouting = oils.filter((p) => p.safetyStatus === 'Critical'
-    && p.recommendation?.action === 'hold');
-  check(shouting.length === 0, 'nothing is Critical while its own recommendation says hold',
+    && p.recommendation?.action === 'hold'
+    && !(p.recommendation.coverDaysInTime < p.recommendation.coverDays));
+  check(shouting.length === 0, 'nothing is Critical while its own recommendation says hold, unless an order lands too late',
     shouting.slice(0, 5).map((p) => p.productCode).join(', '));
   const silent = oils.filter((p) => p.safetyStatus === 'Safe'
     && p.recommendation?.action === 'order');
@@ -94,14 +99,15 @@ try {
   console.log('\n3. Critical means what the label says: it runs out before an order can land');
   // Both directions. Asserting only one of them is how a tautology ships: a
   // rule that never fires passes "no false alarms" perfectly.
+  // Counting only orders that land before the shelf is empty (2026-10-15).
   const wrongCritical = oils.filter((p) => p.safetyStatus === 'Critical'
-    && p.recommendation?.coverDays !== null && p.recommendation?.coverDays >= p.leadTime);
+    && p.recommendation?.coverDaysInTime !== null && p.recommendation?.coverDaysInTime >= p.leadTime);
   check(wrongCritical.length === 0, 'every Critical oil covers FEWER days than its lead time',
-    wrongCritical.slice(0, 5).map((p) => `${p.productCode} ${p.recommendation.coverDays}d vs ${p.leadTime}`).join(', '));
+    wrongCritical.slice(0, 5).map((p) => `${p.productCode} ${p.recommendation.coverDaysInTime}d vs ${p.leadTime}`).join(', '));
   const missedCritical = oils.filter((p) => p.safetyStatus !== 'Critical'
-    && (p.recommendation?.dailyRate || 0) > 0 && p.recommendation.coverDays < p.leadTime);
+    && (p.recommendation?.dailyRate || 0) > 0 && p.recommendation.coverDaysInTime < p.leadTime);
   check(missedCritical.length === 0, 'and every oil that covers fewer days than its lead time IS Critical',
-    missedCritical.slice(0, 5).map((p) => `${p.productCode} ${p.safetyStatus} ${p.recommendation.coverDays}d`).join(', '));
+    missedCritical.slice(0, 5).map((p) => `${p.productCode} ${p.safetyStatus} ${p.recommendation.coverDaysInTime}d`).join(', '));
 
   console.log('\n4. The noise cut did not create a blind spot');
   // The one that matters. Anything she actually buys in volume, that the system
@@ -115,12 +121,25 @@ try {
   console.log('\n5. Stock already on its way stops the alarm');
   // A raised PO is the manager having already acted. Repeating the alarm at her
   // is how a list stops being read.
+  // On its way IN TIME (2026-10-15): an order landing after the shelf is
+  // empty no longer silences it.
   const covered = oils.filter((p) => (p.incomingStock || 0) > 0
     && (p.recommendation?.dailyRate || 0) > 0
-    && (p.realStock + p.incomingStock) / p.recommendation.dailyRate >= p.leadTime);
+    && p.recommendation.coverDaysInTime >= p.leadTime);
   check(covered.every((p) => p.safetyStatus !== 'Critical'),
     `${covered.length} oils have inbound stock covering the lead time — none of them shout`,
     covered.filter((p) => p.safetyStatus === 'Critical').map((p) => p.productCode).join(', '));
+
+  const late = oils.filter((p) => (p.incomingStock || 0) > 0 && (p.recommendation?.dailyRate || 0) > 0
+    && p.recommendation.coverDays >= p.leadTime && p.recommendation.coverDaysInTime < p.leadTime);
+  check(late.every((p) => p.safetyStatus === 'Critical'),
+    `${late.length} oils are covered on paper but their order lands after the shelf is empty — all Critical`,
+    late.filter((p) => p.safetyStatus !== 'Critical').map((p) => `${p.productCode}=${p.safetyStatus}`).join(', '));
+  check(oils.every((p) => p.recommendation.coverDaysInTime === null
+    || p.recommendation.coverDaysInTime <= p.recommendation.coverDays + 0.1),
+    'counting only timely orders never covers MORE than counting all of them',
+    oils.filter((p) => p.recommendation.coverDaysInTime > p.recommendation.coverDays + 0.1).slice(0, 3)
+      .map((p) => `${p.productCode} stock ${p.realStock} inTime ${p.recommendation.coverDaysInTime} all ${p.recommendation.coverDays}`).join(' | '));
 
   console.log('\n6. "No data" is not a shortage, and not a clean bill of health');
   const nd = oils.filter((p) => p.safetyStatus === 'No data');

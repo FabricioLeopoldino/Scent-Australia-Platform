@@ -187,7 +187,11 @@ export default function ProductManagement({ user, libraryMode = false }) {
     if (statusFilter !== 'ALL') {
       filtered = filtered.filter(p => {
         const key = getSharedStockStatus(p).key;
-        return statusFilter === 'OUT' ? (key === 'OUT' || key === 'NEGATIVE') : key === statusFilter;
+        // "Low Stock" is everything below its minimum, Critical included — the
+        // usual order-list filter must not lose the most urgent (code review).
+        return statusFilter === 'OUT' ? (key === 'OUT' || key === 'NEGATIVE')
+          : statusFilter === 'LOW' ? (key === 'LOW' || key === 'CRITICAL')
+          : key === statusFilter;
       });
     }
 
@@ -856,6 +860,7 @@ export default function ProductManagement({ user, libraryMode = false }) {
             {[
               { value: 'ALL',     label: 'All Status',     color: null },
               { value: 'HEALTHY', label: '✅ Healthy',      color: '#22c55e' },
+              { value: 'CRITICAL', label: '🚨 Critical',     color: '#f87171' },
               { value: 'LOW',     label: '⚠️ Low Stock',    color: '#fbbf24' },
               { value: 'OUT',     label: '🔴 Out of Stock', color: '#ef4444' },
             ].map(st => (

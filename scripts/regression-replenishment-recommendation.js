@@ -29,8 +29,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import jwt from 'jsonwebtoken';
 import pkg from 'pg';
-import { getStockStatus, isReorderSoon } from '../src/sa/utils/stockStatus.js';
-import { shelfOutlook } from '../src/sa/utils/shelfOutlook.js';
+import { getStockStatus, isReorderSoon, isLowStock } from '../src/sa/utils/stockStatus.js';
+import { shelfOutlook, orderToCover } from '../shared/shelf-outlook.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 3986;
@@ -111,7 +111,9 @@ try {
   // trend multiplier applies to retail while `conservative` uses the untrended
   // peak — code review caught this assertion claiming an invariant the code
   // did not actually hold.
-  const bigger = ordering.filter((p) => p.recommendation.litres > p.safeOrder + 1);
+  // A bridge order (keep the shelf stocked until a late order lands) is sized
+  // to the empty days, not to a scenario, so it is exempt — and checked in 12.
+  const bigger = ordering.filter((p) => !p.recommendation.bridge && p.recommendation.litres > p.safeOrder + 1);
   check(bigger.length === 0, 'none recommends MORE than the buy-safe ceiling',
     bigger.slice(0, 3).map((p) => `${p.productCode}: ${p.recommendation.litres} > ${p.safeOrder}`).join(' | '));
   const overRate = oils.filter((p) => p.recommendation.dailyRate > p.scenarioConservativeRate + 0.002);
@@ -176,7 +178,7 @@ try {
     holdButShort.slice(0, 3).map((p) => `${p.productCode}: ${effectiveOf(p).toFixed(1)} vs ${needOf(p).toFixed(1)} needed`).join(' | '));
   // The direction that actually breaks a screen: ordering while already covered
   // would put "Order N L" beside "No new order needed".
-  const orderButCovered = rated.filter((p) => p.recommendation.action === 'order'
+  const orderButCovered = rated.filter((p) => p.recommendation.action === 'order' && !p.recommendation.bridge
     && effectiveOf(p) >= needOf(p));
   check(orderButCovered.length === 0,
     'and an order is never recommended for something already covered',
@@ -212,13 +214,20 @@ try {
     safetyWrong.slice(0, 3).map((p) => `${p.productCode}: ${p.safetyStockLevel} vs ${(p.recommendation.dailyRate * p.leadTime * 1.25).toFixed(2)}`).join(' | '));
   check(oils.every((p) => JSON.stringify((p.coverage || []).map((c) => c.days)) === '[30,60,90,120]'),
     'every oil carries the four horizons');
-  const coverOf = (rate, d, p) => Math.max(0, rate * d - effectiveOf(p));
-  const allWrong = oils.filter((p) => p.coverage.some((c) => p.recommendation.dailyRate > 0
-    ? Math.abs(c.all - coverOf(p.recommendation.dailyRate, c.days, p)) > 0.25 : c.all !== null));
-  check(allWrong.length === 0, '"all demand" column = rate × days − stock − on order (blank with no rate)',
+  // Checked against the plain arithmetic, written here and not copied from the
+  // server: on every oil whose dated orders all land within the shortest
+  // period (30 days) — every oil on 15 Oct — the table is rate × days − shelf −
+  // everything on order, undated included, exactly as the recommendation
+  // counts it. Late orders are covered by the orderToCover unit checks in 12.
+  const plain = (rate, d, p) => Math.max(0, rate * d - effectiveOf(p));
+  const onTimeOnly = (p) => (p.openOrders || []).every((o) => o.days == null || o.days <= 30);
+  const tableOils = oils.filter(onTimeOnly);
+  const allWrong = tableOils.filter((p) => p.coverage.some((c) => p.recommendation.dailyRate > 0
+    ? Math.abs(c.all - plain(p.recommendation.dailyRate, c.days, p)) > 0.25 : c.all !== null));
+  check(allWrong.length === 0, `"all demand" column = rate × days − stock − on order, on ${tableOils.length} oils (blank with no rate)`,
     allWrong.slice(0, 3).map((p) => `${p.productCode}: ${JSON.stringify(p.coverage)}`).join(' | '));
-  const sfWrong = oils.filter((p) => p.coverage.some((c) => p.forecastDaily != null
-    ? Math.abs(c.salesforce - coverOf(p.forecastDaily, c.days, p)) > 0.25 : c.salesforce !== null));
+  const sfWrong = tableOils.filter((p) => p.coverage.some((c) => p.forecastDaily != null
+    ? Math.abs(c.salesforce - plain(p.forecastDaily, c.days, p)) > 0.25 : c.salesforce !== null));
   check(sfWrong.length === 0, '"Salesforce only" column = contract × days − stock − on order (blank with no contract)',
     sfWrong.slice(0, 3).map((p) => `${p.productCode}: ${JSON.stringify(p.coverage)}`).join(' | '));
   check(oils.every((p) => p.coverage.every((c, i, a) => i === 0
@@ -241,6 +250,23 @@ try {
   check(autoWrong.length === 0, 'minStockAuto = safety stock (whole mL, never 0) on rated oils, null everywhere else',
     autoWrong.slice(0, 3).map((p) => `${p.productCode} ${p.category}: ${p.minStockAuto}`).join(' | '));
   check(list.some((p) => p.minStockAuto !== null), 'and some oil actually gets one');
+  const rateWrong = list.filter((p) => {
+    const d = rep.get(p.id);
+    return p.minStockAuto === null ? p.autoDailyRate !== null
+      : Math.abs(p.autoDailyRate - d.recommendation.dailyRate * 1000) > 1;
+  });
+  check(rateWrong.length === 0, 'and carries the daily rate it was built from (mL/day), nothing without one',
+    rateWrong.slice(0, 3).map((p) => `${p.productCode}: ${p.autoDailyRate}`).join(' | '));
+  check(list.every((p) => (p.incomingOrders || []).every((o) => o.estimatedDeliveryDate == null ? o.etaDays === null : Number.isInteger(o.etaDays))),
+    'every open order carries its days-away exactly when it has a date');
+
+  // The two screens on one rule: Critical in the product list (shared rule,
+  // fresh stock, cached rate) is Critical in Demand Planning, and back.
+  const crit = list.filter((p) => p.category === 'OILS' && rep.has(p.id) && p.minStockAuto !== null)
+    // Empty or overdrawn is the list's own, stronger word for the same alarm.
+    .filter((p) => ['CRITICAL', 'OUT', 'NEGATIVE'].includes(getStockStatus(p).key) !== (rep.get(p.id).safetyStatus === 'Critical'));
+  check(crit.length === 0, 'Critical (or empty) in the Fragrance Library ⇔ Critical in Demand Planning, on every rated oil',
+    crit.slice(0, 5).map((p) => `${p.productCode} list=${getStockStatus(p).key} dp=${rep.get(p.id).safetyStatus}`).join(' | '));
   const pg = new pkg.Pool({ connectionString: process.env.PLATFORM_DATABASE_URL.replace('-pooler.', '.'),
     ssl: { rejectUnauthorized: true }, options: '-c search_path=sa,public' });
   const typed = (await pg.query(`SELECT id, "minStockLevel"::float m FROM products`)).rows;
@@ -254,13 +280,28 @@ try {
   const po = (q, got = 0) => [{ quantity: q, quantityReceived: got }];
   check(S({ currentStock: 10, minStockLevel: 5 }) === 'HEALTHY', 'unchanged: no automatic minimum, no order');
   check(S({ currentStock: 3, minStockLevel: 5 }) === 'LOW', 'unchanged: under the typed minimum is low');
-  check(S({ currentStock: 10, minStockLevel: 5, minStockAuto: 20 }) === 'LOW', 'the automatic minimum overrides the typed one');
+  check(S({ currentStock: 18, minStockLevel: 5, minStockAuto: 20 }) === 'LOW', 'the automatic minimum overrides the typed one');
   check(S({ currentStock: 10, minStockAuto: 20, incomingOrders: po(15) }) === 'HEALTHY', 'an order that covers the gap clears "low"');
-  check(S({ currentStock: 10, minStockAuto: 20, incomingOrders: po(15, 10) }) === 'LOW', 'only the part still to arrive counts');
+  check(S({ currentStock: 10, minStockAuto: 20, incomingOrders: po(15, 10) }) === 'CRITICAL'
+    && S({ currentStock: 17, minStockAuto: 20, incomingOrders: po(15, 14) }) === 'LOW', 'only the part still to arrive counts');
   check(S({ currentStock: 0, minStockAuto: 20, incomingOrders: po(50) }) === 'OUT', 'empty stays empty whatever is on the way');
   check(S({ currentStock: -2, minStockAuto: 20, incomingOrders: po(50) }) === 'NEGATIVE', 'negative stays negative');
   check(isReorderSoon({ currentStock: 25, minStockAuto: 20 }) === true, 'reorder-soon reads the automatic minimum');
   check(isReorderSoon({ currentStock: 25, minStockAuto: 20, incomingOrders: po(10) }) === false, 'and counts what is on order too');
+
+  // 2026-10-15: bands on an automatic minimum, and orders only when on time.
+  // mL, the stored unit. Rate × lead 21 × 1.25 = minimum.
+  const oil = (stock, rate, orders = []) => ({ currentStock: stock, minStockAuto: Math.round(rate * 21 * 1.25), autoDailyRate: rate, incomingOrders: orders });
+  const dated = (q, etaDays) => ({ quantity: q, quantityReceived: 0, etaDays });
+  check(S(oil(22600, 5371, [dated(200000, 13)])) === 'CRITICAL', 'Dream: 22.6 L with 200 L landing after it empties is Critical, not Healthy');
+  check(S(oil(100000, 5157, [dated(200000, 13)])) === 'HEALTHY', 'Milagrito: 100 L with 200 L landing in time is Healthy');
+  check(S(oil(22600, 5371, [dated(200000, null)])) === 'CRITICAL', 'an order with no date does not hold the alarm');
+  check(S(oil(22600, 5371, [dated(200000, -3)])) === 'CRITICAL', 'nor does an overdue one');
+  const rt = 5000, mn = Math.round(rt * 21 * 1.25);
+  check(S(oil(mn, rt)) === 'HEALTHY' && S(oil(mn - 1, rt)) === 'LOW', 'at the minimum is Healthy, one mL under is Low');
+  check(S(oil(rt * 21, rt)) === 'LOW' && S(oil(rt * 21 - 1, rt)) === 'CRITICAL', 'Critical starts below what the lead time uses (80% of the minimum)');
+  check(S({ currentStock: 1, minStockLevel: 1000 }) === 'LOW', 'a typed minimum is never Critical — no rate to judge it by');
+  check(isLowStock(oil(1000, rt)), 'Critical counts as low wherever low stock is listed');
 
   // 2026-10-15: the modal's alarm reads each open order's own date and quantity.
   console.log('\n12. The run-out alarm follows the orders already raised');
@@ -281,6 +322,43 @@ try {
   const late = shelfOutlook(10, 1, [O(50, -3)]);
   check(late.overdue.length === 1 && late.firstArrival === null && late.next === null, 'an overdue order is named, not counted');
   check(shelfOutlook(6, 1, [O(50, 6)]).next !== null, 'delivered the day it runs out still leaves a day with an empty shelf');
+
+  // The order on the real calendar (code review, 2026-10-15). Rate 1/day,
+  // lead 21, period 66 (lead + 45).
+  const T = (stock, orders) => orderToCover(stock, 1, orders, 21, 66);
+  check(T(30, []).qty === 36 && T(30, []).bindingDays === null, 'no orders: period × rate − shelf, as before');
+  check(T(30, [O(100, null)]).qty === 0, 'an order with no date still counts toward the quantity (no buying it twice)');
+  check(T(30, [O(10, 13)]).qty === 26 && T(30, [O(10, 13)]).bindingDays === null, 'an order landing before the lead time: exactly the old formula');
+  check(T(30, [O(100, 40)]).qty === 10 && T(30, [O(100, 40)]).bindingDays === 40, 'shelf for 30 days, 100 due day 40: order 10 to last until it lands');
+  check(T(30, [O(2, 40), O(50, 60)]).qty === 28 && T(30, [O(2, 40), O(50, 60)]).bindingDays === 60, 'two late orders: sized to the worse gap, not only the first');
+  check(T(30, [O(100, 200)]).qty === 36, 'an order due after the period does not count toward it');
+  check(T(39.5, [O(100, 40)]).bindingDays === null, 'a shortfall under a day of demand is not called a bridge');
+  const d = orderToCover(22.6, 5.371, [O(200, 13)], 21, 81);
+  check(Math.abs(d.qty - (5.371 * 81 - 222.6)) < 1e-9 && d.bindingDays === null, 'Dream: its order lands before the lead time — the old 212 L');
+
+  // Live: wherever every dated order lands by the lead time and none after the
+  // period, the quantity is exactly what the old formula gave.
+  const ordinary = rated.filter((p) => (p.openOrders || []).every((o) => o.days == null || o.days <= p.leadTime)
+    && p.recommendation.action !== 'count_first');
+  const oldFormula = (p) => Math.max(0, p.recommendation.dailyRate * p.recommendation.coversDays - (p.realStock + p.incomingStock));
+  const qtyDrift = ordinary.filter((p) => Math.abs(Math.max(p.recommendation.litres, 0) - Math.round(oldFormula(p))) > 1);
+  check(qtyDrift.length === 0, `${ordinary.length} oils with no late order: the quantity is unchanged from the old formula`,
+    qtyDrift.slice(0, 3).map((p) => `${p.productCode}: ${p.recommendation.litres} vs ${oldFormula(p).toFixed(1)}`).join(' | '));
+  const bridged = oils.filter((p) => p.recommendation.bridge);
+  check(bridged.every((p) => p.recommendation.action === 'order' && p.recommendation.litres >= 1
+    && ['Attention', 'Critical'].includes(p.safetyStatus)),
+    `${bridged.length} oils are ordered to bridge a late delivery — every one says order and is flagged`,
+    bridged.filter((p) => p.recommendation.action !== 'order').map((p) => p.productCode).join(', '));
+  const tooMuch = ordering.filter((p) => p.recommendation.litres > p.recommendation.dailyRate * p.recommendation.coversDays - p.realStock + 1);
+  check(tooMuch.length === 0, 'no order is ever more than the whole period with nothing on order',
+    tooMuch.slice(0, 3).map((p) => `${p.productCode}: ${p.recommendation.litres}`).join(' | '));
+  // The screens' LOW is "order now, it still lands in time": Demand Planning must agree there is something to do.
+  // Automatic minimums only: a typed minimum on an oil nothing draws on is not
+  // a demand Demand Planning knows about (Gingerbread A: Low there, idle here).
+  const lowButSafe = list.filter((p) => p.category === 'OILS' && rep.has(p.id) && p.minStockAuto != null && getStockStatus(p).key === 'LOW'
+    && rep.get(p.id).safetyStatus === 'Safe');
+  check(lowButSafe.length === 0, 'Low Stock on an automatic minimum is never "Safe" in Demand Planning',
+    lowButSafe.slice(0, 5).map((p) => p.productCode).join(', '));
 
   if (failed) {
     console.log('\n--- server log ---');

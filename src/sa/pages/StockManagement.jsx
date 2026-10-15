@@ -160,6 +160,7 @@ export default function StockManagement({ user }) {
   const getStockStatus = (product) => {
     const key = sharedStockStatus(product).key;
     if (key === 'OUT' || key === 'NEGATIVE') return { label: 'Out of Stock', class: 'red' };
+    if (key === 'CRITICAL') return { label: 'Critical', class: 'red' };
     if (key === 'LOW') return { label: 'Low Stock', class: 'yellow' };
     return { label: 'Healthy', class: 'green' };
   };
@@ -172,7 +173,9 @@ export default function StockManagement({ user }) {
     // An inactive row is badged INACTIVE, not by stock — keep it out of the
     // stock chips so the list and the badges agree (code review).
     const matchesStatus = statusFilter === 'ALL'
-      || ((product.status || 'active') === 'active' && getStockStatus(product).label === statusFilter);
+      || ((product.status || 'active') === 'active' && (getStockStatus(product).label === statusFilter
+        // "Low Stock" is everything below its minimum, Critical included.
+        || (statusFilter === 'Low Stock' && getStockStatus(product).label === 'Critical')));
     return matchesSearch && matchesCategory && matchesStatus;
   });
 
@@ -230,6 +233,7 @@ export default function StockManagement({ user }) {
             {[
               { value: 'ALL',           label: 'All Status',    color: null },
               { value: 'Healthy',       label: '✅ Healthy',    color: '#22c55e' },
+              { value: 'Critical',      label: '🚨 Critical',   color: '#f87171' },
               { value: 'Low Stock',     label: '⚠️ Low Stock',  color: '#fbbf24' },
               { value: 'Out of Stock',  label: '🔴 Out of Stock', color: '#ef4444' },
             ].map(s => (

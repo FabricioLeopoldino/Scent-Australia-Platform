@@ -5,9 +5,9 @@ import {
   RotateCcw, ShoppingCart, X, Info, TrendingDown,
   Download, FlaskConical, Cpu, Beaker, Factory, Truck
 } from 'lucide-react';
-import { exportToShopifyCSV, exportLowStockToShopifyCSV } from '../utils/shopifyExport';
+import { exportToShopifyCSV } from '../utils/shopifyExport';
 import { displayStock, displayUnit } from '../utils/unitConversion';
-import { isLowStock, getStockStatus as sharedStockStatus, isReorderSoon, REORDER_SOON_FACTOR, effectiveMin } from '../utils/stockStatus';
+import { isLowStock, getStockStatus as sharedStockStatus, isReorderSoon, REORDER_SOON_FACTOR, effectiveMin, coveredStock } from '../utils/stockStatus';
 import { GlowingEffect } from '../components/GlowingEffect';
 
 export default function Dashboard({ user }) {
@@ -125,7 +125,7 @@ export default function Dashboard({ user }) {
   // left out of the low-stock count and badged "Low Stock" at once (code review).
   const getStockStatus = (product) => {
     const s = sharedStockStatus(product);
-    if (s.key === 'NEGATIVE' || s.key === 'OUT') return { label: s.label, badge: 'badge-danger' };
+    if (s.key === 'NEGATIVE' || s.key === 'OUT' || s.key === 'CRITICAL') return { label: s.label, badge: 'badge-danger' };
     if (s.key === 'LOW') return { label: 'Low Stock', badge: 'badge-warning' };
     if (isReorderSoon(product)) return { label: 'Reorder Soon', badge: 'badge-warning' };
     return { label: 'Healthy', badge: 'badge-success' };
@@ -159,7 +159,24 @@ export default function Dashboard({ user }) {
     );
   }
 
-  const lowStockProducts = products.filter(isLowStock);
+  // An oil is alerted only when its minimum is automatic, i.e. it has demand
+  // (Salesforce, sales or technician refills). Owner, 2026-10-15: a typed
+  // minimum on an oil nothing draws on — Gingerbread A, 2 L against 5 L — is
+  // not a reason to buy; when a client needs it, Salesforce or the order will
+  // say so. Every other category keeps its typed minimum, as before.
+  // If the automatic minimums could not be worked out at all (none arrived),
+  // every oil falls back to its typed minimum, as the server promises —
+  // rather than the card going silent on oils (code review).
+  // Most urgent first — only ten are shown: Critical before Low, then the
+  // least covered against its own minimum.
+  const autoKnown = products.some(p => p.minStockAuto != null);
+  const lowStockProducts = products
+    .filter(p => p.category !== 'OILS' || !autoKnown || p.minStockAuto != null)
+    .map(p => ({ p, key: sharedStockStatus(p).key }))
+    .filter(x => x.key === 'LOW' || x.key === 'CRITICAL')
+    .map(x => ({ ...x, share: coveredStock(x.p) / (effectiveMin(x.p) || 1) }))
+    .sort((a, b) => ((b.key === 'CRITICAL') - (a.key === 'CRITICAL')) || (a.share - b.share))
+    .map(x => x.p);
 
   // ── Machines: the reorder watch ────────────────────────────────────────────
   // Asked for directly by the business on 2026-09-17 — "super important we don't
@@ -194,7 +211,7 @@ export default function Dashboard({ user }) {
     p.category === 'SCENT_MACHINES' && p.status !== 'inactive');
   const allMachines = machineCatalogue.filter(p => p.reorderWatch !== false);
   const excludedCount = machineCatalogue.length - allMachines.length;
-  const machineRank = { NEGATIVE: 0, OUT: 1, LOW: 2, HEALTHY: 3 };
+  const machineRank = { NEGATIVE: 0, OUT: 1, CRITICAL: 2, LOW: 2, HEALTHY: 3 };
   const machinesNeedingAction = allMachines
     .filter(m => sharedStockStatus(m).key !== 'HEALTHY' || isReorderSoon(m))
     .sort((a, b) => {
@@ -268,7 +285,7 @@ export default function Dashboard({ user }) {
         <div style={{ display: 'flex', gap: '10px' }}>
           <button
             className="btn btn-danger"
-            onClick={() => exportLowStockToShopifyCSV(products)}
+            onClick={() => exportToShopifyCSV(lowStockProducts)}
             disabled={lowStockProducts.length === 0}
             style={{ display: 'flex', alignItems: 'center', gap: 6 }}
           >
@@ -781,9 +798,14 @@ export default function Dashboard({ user }) {
                   border: '1px solid rgba(245,158,11,0.15)',
                 }}>
                   <div>
-                    <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 13, color: 'var(--text-primary)' }}>{product.name}</div>
+                    <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 13, color: 'var(--text-primary)' }}>
+                      {product.name}
+                      {sharedStockStatus(product).key === 'CRITICAL' && (
+                        <span className="badge badge-danger" style={{ fontSize: 10, marginLeft: 8 }}>Critical</span>
+                      )}
+                    </div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                      {product.productCode} • {product.category === 'MACHINES_SPARES' ? 'Spares' : product.category === 'RAW_MATERIALS' ? 'Raw Materials' : 'Oils'}
+                      {product.productCode} • {{ MACHINES_SPARES: 'Spares', RAW_MATERIALS: 'Raw Materials', SCENT_MACHINES: 'Machines', OILS: 'Oils' }[product.category] || product.category}
                     </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
