@@ -13,6 +13,7 @@ import transfersRouter from './platform/transfers.js';
 import reportsRouter from './platform/reports.js';
 import { router as saRouter, runSaStartupMigrations } from './sa/index.js';
 import { shopifyWebhookReceiver } from './platform/webhooks.js';
+import { mountMcp } from './platform/mcp.js';
 // CJS interop (Appendix A 9b): default import = module.exports
 import smModule from './sm/index.cjs';
 const { smRouter, runSmStartupMigrations, syncPlatformUsersToSm, smStartSyncCron, smRegisterWebhooks } = smModule;
@@ -147,6 +148,16 @@ app.get('/api/health', (_req, res) => {
     ts: new Date().toISOString(),
   });
 });
+
+// ── Claude connector (MCP, read only — PRD_MCP_CONNECTOR.md) ─────────────
+// Its own OAuth endpoints live at the root (/.well-known/*, /authorize,
+// /token, /register, /revoke) and the connector at /mcp, all outside /api:
+// it authenticates with its own tokens, then reads the platform's GET routes
+// as the signed-in user. Mounted before the SPA catch-all.
+// An optional connector must never take SA down: a bad setting turns it off.
+if (isDbConfigured()) {
+  try { mountMcp(app); } catch (e) { console.error('[mcp] Claude connector NOT mounted:', e.message); }
+}
 
 // ── Auth gate (FR-AUTH-5): all /api/* except login, webhooks, health ─────
 const PUBLIC_API_PATHS = ['/platform/auth/login', '/health'];

@@ -113,6 +113,45 @@ export async function runPlatformMigrations() {
     )
   `);
 
+  // ── Claude connector (MCP, read-only — PRD_MCP_CONNECTOR.md) ───────────
+  // OAuth state for the connector. Codes and tokens are stored as SHA-256
+  // hashes, never in the clear; a registered client keeps the secret the SDK
+  // compares against, as the SDK requires. Expired codes and tokens are
+  // deleted as new ones are issued. Platform schema only: nothing touches sa.
+  await q(`
+    CREATE TABLE IF NOT EXISTS platform.mcp_clients (
+      client_id   TEXT PRIMARY KEY,
+      info        JSONB NOT NULL,
+      created_at  TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  await q(`
+    CREATE TABLE IF NOT EXISTS platform.mcp_auth_codes (
+      code_hash       TEXT PRIMARY KEY,
+      client_id       TEXT NOT NULL,
+      user_id         INTEGER NOT NULL REFERENCES platform.users(id) ON DELETE CASCADE,
+      code_challenge  TEXT NOT NULL,
+      redirect_uri    TEXT NOT NULL,
+      scopes          TEXT[] NOT NULL DEFAULT '{}',
+      resource        TEXT,
+      expires_at      TIMESTAMP NOT NULL,
+      used_at         TIMESTAMP
+    )
+  `);
+  await q(`
+    CREATE TABLE IF NOT EXISTS platform.mcp_tokens (
+      token_hash  TEXT PRIMARY KEY,
+      kind        TEXT NOT NULL CHECK (kind IN ('access', 'refresh')),
+      client_id   TEXT NOT NULL,
+      user_id     INTEGER NOT NULL REFERENCES platform.users(id) ON DELETE CASCADE,
+      scopes      TEXT[] NOT NULL DEFAULT '{}',
+      resource    TEXT,
+      expires_at  TIMESTAMP NOT NULL,
+      revoked_at  TIMESTAMP,
+      created_at  TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
   // ── Shopify store config (D12: TWO stores — "Scent = SA · Muse = MUSE+SM")
   // Scent store: SA fulfillment events only.
   await q(`

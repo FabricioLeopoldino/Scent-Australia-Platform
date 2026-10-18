@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { exportToShopifyCSV } from '../utils/shopifyExport';
 import { displayStock, displayUnit } from '../utils/unitConversion';
-import { isLowStock, getStockStatus as sharedStockStatus, isReorderSoon, REORDER_SOON_FACTOR, effectiveMin, coveredStock } from '../utils/stockStatus';
+import { isLowStock, getStockStatus as sharedStockStatus, isReorderSoon, REORDER_SOON_FACTOR, effectiveMin, lowStockAlertItems } from '../utils/stockStatus';
 import { GlowingEffect } from '../components/GlowingEffect';
 
 const LOW_PREVIEW = 10; // Low Stock Alerts rows shown before "Show all"
@@ -163,23 +163,9 @@ export default function Dashboard({ user }) {
     );
   }
 
-  // An oil is alerted only when its minimum is automatic, i.e. it has demand
-  // (Salesforce, sales or technician refills). Owner, 2026-10-15: a typed
-  // minimum on an oil nothing draws on — Gingerbread A, 2 L against 5 L — is
-  // not a reason to buy; when a client needs it, Salesforce or the order will
-  // say so. Every other category keeps its typed minimum, as before.
-  // If the automatic minimums could not be worked out at all (none arrived),
-  // every oil falls back to its typed minimum, as the server promises —
-  // rather than the card going silent on oils (code review).
-  // Most urgent first — the top LOW_PREVIEW show until "Show all": Critical
-  // before Low, then the least covered against its own minimum.
-  const autoKnown = products.some(p => p.minStockAuto != null);
-  const lowStockItems = products
-    .filter(p => p.category !== 'OILS' || !autoKnown || p.minStockAuto != null)
-    .map(p => ({ p, key: sharedStockStatus(p).key }))
-    .filter(x => x.key === 'LOW' || x.key === 'CRITICAL')
-    .map(x => ({ ...x, share: coveredStock(x.p) / (effectiveMin(x.p) || 1) }))
-    .sort((a, b) => ((b.key === 'CRITICAL') - (a.key === 'CRITICAL')) || (a.share - b.share));
+  // The Low Stock Alerts list — rule and order live in utils/stockStatus so the
+  // Claude connector returns exactly this list too.
+  const lowStockItems = lowStockAlertItems(products);
   const lowStockProducts = lowStockItems.map(x => x.p);
   const showingAllLow = showAllLow && lowStockItems.length > LOW_PREVIEW;
 

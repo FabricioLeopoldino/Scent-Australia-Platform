@@ -105,3 +105,27 @@ export function isReorderSoon(product) {
   const min = effectiveMin(product);
   return min > 0 && coveredStock(product) <= min * REORDER_SOON_FACTOR;
 }
+
+/**
+ * The Dashboard's Low Stock Alerts, most urgent first: [{ p, key, share }].
+ *
+ * An oil is alerted only when its minimum is automatic, i.e. it has demand
+ * (Salesforce, sales or technician refills). Owner, 2026-10-15: a typed
+ * minimum on an oil nothing draws on — Gingerbread A, 2 L against 5 L — is
+ * not a reason to buy; when a client needs it, Salesforce or the order will
+ * say so. Every other category keeps its typed minimum. If no automatic
+ * minimum arrived at all, every oil falls back to its typed minimum rather
+ * than the list going silent on oils. Critical before Low, then the least
+ * covered against its own minimum.
+ *
+ * Shared by the Dashboard card and the Claude connector (server/platform/mcp.js).
+ */
+export function lowStockAlertItems(products) {
+  const autoKnown = products.some((p) => p.minStockAuto != null);
+  return products
+    .filter((p) => p.category !== 'OILS' || !autoKnown || p.minStockAuto != null)
+    .map((p) => ({ p, key: getStockStatus(p).key }))
+    .filter((x) => x.key === 'LOW' || x.key === 'CRITICAL')
+    .map((x) => ({ ...x, share: coveredStock(x.p) / (effectiveMin(x.p) || 1) }))
+    .sort((a, b) => ((b.key === 'CRITICAL') - (a.key === 'CRITICAL')) || (a.share - b.share));
+}
