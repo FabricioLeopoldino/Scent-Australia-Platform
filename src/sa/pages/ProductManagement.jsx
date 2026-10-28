@@ -1109,20 +1109,35 @@ export default function ProductManagement({ user, libraryMode = false, company =
                           "Inc" (visual check, 25 Oct). Always SA, then every other
                           stock that is not zero — shown even for an all-SA oil, or
                           the total reads as each company's balance (owner, 27 Oct).
-                          Main store in blue: oil waiting for its split. */}
-                      {fullLibrary && (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', columnGap: 8, fontSize: 11, lineHeight: 1.5, marginTop: 4, whiteSpace: 'nowrap', justifyContent: 'start' }}>
-                          {SECTORS.filter((s) => s.key === 'SA' || Math.abs(product.sectors?.[s.key] || 0) > 0.0005).flatMap((s) => {
-                            const v = product.sectors?.[s.key] || 0;
-                            const style = { color: v < 0 ? '#f87171' : s.key === 'MAIN' ? '#38bdf8' : 'var(--text-secondary)', fontWeight: v < 0 ? 700 : undefined };
-                            const title = v < 0 ? `${s.label} is below zero — shown in red, never blocked` : s.label;
-                            return [
-                              <span key={`${s.key}-l`} style={style} title={title}>{s.short}</span>,
-                              <span key={`${s.key}-v`} style={{ ...style, textAlign: 'right' }} title={title}>{displayStock(v, product.unit)}</span>,
-                            ];
-                          })}
-                        </div>
-                      )}
+                          Main store in blue: oil waiting for its split. MUSE as one
+                          figure, then its units under it (owner, 29 Oct: "MUSE total
+                          20 L, Atelier 10, Library 5, Archive 5"); MUSE's own shared
+                          stock reads "Shared", so it is not taken for the total. */}
+                      {fullLibrary && (() => {
+                        const val = (k) => product.sectors?.[k] || 0;
+                        const shown = (k) => Math.abs(val(k)) > 0.0005;
+                        const museParts = SECTORS.filter((s) => s.company === 'MUSE' && shown(s.key));
+                        const lines = [
+                          ...(shown('MAIN') ? [{ key: 'MAIN', short: 'Main', label: 'Main store', v: val('MAIN') }] : []),
+                          { key: 'SA', short: 'SA', label: 'SA', v: val('SA') },
+                          ...(museParts.length ? [
+                            { key: 'MUSE_TOTAL', short: 'MUSE total', label: 'MUSE, all units', v: museParts.reduce((t, s) => t + val(s.key), 0) },
+                            ...museParts.map((s) => ({ key: s.key, short: s.key === 'MUSE' ? 'Shared' : s.short, label: s.label, v: val(s.key), sub: true })),
+                          ] : []),
+                        ];
+                        return (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', columnGap: 8, fontSize: 11, lineHeight: 1.5, marginTop: 4, whiteSpace: 'nowrap', justifyContent: 'start' }}>
+                            {lines.flatMap((l) => {
+                              const style = { color: l.v < 0 ? '#f87171' : l.key === 'MAIN' ? '#38bdf8' : 'var(--text-secondary)', fontWeight: l.v < 0 ? 700 : undefined };
+                              const title = l.v < 0 ? `${l.label} is below zero — shown in red, never blocked` : l.label;
+                              return [
+                                <span key={`${l.key}-l`} style={{ ...style, ...(l.sub && { paddingLeft: 10 }) }} title={title}>{l.short}</span>,
+                                <span key={`${l.key}-v`} style={{ ...style, textAlign: 'right' }} title={title}>{displayStock(l.v, product.unit)}</span>,
+                              ];
+                            })}
+                          </div>
+                        );
+                      })()}
                     </td>
                     {!fullLibrary && <td>{displayStock(effectiveMin(product), product.unit)}{product.minStockAuto != null && ' (auto)'}</td>}
                     {!fullLibrary && (
