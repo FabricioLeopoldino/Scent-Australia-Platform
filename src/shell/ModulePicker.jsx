@@ -1,13 +1,13 @@
 import { Package, FlaskConical, Sparkles, Factory, Users, LogOut, Droplets, History } from 'lucide-react';
-import { SYSTEM_NAMES } from '../../shared/business-names.js';
+import { SYSTEM_NAMES, SA_DISPLAY_NAME } from '../../shared/business-names.js';
 
 // Module Picker — behavioral spec in PRD Appendix B.
-// Tiles: SA / SM enabled by user.modules; MUSE always "Coming soon" (B6).
+// Tiles: SA / SM enabled by user.modules; a tile marked comingSoon shows but cannot open (The Archive, until it has products).
 // No-access tiles are hidden (Appendix B default). B2: never auto-skip.
 const MODULES = [
   {
     key: 'SA',
-    title: 'Scent Stock Manager',
+    title: SA_DISPLAY_NAME,
     subtitle: 'Oils · Machines · Demand Planning',
     icon: Package,
     logo: '/logo-light.png',       // Scent Australia wordmark (SA & SM share it, owner 2026-07-24)
@@ -16,6 +16,10 @@ const MODULES = [
   {
     // D11: Production & Operations — a VIEW over the SM module (like MUSE/D7):
     // factory floor + warehouse + shared inventory, split out of the SM tile.
+    // HIDDEN, not deleted (owner, 21 Oct 2026): unused — no packing, external
+    // processing or purchase-order records, and MUSE orders close themselves
+    // on shipment. Remove `hidden` to bring the tile back; routes stay live.
+    hidden: true,
     key: 'OPS',
     title: 'Production & Operations',
     subtitle: 'Production orders · queue · warehouse',
@@ -24,33 +28,54 @@ const MODULES = [
     accent: '#f59e0b',
     viewOf: 'SM',
   },
+  // Six tiles, in the owner's order (PRD_LIBRARY_SECTORS.md §7, 23 Oct 2026):
+  // SA Warehouse · Fragrance Library · The Atelier · The Archive · The Library
+  // · History & Activity. The keys are what user.modules stores — never rename them.
   {
-    key: 'SM',
-    title: SYSTEM_NAMES.SM,
-    subtitle: 'B2B clients · catalogs',
-    icon: FlaskConical,
-    logo: '/logo-light.png',       // same mark as SA (owner decision)
-    accent: '#b1545a',
-  },
-  {
-    // D15: friendly front door into SA's existing oils page — no new page,
-    // no second numbering sequence. SA is the single source of truth for the
-    // shared Fragrance Library; this tile just deep-links into it pre-filtered.
+    // Its own area since Stage 1 (PRD_STAGE_1_FRAGRANCE_LIBRARY.md §2.1): every
+    // oil across the main store, SA and MUSE — /library, over the SA API, so
+    // still one engine and one numbering sequence. Shown to whoever has SA;
+    // every SM and MUSE user has SA as well today (orchestrator, 26 Oct).
     key: 'FRAGLIB',
     title: 'Fragrance Library',
-    subtitle: 'Shared oils — SA · SM · MUSE',
+    subtitle: 'Main store · SA · MUSE',
     icon: Droplets,
     logo: '/fragrance-library.png', // the dropper-bottle mark the owner supplied
     accent: '#0ea5e9',
     viewOf: 'SA',
   },
   {
+    // The old Scented Merchandise B2B screens (clients, catalogs, major
+    // clients). It is MUSE's Atelier, and absorbs "SA Custom Orders (Collab)"
+    // (owner, 23 Oct).
+    key: 'SM',
+    title: SYSTEM_NAMES.SM,
+    subtitle: 'MUSE · White Label · Custom',
+    icon: FlaskConical,
+    logo: '/logo-light.png',       // same mark as SA (owner decision)
+    accent: '#b1545a',
+  },
+  {
+    // MUSE's core collection. No product is registered to it yet (all 506 MUSE
+    // finished goods are Library on 23 Oct), so the tile waits: its screens are
+    // built on real data once the ten Archive fragrances are registered.
+    key: 'ARCHIVE',
+    title: 'The Archive',
+    subtitle: 'MUSE · Core collection',
+    icon: Sparkles,
+    logo: '/logos/muse-logo-wine.svg',
+    accent: '#d4b574',
+    viewOf: 'SM',
+    comingSoon: true,
+  },
+  {
     // MUSE is a VIEW over the SM module (same backend/segments) — the tile
     // opens the MUSE-only navigation. Entry requires SM (or explicit MUSE)
-    // access. PRD D7 amended 2026-07-09 at owner request.
+    // access. PRD D7 amended 2026-07-09 at owner request. Every MUSE product
+    // today is a Library one, so this is The Library (owner, 23 Oct).
     key: 'MUSE',
-    title: 'MUSE',
-    subtitle: 'Own brand — dashboard · catalog · stock',
+    title: 'The Library',
+    subtitle: 'MUSE · dashboard · catalog · stock',
     icon: Sparkles,
     logo: '/logos/muse-logo-wine.svg', // MUSE's own wordmark (wine, reads on the light plate)
     accent: '#d4b574',
@@ -62,7 +87,7 @@ const MODULES = [
     // Admin/root only; opens the SM shell in a focused "Reports" view at /history.
     key: 'REPORTS',
     title: 'History & Activity',
-    subtitle: 'Cross-system — SA · Scented · MUSE',
+    subtitle: 'Cross-system — SA · Atelier · MUSE',
     icon: History,
     accent: '#8b5cf6',
     viewOf: 'SM',
@@ -72,6 +97,7 @@ const MODULES = [
 
 export default function ModulePicker({ user, onPick, onLogout, onOpenUsers }) {
   const canEnter = (m) => {
+    if (m.hidden) return false;
     const mods = user.modules || [];
     if (m.roles && !m.roles.includes(user.role)) return false; // role-gated tiles (e.g. cross-system reports)
     if (mods.includes(m.key)) return true;

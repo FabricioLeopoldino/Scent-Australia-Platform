@@ -183,9 +183,15 @@ try {
 
   const st = parse(await client.callTool({ name: 'get_stock', arguments: { product: 'FRAG_0137' } }));
   const wordOf = { HEALTHY: 'Healthy', LOW: 'Low Stock', CRITICAL: 'Critical', OUT: 'Out of Stock', NEGATIVE: 'Negative Stock' };
-  check(st?.code === 'FRAG_0137' && Math.abs(st.stock.value - santal.currentStock / 1000) < 0.01 && st.stock.unit === 'L'
-    && st.status === wordOf[getStockStatus(santal).key], 'get_stock: Santal 33 stock and status equal the Fragrance Library',
-    JSON.stringify(st?.stock) + ' ' + st?.status);
+  // An oil's stock is SA's balance, its total beside it (PRD_STAGE_1_FRAGRANCE_LIBRARY.md §2.6).
+  check(st?.code === 'FRAG_0137' && Math.abs(st.stock.value - santal.saStock / 1000) < 0.01 && st.stock.unit === 'L'
+    && Math.abs(st.total?.value - santal.currentStock / 1000) < 0.01
+    && st.status === wordOf[getStockStatus(santal).key], 'get_stock: Santal 33 SA stock, total and status equal the Fragrance Library',
+    JSON.stringify(st?.stock) + ' ' + JSON.stringify(st?.total) + ' ' + st?.status);
+  // The companies the oil belongs to (its active registrations).
+  const wantIn = Object.entries(santal.registrations || {}).filter(([, r]) => r.active).map(([c]) => c);
+  check(Array.isArray(st?.registeredIn) && st.registeredIn.includes('SA') && st.registeredIn.join() === wantIn.join(),
+    'get_stock: Santal 33 says which companies it belongs to', JSON.stringify(st?.registeredIn));
   const amb = await client.callTool({ name: 'get_stock', arguments: { product: 'Santal' } });
   check(amb.isError && /More than one product matches/.test(amb.content[0].text), 'an ambiguous name asks which one, never guesses');
 

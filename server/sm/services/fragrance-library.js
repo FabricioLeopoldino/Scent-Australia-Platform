@@ -96,6 +96,29 @@ function canUseOil(exclusivity, bucket) {
   return allowed ? allowed.includes(bucket) : false
 }
 
+// Which MUSE stock production draws from (PRD_STAGE_1_FRAGRANCE_LIBRARY.md S4;
+// keys in shared/sectors.js). MUSE retail by the product's unit; client work —
+// the old Scented Merchandise, standard or major — is MUSE The Atelier. The
+// keys of SECTOR_FOR_UNIT are the stored sm.products.business_unit values.
+// Both callers pass the unit of the VARIANT sold or made, never its master's
+// (every master is 'library'): the fulfilment webhook (the sold sm product)
+// and the manufacturing route (the variant under the line's master carrying
+// its oil). Unknown → The Library.
+const SECTOR_FOR_UNIT = { atelier: 'MUSE_ATELIER', archive: 'MUSE_ARCHIVE', library: 'MUSE_LIBRARY' }
+function productionSector(segment, businessUnit) {
+  if (segment !== 'MUSE') return 'MUSE_ATELIER'
+  return SECTOR_FOR_UNIT[businessUnit] || 'MUSE_LIBRARY'
+}
+
+// The stock side of a debit, linked to its ledger row: the unit's own oil,
+// then MUSE (shared), then SA's shelf for that unit. The rule lives in ONE
+// place, the sa.sector_draw database function (sa/sectors.js), shared with the
+// SA screens — this file is CommonJS and cannot import the ESM one.
+async function drawFromSector(tq, oilId, sector, qty, notes, transactionId) {
+  await tq(`SELECT sa.sector_draw($1,$2,$3,'production',NULL,NULL,$4,$5,NULL)`,
+    [oilId, sector, qty, notes || null, transactionId])
+}
+
 function resolveSegment(segment) {
   const s = SEGMENT_MAP[segment]
   if (!s) throw new Error(`Unknown segment "${segment}" for Fragrance Library consumption (expected MUSE, STANDARD or MAJOR)`)
@@ -147,9 +170,10 @@ async function withSaSearchPath(tq, fn) {
  * @param qtyMl    quantity to deduct, in the oil's own unit (mL)
  * @param segment  'MUSE' | 'STANDARD' | 'MAJOR' — the production order's master segment
  * @param notes    free-text audit note (e.g. order number, product name)
+ * @param businessUnit  the MUSE product's unit (atelier/archive/library) — picks the sector
  * @returns { oilId, name, code, qtyMl, newStock }
  */
-async function consumeFragranceOil(tq, oilId, qtyMl, segment, notes) {
+async function consumeFragranceOil(tq, oilId, qtyMl, segment, notes, businessUnit) {
   const qty = parseFloat(qtyMl)
   if (!oilId || !(qty > 0)) throw new Error('consumeFragranceOil requires oilId and a positive qtyMl')
   const { exclusivityBucket, debitType } = resolveSegment(segment)
@@ -161,12 +185,13 @@ async function consumeFragranceOil(tq, oilId, qtyMl, segment, notes) {
     `UPDATE sa.products SET "currentStock" = $1, "stockBoxes" = $2 WHERE id = $3`,
     [newStock, Math.floor(newStock / (oil.unitPerBox || 1)), oil.id]
   ))
-  await tq(
+  const tx = await tq(
     `INSERT INTO sa.transactions
        (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes)
-     VALUES ($1,$2,$3,'OILS',$4,$5,$6,$7,$8)`,
+     VALUES ($1,$2,$3,'OILS',$4,$5,$6,$7,$8) RETURNING id`,
     [oil.id, oil.productCode || oil.tag, oil.name, debitType, qty, oil.unit || 'mL', newStock, notes || null]
   )
+  await drawFromSector(tq, oil.id, productionSector(segment, businessUnit), qty, notes, tx.rows[0].id)
   return { oilId: oil.id, name: oil.name, code: oil.productCode, qtyMl: qty, newStock }
 }
 
@@ -188,13 +213,19 @@ async function restoreFragranceOil(tq, oilId, qtyMl, segment, notes) {
     `UPDATE sa.products SET "currentStock" = $1, "stockBoxes" = $2 WHERE id = $3`,
     [newStock, Math.floor(newStock / (oil.unitPerBox || 1)), oil.id]
   ))
-  await tq(
+  const tx = await tq(
     `INSERT INTO sa.transactions
        (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes)
-     VALUES ($1,$2,$3,'OILS',$4,$5,$6,$7,$8)`,
+     VALUES ($1,$2,$3,'OILS',$4,$5,$6,$7,$8) RETURNING id`,
     [oil.id, oil.productCode || oil.tag, oil.name, reversalType, qty, oil.unit || 'mL', newStock, notes || null]
   )
+  // Oil coming back goes onto the shelf, i.e. to SA (the remainder): nothing
+  // links a reversal to the draw it undoes, so it cannot know which sector
+  // that came from. ponytail: link reversals to their draw if restores start
+  // to matter — today nothing calls this outside its own tests.
+  await tq(`INSERT INTO sa.sector_movements (product_id, from_sector, to_sector, quantity, kind, notes, transaction_id, cost_per_unit)
+            VALUES ($1,'USED','SA',$2,'reversal',$3,$4, sa.sector_avg_cost($1))`, [oil.id, qty, notes || null, tx.rows[0].id])
   return { oilId: oil.id, name: oil.name, code: oil.productCode, qtyMl: qty, newStock }
 }
 
-module.exports = { consumeFragranceOil, restoreFragranceOil, SEGMENT_MAP, canUseOil, EXCLUSIVITY_ALLOWS }
+module.exports = { consumeFragranceOil, restoreFragranceOil, SEGMENT_MAP, canUseOil, EXCLUSIVITY_ALLOWS, SECTOR_FOR_UNIT }

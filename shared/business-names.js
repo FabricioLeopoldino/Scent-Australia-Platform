@@ -37,6 +37,10 @@ export const SYSTEM_NAMES = {
   Platform: 'Platform',
 };
 
+// What people see as the SA module's name (owner, 21 Oct 2026; was "Scent
+// Stock Manager"). Not SYSTEM_NAMES.SA, which is a filter value on the wire.
+export const SA_DISPLAY_NAME = 'Scent Australia (SA Warehouse)';
+
 // ── Reporting axis: Muse's three divisions, in the owner's own words.
 //
 //   The Atelier   customisation and bespoke — personalised labels through to

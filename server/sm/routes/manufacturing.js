@@ -140,15 +140,29 @@ async function startProductionInternal(orderId, userId, targetStatus = 'in_produ
     // debit it now, tagged with the order's segment (SA/SM-Std/SM-Major/MUSE
     // usage traceability, D14.5). Negative stock is allowed here on purpose —
     // see fragrance-library.js.
+    // The unit of the VARIANT being made picks the MUSE stock the oil is drawn
+    // from first (Stage 1, fix rounds 1–2). Not the master's: every master
+    // (TS10, RS100, RD200…) is 'library', and The Library and The Archive share
+    // masters. The variant is the sm product under that master (product_type =
+    // the master's code, as the order screens join) carrying this line's oil.
+    // When several match, the one the line names first (`variant_name`, which
+    // the MUSE webhook writes from the sold variant — fix round 3, F2), then a
+    // live one before an archived one, then the oldest (lowest id). None → The
+    // Library.
     const oilLines = await tq(
-      `SELECT id, oil_id, oil_qty_ml FROM production_order_lines
-       WHERE production_order_id = $1 AND oil_id IS NOT NULL AND oil_qty_ml > 0`,
+      `SELECT pol.id, pol.oil_id, pol.oil_qty_ml,
+              (SELECT v.business_unit FROM products v
+                 JOIN products m ON m.id = v.master_product_id
+                WHERE m.product_code = pol.product_type AND m.category = 'FINISHED_GOOD' AND v.oil_id = pol.oil_id
+                ORDER BY (v.name IS DISTINCT FROM pol.variant_name), (v.archived IS TRUE), v.id LIMIT 1) AS business_unit
+         FROM production_order_lines pol
+        WHERE pol.production_order_id = $1 AND pol.oil_id IS NOT NULL AND pol.oil_qty_ml > 0`,
       [orderId]
     )
     if (oilLines.rows.length > 0) {
       const segment = await resolveOrderSegment(order.rows[0], tq)
       for (const line of oilLines.rows) {
-        await consumeFragranceOil(tq, line.oil_id, line.oil_qty_ml, segment, `Production: ${order.rows[0].order_number}`)
+        await consumeFragranceOil(tq, line.oil_id, line.oil_qty_ml, segment, `Production: ${order.rows[0].order_number}`, line.business_unit)
       }
     }
 

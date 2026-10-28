@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Search, FlaskConical, Lock, Info } from 'lucide-react'
 import axios from 'axios'
+import { SA_DISPLAY_NAME } from '../../../shared/business-names.js'
 import { useToast } from '../SMModule.jsx'
 import { splitVolume } from '../utils/volume.js'
 import GlowingEffect from '../components/GlowingEffect.jsx'
@@ -56,7 +57,7 @@ export default function Fragrances() {
       {/* Read-only note — oil is managed in SA */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.25)', borderRadius: 8, padding: '9px 14px', margin: '14px 0 22px', fontSize: 12.5, color: 'rgba(232,234,242,0.7)' }}>
         <Info size={14} color="#60a5fa" style={{ flexShrink: 0 }} />
-        Read-only view. Oils are registered and their stock managed in <strong style={{ color: '#e8eaf2' }}>Scent Stock Manager (SA)</strong> — open the <strong style={{ color: '#e8eaf2' }}>Fragrance Library</strong> tile to manage them.
+        Read-only view. Oils are registered and their stock managed in <strong style={{ color: '#e8eaf2' }}>{SA_DISPLAY_NAME}</strong> — open the <strong style={{ color: '#e8eaf2' }}>Fragrance Library</strong> tile to manage them.
       </div>
 
       {/* Stats */}
@@ -91,7 +92,7 @@ export default function Fragrances() {
         <div style={{ textAlign: 'center', padding: '60px 0', color: 'rgba(232,234,242,0.3)', fontSize: 14 }}>
           <FlaskConical size={36} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
           <div>{oils.length === 0 ? 'No oils in the Fragrance Library yet' : 'No matches'}</div>
-          {oils.length === 0 && <div style={{ fontSize: 12, marginTop: 6 }}>Register oils in Scent Stock Manager (SA)</div>}
+          {oils.length === 0 && <div style={{ fontSize: 12, marginTop: 6 }}>Register oils in {SA_DISPLAY_NAME}</div>}
         </div>
       ) : (
         <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'visible', position: 'relative' }}>

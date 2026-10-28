@@ -1,21 +1,34 @@
 import { useState, useEffect, useRef } from 'react';
-import { useSearch } from 'wouter';
+import { useSearch, useLocation } from 'wouter';
 import { useToast } from '../components/Toast';
 import ConfirmModal from '../components/ConfirmModal';
 import { displayStock } from '../utils/unitConversion';
-import { getStockStatus as getSharedStockStatus, effectiveMin } from '../utils/stockStatus';
+import { getStockStatus as getSharedStockStatus, effectiveMin, shelfStock, isSaProduct } from '../utils/stockStatus';
 import { exportProductsToExcel } from '../utils/excelExport';
 import BinLocationInput from '../components/BinLocationInput';
 import { GlowingEffect } from '../components/GlowingEffect';
 import MlHelper from '../components/MlHelper';
 import { LiquidMetalButton } from '../components/LiquidMetalButton';
+import ReceiveSplitModal from '../components/ReceiveSplitModal';
+import RegisterFragranceModal from '../components/RegisterFragranceModal';
+import { SECTORS } from '../../../shared/sectors.js';
 
 // libraryMode (D15 follow-up, 2026-07-30): renders this exact same page — same
 // engine, same product-code sequence, same endpoints — as a locked-down,
 // oils-only "Fragrance Library" experience instead of the generic Products
 // screen. No new data path: it only hides/renames UI so oil registration has a
 // single, dedicated-feeling door that can't wander into other categories.
-export default function ProductManagement({ user, libraryMode = false }) {
+//
+// Stage 1 (PRD_STAGE_1_FRAGRANCE_LIBRARY.md §2.2, §2.6) makes it two pages:
+//   company="SA" → SA Fragrances, in SA's menu: SA's oils, SA's balance;
+//   no company   → the Fragrance Library's All stock: every oil, its total and
+//                  where it sits, and who it is registered with.
+// Every Stage 1 branch tests saView / fullLibrary, never bare libraryMode, so
+// the Products page cannot move.
+export default function ProductManagement({ user, libraryMode = false, company = null }) {
+  const saView = libraryMode && company === 'SA';
+  const fullLibrary = libraryMode && !company;
+  const [, navigate] = useLocation();
   const showToast = useToast();
   const [confirmState, setConfirmState] = useState(null);
   const [products, setProducts] = useState([]);
@@ -28,6 +41,12 @@ export default function ProductManagement({ user, libraryMode = false }) {
   // Same chips as the Stock page (owner, 2026-10-15). "Out of Stock" takes
   // negative too: both mean nothing on the shelf.
   const [statusFilter, setStatusFilter] = useState('ALL');
+  // All stock only: which company the oil is registered with (S6).
+  const [companyFilter, setCompanyFilter] = useState('ALL');
+  const [registerFor, setRegisterFor] = useState(null);   // the oil open in the Register window
+  const [splitReceive, setSplitReceive] = useState(null); // { product, order } — an oil being received
+  const [registerInSa, setRegisterInSa] = useState(true); // Add Oil, All stock: register it in SA as well
+  const [addForSku, setAddForSku] = useState(null);       // Add Oil opened from a PO line's unknown code
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
 
@@ -97,8 +116,28 @@ export default function ProductManagement({ user, libraryMode = false }) {
   // convenience, no new data path. Ignored in libraryMode, which is always OILS.
   const search = useSearch();
   useEffect(() => {
-    if (libraryMode) return;
     const params = new URLSearchParams(search);
+    // All stock: ?add=<Shopify code> — "Register now" on a PO line whose code
+    // no oil carries opens Add Oil with the tag the code's number gives. The
+    // server mints the oil's Shopify codes from the tag digits, so the line
+    // matches after "Read again" (a non-standard code will not, and says so).
+    const sku = fullLibrary && ['admin', 'root'].includes(user.role) ? params.get('add') : null;
+    if (sku) {
+      const digits = sku.match(/(\d+)$/)?.[1];
+      setEditingProduct(null);
+      resetForm();
+      if (digits) setFormData((f) => ({ ...f, tag: `#SA${digits}` }));
+      setRegisterInSa(true);
+      setAddForSku(sku);
+      setShowAddModal(true);
+    }
+    // All stock: ?find=<code>[&inactive=1] — a PO line whose code an existing
+    // (possibly inactive) oil carries lands on that oil, ready to Reactivate (S5).
+    if (fullLibrary && params.get('find')) {
+      setSearchTerm(params.get('find'));
+      setShowInactive(params.get('inactive') === '1');
+    }
+    if (libraryMode) return;
     const requestedFilter = params.get('filter');
     if (requestedFilter) setCategoryFilter(requestedFilter);
   }, [search, libraryMode]);
@@ -115,7 +154,7 @@ export default function ProductManagement({ user, libraryMode = false }) {
   // break again if someone removes the keys.
   useEffect(() => {
     filterProducts();
-  }, [products, categoryFilter, searchTerm, showIncomingOnly, showInactive, libraryMode, statusFilter]);
+  }, [products, categoryFilter, searchTerm, showIncomingOnly, showInactive, libraryMode, statusFilter, companyFilter]);
 
   // Compute next Tag/ProductCode suggestion when category changes (new product only)
   useEffect(() => {
@@ -148,7 +187,9 @@ export default function ProductManagement({ user, libraryMode = false }) {
 
   const fetchProducts = async () => {
     try {
-      const res = await fetch('/api/products');
+      // All stock needs only the oils. SA Fragrances keeps the whole list, so
+      // its Excel export stays the one SA has always had.
+      const res = await fetch(fullLibrary ? '/api/products?category=OILS' : '/api/products');
       const data = await res.json();
       setProducts(Array.isArray(data) ? data : []);
       setLoading(false);
@@ -157,6 +198,10 @@ export default function ProductManagement({ user, libraryMode = false }) {
       setLoading(false);
     }
   };
+
+  const isMember = (p, c) => p.registrations?.[c]?.active === true;
+  const patchRegistrations = (id, registrations) =>
+    setProducts((prev) => prev.map((p) => (p.id === id ? { ...p, registrations } : p)));
 
   const filterProducts = () => {
     let filtered = products;
@@ -167,6 +212,15 @@ export default function ProductManagement({ user, libraryMode = false }) {
     filtered = libraryMode
       ? filtered.filter(p => p.category === 'OILS')
       : filtered.filter(p => p.category !== 'OILS');
+    // SA Fragrances lists the oils with an active SA registration (S6) — SA's
+    // membership. Inactive / Reactivate stay the oil's own status, as live (S1).
+    if (saView) filtered = filtered.filter(isSaProduct);
+    if (fullLibrary && companyFilter !== 'ALL') {
+      // Membership = an ACTIVE registration, the one rule everywhere (fix round 2, R6).
+      filtered = filtered.filter(p => companyFilter === 'NONE'
+        ? !isMember(p, 'SA') && !isMember(p, 'MUSE')
+        : isMember(p, companyFilter));
+    }
 
     if (!libraryMode && categoryFilter !== 'ALL') {
       filtered = filtered.filter(p => p.category === categoryFilter);
@@ -217,12 +271,18 @@ export default function ProductManagement({ user, libraryMode = false }) {
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formData, userId: user?.id || null })
+        body: JSON.stringify({
+          ...formData, userId: user?.id || null,
+          // A new oil is registered in SA unless All stock unticks it (C6);
+          // SA Fragrances sends nothing, so the server's default (SA) applies.
+          ...(fullLibrary && !editingProduct && { registerIn: registerInSa ? ['SA'] : [] }),
+        })
       });
 
       if (res.ok) {
         showToast(editingProduct ? 'Product updated!' : 'Product created!', 'success');
         setShowAddModal(false);
+        setAddForSku(null);
         setEditingProduct(null);
         resetForm();
         fetchProducts();
@@ -345,6 +405,9 @@ export default function ProductManagement({ user, libraryMode = false }) {
       showToast('Legacy order — clear it and re-add to receive stock', 'error');
       return;
     }
+    // An oil is received and split between the stocks (Stage 1 §2.3) — the
+    // same window on All stock and SA Fragrances, opening with all of it on SA.
+    if (product.category === 'OILS') { setSplitReceive({ product, order }); return; }
     setIncomingProduct(product);
     setReceivingOrder(order);
     setReceivingOption('full');
@@ -571,6 +634,7 @@ export default function ProductManagement({ user, libraryMode = false }) {
   };
 
   const handleEdit = (product) => {
+    setAddForSku(null);
     setEditingProduct(product);
     setFormData({
       name: product.name,
@@ -655,9 +719,11 @@ export default function ProductManagement({ user, libraryMode = false }) {
   return (
     <div className="container" style={{ paddingTop: '40px' }}>
       <div className="page-header">
-        <h2 className="page-title">{libraryMode ? 'Fragrance Library' : 'Product Management'}</h2>
+        <h2 className="page-title">{saView ? 'SA Fragrances' : fullLibrary ? 'All stock' : 'Product Management'}</h2>
         <p style={{ color: 'rgba(232,234,242,0.45)', marginTop: '8px' }}>
-          {libraryMode ? 'The single source of truth for oil — shared by SA, The Atelier and MUSE' : 'Manage all products across categories'}
+          {saView ? "SA's oils — SA's balance. The rest is in the Fragrance Library."
+            : fullLibrary ? 'Every oil — main store, SA and MUSE'
+            : 'Manage all products across categories'}
         </p>
       </div>
 
@@ -709,6 +775,8 @@ export default function ProductManagement({ user, libraryMode = false }) {
               onClick={() => {
                 setEditingProduct(null);
                 resetForm();
+                setRegisterInSa(true);
+                setAddForSku(null);
                 setShowAddModal(true);
               }}
             >
@@ -857,7 +925,30 @@ export default function ProductManagement({ user, libraryMode = false }) {
             >
               {showInactive ? '● Inactive Only' : '○ Show Inactive'}
             </button>
-            {[
+            {/* Who the oil is registered with (S6) — All stock only. */}
+            {fullLibrary && [
+              { value: 'ALL', label: 'All companies' },
+              { value: 'SA', label: 'SA' },
+              { value: 'MUSE', label: 'MUSE' },
+              { value: 'NONE', label: 'Not registered' },
+            ].map(c => (
+              <button
+                key={c.value}
+                onClick={() => setCompanyFilter(c.value)}
+                className="btn"
+                style={{
+                  background: companyFilter === c.value ? '#3b82f6' : 'rgba(255,255,255,0.04)',
+                  color: companyFilter === c.value ? 'white' : 'rgba(232,234,242,0.45)',
+                  border: companyFilter === c.value ? 'none' : '1px solid rgba(255,255,255,0.07)',
+                  fontSize: '13px',
+                  padding: '8px 16px'
+                }}
+              >
+                {c.label}
+              </button>
+            ))}
+            {/* SA's status — not on All stock (no minimum there, owner 27 Oct). */}
+            {!fullLibrary && [
               { value: 'ALL',     label: 'All Status',     color: null },
               { value: 'HEALTHY', label: '✅ Healthy',      color: '#22c55e' },
               { value: 'CRITICAL', label: '🚨 Critical',     color: '#f87171' },
@@ -902,11 +993,15 @@ export default function ProductManagement({ user, libraryMode = false }) {
                 <th>Tag</th>
                 <th>Product Code</th>
                 <th>Name</th>
-                <th>Category</th>
+                {/* Always "Oils" on All stock; the room goes to the Stock cell's lines. */}
+                {!fullLibrary && <th>Category</th>}
                 <th>Bin Location</th>
-                <th>Stock</th>
-                <th>Min Level</th>
-                <th>Status</th>
+                <th>{fullLibrary ? 'Total stock' : 'Stock'}</th>
+                {/* No minimum or status on All stock: the central store holds every
+                    company's oil, so no single minimum fits it (owner, 27 Oct). SA's
+                    minimum and status live on SA Fragrances. */}
+                {!fullLibrary && <th>Min Level</th>}
+                {!fullLibrary && <th>Status</th>}
                 <th>Incoming Orders</th>
                 <th>Supplier</th>
                 <th>Supplier Code</th>
@@ -915,7 +1010,9 @@ export default function ProductManagement({ user, libraryMode = false }) {
             </thead>
             <tbody>
               {filteredProducts.map(product => {
-                const isNegative = product.currentStock < 0;
+                // SA Fragrances shows SA's balance; Products and All stock the total.
+                const stock = saView ? shelfStock(product) : product.currentStock;
+                const isNegative = stock < 0;
                 const isInactive = (product.status || 'active') === 'inactive';
                 return (
                   <tr
@@ -962,13 +1059,25 @@ export default function ProductManagement({ user, libraryMode = false }) {
                             INACTIVE
                           </span>
                         )}
+                        {/* The companies the oil belongs to — active registrations only (S6, R6). */}
+                        {fullLibrary && ['SA', 'MUSE'].filter((c) => isMember(product, c)).map((c) => (
+                          <span key={c} title={`Registered in ${c}`} style={{
+                            padding: '1px 7px', borderRadius: 5, fontSize: 10.5, fontWeight: 700,
+                            color: c === 'SA' ? '#60a5fa' : '#d4b574',
+                            border: `1px solid ${c === 'SA' ? 'rgba(96,165,250,0.4)' : 'rgba(212,181,116,0.45)'}`,
+                          }}>
+                            {c}
+                          </span>
+                        ))}
                       </div>
                     </td>
-                    <td>
-                      <span className={`badge ${getCategoryBadge(product.category)}`}>
-                        {getCategoryLabel(product.category)}
-                      </span>
-                    </td>
+                    {!fullLibrary && (
+                      <td>
+                        <span className={`badge ${getCategoryBadge(product.category)}`}>
+                          {getCategoryLabel(product.category)}
+                        </span>
+                      </td>
+                    )}
                     <td style={{ fontSize: '12px', color: 'rgba(232,234,242,0.45)' }}>
                       {product.bin_location || '-'}
                     </td>
@@ -978,7 +1087,7 @@ export default function ProductManagement({ user, libraryMode = false }) {
                         color: isNegative ? '#dc2626' : 'inherit',
                         fontSize: isNegative ? '15px' : 'inherit'
                       }}>
-                        {displayStock(product.currentStock, product.unit)}
+                        {displayStock(stock, product.unit)}
                       </span>
                       {product.unitPerBox > 1 && (
                         <span style={{ fontSize: '11px', color: 'rgba(232,234,242,0.45)', marginLeft: '4px' }}>
@@ -992,11 +1101,31 @@ export default function ProductManagement({ user, libraryMode = false }) {
                           fontWeight: '600',
                           marginTop: '4px'
                         }}>
-                          ⚠️ {displayStock(Math.abs(product.currentStock), product.unit)} MISSING
+                          ⚠️ {displayStock(Math.abs(stock), product.unit)} MISSING
+                        </div>
+                      )}
+                      {/* Where the oil sits, under the total — inside this cell, not
+                          extra columns: those squeezed the Actions buttons to "Sect",
+                          "Inc" (visual check, 25 Oct). Always SA, then every other
+                          stock that is not zero — shown even for an all-SA oil, or
+                          the total reads as each company's balance (owner, 27 Oct).
+                          Main store in blue: oil waiting for its split. */}
+                      {fullLibrary && (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', columnGap: 8, fontSize: 11, lineHeight: 1.5, marginTop: 4, whiteSpace: 'nowrap', justifyContent: 'start' }}>
+                          {SECTORS.filter((s) => s.key === 'SA' || Math.abs(product.sectors?.[s.key] || 0) > 0.0005).flatMap((s) => {
+                            const v = product.sectors?.[s.key] || 0;
+                            const style = { color: v < 0 ? '#f87171' : s.key === 'MAIN' ? '#38bdf8' : 'var(--text-secondary)', fontWeight: v < 0 ? 700 : undefined };
+                            const title = v < 0 ? `${s.label} is below zero — shown in red, never blocked` : s.label;
+                            return [
+                              <span key={`${s.key}-l`} style={style} title={title}>{s.short}</span>,
+                              <span key={`${s.key}-v`} style={{ ...style, textAlign: 'right' }} title={title}>{displayStock(v, product.unit)}</span>,
+                            ];
+                          })}
                         </div>
                       )}
                     </td>
-                    <td>{displayStock(effectiveMin(product), product.unit)}{product.minStockAuto != null && ' (auto)'}</td>
+                    {!fullLibrary && <td>{displayStock(effectiveMin(product), product.unit)}{product.minStockAuto != null && ' (auto)'}</td>}
+                    {!fullLibrary && (
                     <td>
                       {(() => {
                         // Low counts what is on order and reads the automatic minimum (utils/stockStatus).
@@ -1005,6 +1134,7 @@ export default function ProductManagement({ user, libraryMode = false }) {
                         return <span className={`badge badge-${badge}`}>{st.key === 'HEALTHY' ? 'Healthy' : st.label}</span>;
                       })()}
                     </td>
+                    )}
                     <td>
                       {product.incomingOrders && product.incomingOrders.length > 0 ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -1116,6 +1246,28 @@ export default function ProductManagement({ user, libraryMode = false }) {
                           >
                             Edit
                           </button>
+                          {fullLibrary && (
+                            <>
+                              <button
+                                className="btn btn-secondary"
+                                onClick={() => setRegisterFor(product)}
+                                style={{ fontSize: '12px', padding: '6px 12px' }}
+                                title="Register this oil in SA or MUSE"
+                              >
+                                Register
+                              </button>
+                              {/* Main store oil waiting for its split is the usual reason to move. */}
+                              <button
+                                className="btn btn-secondary"
+                                onClick={() => navigate(`/transfers?oil=${encodeURIComponent(product.id)}`)}
+                                style={{ fontSize: '12px', padding: '6px 12px',
+                                  ...((product.sectors?.MAIN || 0) > 0 && { borderColor: '#38bdf8', color: '#38bdf8' }) }}
+                                title="Transfer, count or use this oil between the stocks"
+                              >
+                                Move
+                              </button>
+                            </>
+                          )}
                           <button
                             className="btn"
                             onClick={() => handleOpenIncomingModal(product)}
@@ -1183,6 +1335,13 @@ export default function ProductManagement({ user, libraryMode = false }) {
             </div>
 
             <form onSubmit={handleSubmit}>
+              {addForSku && (
+                <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 8, fontSize: 13,
+                  background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.3)', color: 'var(--text-secondary)' }}>
+                  For Shopify code <strong style={{ fontFamily: 'monospace', color: 'var(--text-primary)' }}>{addForSku}</strong> — the
+                  tag carries its number, so the purchase order line matches after "Read again".
+                </div>
+              )}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                 <div className="form-group">
                   <label>Product Name *</label>
@@ -1330,6 +1489,21 @@ export default function ProductManagement({ user, libraryMode = false }) {
                       <em> and </em> the Atelier — they are two units of the same business.
                       <strong> Scent Australia only</strong> is what keeps a client's Signature Fragrance out of Muse.
                       Doesn't affect Shopify.
+                    </div>
+                  </div>
+                )}
+
+                {/* A new oil is SA's unless unticked (S6). MUSE is registered with
+                    Register afterwards: it needs a commercial name and who uses it. */}
+                {fullLibrary && !editingProduct && (
+                  <div className="form-group">
+                    <label>Registration</label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 400, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={registerInSa} onChange={(e) => setRegisterInSa(e.target.checked)} />
+                      Register in SA
+                    </label>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                      For MUSE, use Register on the oil's row once it is created.
                     </div>
                   </div>
                 )}
@@ -1654,6 +1828,42 @@ export default function ProductManagement({ user, libraryMode = false }) {
             </div>
           </div>
         </div>
+      )}
+
+      {registerFor && (
+        <RegisterFragranceModal
+          product={registerFor}
+          showToast={showToast}
+          onClose={() => setRegisterFor(null)}
+          onDone={(regs) => {
+            // The row at once; the full list takes seconds to reload.
+            patchRegistrations(registerFor.id, regs);
+            setRegisterFor(null);
+            fetchProducts();
+          }}
+        />
+      )}
+
+      {splitReceive && (
+        <ReceiveSplitModal
+          poId={splitReceive.order.id}
+          orderNumber={splitReceive.order.orderNumber}
+          remaining={splitReceive.order.quantity - (splitReceive.order.quantityReceived || 0)}
+          product={splitReceive.product}
+          user={user}
+          showToast={showToast}
+          onClose={() => setSplitReceive(null)}
+          onRegistered={patchRegistrations}
+          onDone={(data) => {
+            const id = splitReceive.product.id;
+            if (data?.sectors) {
+              setProducts((prev) => prev.map((p) => p.id === id
+                ? { ...p, currentStock: data.newStock, sectors: data.sectors, saStock: data.sectors.SA } : p));
+            }
+            setSplitReceive(null);
+            fetchProducts();
+          }}
+        />
       )}
 
       {/* Receive Incoming Order Modal */}

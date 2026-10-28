@@ -4,9 +4,8 @@ import { displayStock, displayUnit } from '../utils/unitConversion';
 import BinLocationInput from '../components/BinLocationInput';
 import { GlowingEffect } from '../components/GlowingEffect';
 import MlHelper from '../components/MlHelper';
-import { LiquidMetalButton } from '../components/LiquidMetalButton';
 import ConfirmModal from '../components/ConfirmModal';
-import { getStockStatus as sharedStockStatus, effectiveMin } from '../utils/stockStatus';
+import { getStockStatus as sharedStockStatus, effectiveMin, isSaProduct } from '../utils/stockStatus';
 import OperatorPicker from '../components/OperatorPicker';
 import { reasonsFor } from '../../../shared/stock-reasons.js';
 
@@ -176,7 +175,9 @@ export default function StockManagement({ user }) {
       || ((product.status || 'active') === 'active' && (getStockStatus(product).label === statusFilter
         // "Low Stock" is everything below its minimum, Critical included.
         || (statusFilter === 'Low Stock' && getStockStatus(product).label === 'Critical')));
-    return matchesSearch && matchesCategory && matchesStatus;
+    // SA's oils only (S6): an oil MUSE holds but SA does not register would
+    // otherwise read "Out of Stock" here. Day one it hides nothing.
+    return isSaProduct(product) && matchesSearch && matchesCategory && matchesStatus;
   });
 
   if (loading) {
@@ -193,7 +194,7 @@ export default function StockManagement({ user }) {
     <div className="container" style={{ paddingTop: '40px' }}>
       <div className="page-header">
         <h2 className="page-title">STOCK MANAGEMENT</h2>
-        <LiquidMetalButton label="Tech Stock" width={130} onClick={() => window.location.href = '/sa/tech-stock'} />
+        {/* The Tech Stock button went with Tech Stock itself (retired 31/08/2026). */}
       </div>
 
       {/* Filters */}
@@ -281,7 +282,7 @@ export default function StockManagement({ user }) {
             <tbody>
               {filteredProducts.map(product => {
                 const status = getStockStatus(product);
-                const isNegative = product.currentStock < 0;
+                const isNegative = (product.saStock ?? product.currentStock) < 0;
                 return (
                   <tr
                     key={product.id}
@@ -322,7 +323,18 @@ export default function StockManagement({ user }) {
                       fontSize: '15px',
                       color: isNegative ? '#dc2626' : 'inherit'
                     }}>
-                      {displayStock(product.currentStock, product.unit)}
+                      {/* This is SA's screen: an oil shows SA's balance, the same
+                          stock its status is about and the one an adjustment here
+                          changes (PRD_STAGE_1_FRAGRANCE_LIBRARY.md S2, case 9). The
+                          total of every stock beside it when the main store or MUSE
+                          holds some. */}
+                      {displayStock(product.saStock ?? product.currentStock, product.unit)}
+                      {product.sectors && Math.abs((product.saStock ?? product.currentStock) - product.currentStock) > 0.001 && (
+                        <div style={{ fontSize: '11px', color: '#38bdf8', fontWeight: '600' }}
+                          title="The rest is in the main store or with MUSE — see the Fragrance Library">
+                          Total, all stocks: {displayStock(product.currentStock, product.unit)}
+                        </div>
+                      )}
                       {product.unitPerBox > 1 && (
                         <div style={{ fontSize: '11px', color: 'rgba(232,234,242,0.45)', fontWeight: '400' }}>
                           ({product.stockBoxes} boxes)
@@ -429,7 +441,7 @@ export default function StockManagement({ user }) {
                   <div>
                     <div style={{ fontSize: '12px', color: 'rgba(232,234,242,0.45)', marginBottom: '4px' }}>Current Stock</div>
                     <div style={{ fontWeight: '700', fontSize: '18px', color: '#2563eb' }}>
-                      {displayStock(selectedProduct.currentStock, selectedProduct.unit)}
+                      {displayStock(selectedProduct.saStock ?? selectedProduct.currentStock, selectedProduct.unit)}
                     </div>
                   </div>
                   <div>

@@ -16,6 +16,13 @@ import pkg from 'pg';
 import bcrypt from 'bcryptjs';
 const { Pool } = pkg;
 
+// It writes to stock and compares every product before/after: the Neon branch
+// sectors-dev only, unless the person running it says otherwise on purpose.
+if (!(process.env.PLATFORM_DATABASE_URL || '').includes('ep-old-water-') && process.env.REGRESSION_ALLOW_PRODUCTION !== '1') {
+  console.error('Refusing: PLATFORM_DATABASE_URL is not the sectors-dev branch (ep-old-water-). Set REGRESSION_ALLOW_PRODUCTION=1 to override.');
+  process.exit(1);
+}
+
 const BASE = process.env.REGRESSION_BASE || 'http://localhost:3000';
 const WEBHOOK_SECRET =
   process.env.SA_SHOPIFY_WEBHOOK_SECRET || process.env.SCENT_SHOPIFY_WEBHOOK_SECRET;
@@ -75,7 +82,21 @@ async function setup() {
 }
 
 async function cleanup(uid, startedAt) {
-  await db.query(`DELETE FROM transactions WHERE shopify_order_id LIKE '#TESTREG%' OR notes LIKE '[regression]%'`);
+  try {
+    await cleanupRows(uid, startedAt);
+  } finally {
+    await db.query(`DELETE FROM users WHERE name = '__regression'`);
+    // platform.audit_log's FK is ON DELETE SET NULL: the login row would stay behind, unowned.
+    await db.query(`DELETE FROM platform.audit_log WHERE user_id IN (SELECT id FROM platform.users WHERE name = '__regression')`);
+    await db.query(`DELETE FROM platform.users WHERE name = '__regression'`);
+  }
+}
+
+async function cleanupRows(uid, startedAt) {
+  // '%TESTREG%' too: the PO receipt writes "PO Received: TESTREG-PO-1 …", which
+  // the '[regression]%' prefix missed — 35 such rows sat in production (23 Oct 2026).
+  // Contains, not prefix: a reasoned adjustment is written "Correcting a count — [regression] …".
+  await db.query(`DELETE FROM transactions WHERE shopify_order_id LIKE '#TESTREG%' OR notes LIKE '%[regression]%' OR notes LIKE '%TESTREG%'`);
   // sa.products has an AFTER UPDATE trigger (track_stock_changes) that logs EVERY
   // currentStock change into direct_stock_changes — app-driven or not. This suite
   // moves real oils (the webhook test) and restores them, so it leaves round-trip
@@ -89,9 +110,10 @@ async function cleanup(uid, startedAt) {
   await db.query(`DELETE FROM webhook_processed WHERE order_id LIKE '%TESTREG%' OR order_id LIKE 'fulfillment_990%'`);
   await db.query(`DELETE FROM webhook_queue WHERE idempotency_key LIKE '%TESTREG%' OR idempotency_key LIKE 'fulfillment_990%'`);
   await db.query(`DELETE FROM purchase_orders WHERE order_number = 'TESTREG-PO-1'`);
+  // Receiving an oil's PO writes a stock movement too (PRD_STAGE_1_FRAGRANCE_LIBRARY.md
+  // S7, a SUPPLIER → SA receipt): left behind, it is a receipt in Armani Woods' history that never happened.
+  await db.query(`DELETE FROM sector_movements WHERE reference LIKE 'TESTREG%'`);
   await db.query(`DELETE FROM products WHERE name = '[regression] Temp Product'`);
-  await db.query(`DELETE FROM users WHERE name = '__regression'`);
-  await db.query(`DELETE FROM platform.users WHERE name = '__regression'`);
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -128,8 +150,9 @@ async function testStockOps() {
   record('stock: remove -5', rem.status === 200 && near(rem.json.newStock, before));
 
   // adjust is delta-based with direction: type ∈ {add, remove}
-  const adj = await api('POST', '/api/sa/stock/adjust', { productId: 'OIL_1', quantity: 3, type: 'add', note: '[regression] adjust' });
-  const adjBack = await api('POST', '/api/sa/stock/adjust', { productId: 'OIL_1', quantity: 3, type: 'remove', note: '[regression] adjust-back' });
+  // A reason is required since the stock-reasons change (shared/stock-reasons.js).
+  const adj = await api('POST', '/api/sa/stock/adjust', { productId: 'OIL_1', quantity: 3, type: 'add', reason: 'correction', note: '[regression] adjust' });
+  const adjBack = await api('POST', '/api/sa/stock/adjust', { productId: 'OIL_1', quantity: 3, type: 'remove', reason: 'correction', note: '[regression] adjust-back' });
   const finalStock = parseFloat(
     (await db.query(`SELECT "currentStock" FROM products WHERE id = 'OIL_1'`)).rows[0].currentStock
   );
@@ -200,42 +223,25 @@ async function testScentedGroup() {
   record('scented: cascade delete', del.status === 200 && left.rows[0].count === '0');
 }
 
-async function testTechStock() {
-  const before = parseFloat(
-    (await db.query(`SELECT "currentStock" FROM products WHERE id = 'OIL_1'`)).rows[0].currentStock
-  );
-  const t1 = await api('POST', '/api/sa/tech-stock/transfer', { productId: 'OIL_1', quantity: 10, notes: '[regression] t' });
-  const t2 = await api('POST', '/api/sa/tech-stock/remove', { productId: 'OIL_1', quantity: 2, notes: '[regression] t' });
-  const t3 = await api('POST', '/api/sa/tech-stock/return', { productId: 'OIL_1', quantity: 8, notes: '[regression] t' });
-  const t4 = await api('POST', '/api/sa/tech-stock/return-input', { productId: 'OIL_1', quantity: 2, notes: '[regression] t' });
-  const t5 = await api('POST', '/api/sa/tech-stock/remove', { productId: 'OIL_1', quantity: 2, notes: '[regression] t' });
-
-  const tech = await db.query(`SELECT quantity FROM tech_stock WHERE product_id = 'OIL_1'`);
-  const techQty = parseFloat(tech.rows[0]?.quantity || 0);
-  const mainAfter = parseFloat(
-    (await db.query(`SELECT "currentStock" FROM products WHERE id = 'OIL_1'`)).rows[0].currentStock
-  );
-  // Net effect: main −10 +8 = −2 (2 mL consumed in service); tech back to 0
-  const ok = [t1, t2, t3, t4, t5].every((r) => r.status === 200) && near(techQty, 0) && near(mainAfter, before - 2);
-  record('tech-stock: transfer/remove/return/return-input cycle', ok, `tech=${techQty} mainΔ=${(mainAfter - before).toFixed(1)}`);
-
-  await api('POST', '/api/sa/stock/add', { productId: 'OIL_1', quantity: 2, notes: '[regression] tech revert' });
-  const restored = parseFloat(
-    (await db.query(`SELECT "currentStock" FROM products WHERE id = 'OIL_1'`)).rows[0].currentStock
-  );
-  record('tech-stock: stock restored', near(restored, before));
-}
+// testTechStock removed 23 Oct 2026: Tech Stock was retired on 31/08/2026, its
+// endpoints no longer move stock, and the test's "revert" (+2 mL) left Armani
+// Woods 2 mL over on every run.
 
 async function testDemandPlanningConsistency() {
   const rep = await api('GET', '/api/sa/dashboard/replenishment');
   const items = Array.isArray(rep.json) ? rep.json : rep.json?.products || rep.json?.items || [];
-  record('demand-planning: responds', rep.status === 200 && items.length > 500, `items=${items.length}`);
+  // The list is the planned categories only (379 on 23 Oct 2026), not every product;
+  // a floor still catches a filter that empties most of it.
+  record('demand-planning: responds', rep.status === 200 && items.length > 200, `items=${items.length}`);
 
-  // realStock must equal products.currentStock for sampled products.
+  // realStock must equal SA's balance — the total minus what the main store
+  // and the MUSE stocks hold (PRD_STAGE_1_FRAGRANCE_LIBRARY.md S2) — for sampled products.
   // The API reports oils in LITERS (mL / 1000, 1-decimal rounding) — convert.
   let checked = 0, mismatches = 0;
   for (const it of items.slice(0, 25)) {
-    const row = await db.query(`SELECT "currentStock", unit FROM products WHERE id = $1`, [it.id]);
+    const row = await db.query(
+      `SELECT p."currentStock" - COALESCE(h.held, 0) AS "currentStock", p.unit
+         FROM products p LEFT JOIN sector_held h ON h.product_id = p.id WHERE p.id = $1`, [it.id]);
     if (!row.rows[0]) continue;
     checked++;
     const R = row.rows[0].unit === 'mL' ? 1000 : 1;
@@ -244,37 +250,44 @@ async function testDemandPlanningConsistency() {
   record('demand-planning: realStock consistency (25 sampled)', checked > 0 && mismatches === 0, `mismatches=${mismatches}`);
 }
 
-// ── D14.7: SM/MUSE oil draw from the shared pool must register as SA demand ──
-// The Fragrance-Library debit types (sm_std_production / muse_production / …) are
-// real oil leaving SA's building, so they now feed replenishment. Their reversal
-// counterparts must NOT — they credit oil back, and counting both would double-
-// count. Proven on a disposable fixture oil via the per-product detail endpoint,
-// which shares DEMAND_TX_TYPES with the headline replenishment query.
+// ── Demand Planning is SA's own movements ──
+// MUSE and Atelier production is not SA demand, even when it takes SA's oil
+// (S5 / R6, PRD_STAGE_1_FRAGRANCE_LIBRARY.md — the one intended difference from
+// live, PRD §6); a manual SA removal is. Proven on a disposable fixture oil via
+// the per-product detail endpoint, which shares DEMAND_TX_TYPES and
+// EXCLUDE_NON_DEMAND with the headline replenishment query. A MUSE use typed
+// by hand (a `remove`) is proven in regression-sectors.js.
 async function testDemandCountsFragranceConsumption() {
   const create = await api('POST', '/api/sa/products', {
     name: '[regression] D14.7 DP Oil', category: 'OILS', unit: 'mL', currentStock: 0,
   });
   const pid = create.json?.id;
-  if (!pid) { record('D14.7 demand: fixture oil created', false, `status=${create.status}`); return; }
+  if (!pid) { record('demand: fixture oil created', false, `status=${create.status}`); return; }
 
-  // Two dated-now movements on the SAME oil: a 250 mL production debit (demand)
-  // and a 100 mL reversal (not demand). No currentStock touch → no trigger rows.
-  const insTx = (type, qty) => db.query(
-    `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes)
-     VALUES ($1, $2, $3, 'OILS', $4, $5, 'mL', 0, '[regression] D14.7 dp')`,
-    [pid, create.json?.productCode || pid, '[regression] D14.7 DP Oil', type, qty]
+  // Demand Planning forecasts the SA Warehouse only (owner, 21 Oct 2026): MUSE
+  // and Custom Orders production are NOT demand, a manual removal is. Dated-now
+  // movements on the SAME oil. No currentStock touch → no trigger rows.
+  const insTx = (type, qty, reason = null) => db.query(
+    `INSERT INTO transactions (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes, reason)
+     VALUES ($1, $2, $3, 'OILS', $4, $5, 'mL', 0, '[regression] D14.7 dp', $6)`,
+    [pid, create.json?.productCode || pid, '[regression] D14.7 DP Oil', type, qty, reason]
   );
-  await insTx('sm_std_production', 250);
-  await insTx('sm_std_reversal', 100);
+  await insTx('muse_production', 250);
+  await insTx('sm_std_production', 300);
+  await insTx('sm_major_production', 350);
+  await insTx('remove', 100, 'sample'); // a removal with no reason is unpatterned, not demand
+  // Reversals credit oil back: never demand, or a reversed production counts twice.
+  await insTx('muse_reversal', 70);
+  await insTx('sm_std_reversal', 80);
+  await insTx('sm_major_reversal', 90);
 
   const detail = await api('GET', `/api/sa/products/${pid}/transactions?days=30`);
   const rows = detail.json?.dailySales || [];
-  const debit = rows.find((r) => r.type === 'SM Std prod.');
-  record('D14.7 demand: production debit counts as demand (250 mL → 0.25 L)',
-    !!debit && near(debit.volume_l, 0.25), `row=${JSON.stringify(debit)}`);
-  record('D14.7 demand: reversal is excluded from demand (not double-counted)',
-    rows.every((r) => !/reversal/i.test(r.type)) &&
-    !rows.some((r) => near(r.volume_l, 0.1)), `types=${rows.map((r) => r.type).join(',')}`);
+  const total = rows.reduce((s, r) => s + r.volume_l, 0);
+  record('demand: MUSE / Atelier production is not SA demand, nor any reversal — only the SA removal counts',
+    rows.length === 1 && near(total, 0.1), `rows=${JSON.stringify(rows)}`);
+  record('demand: a manual SA removal still counts (100 mL → 0.1 L)',
+    near(rows.find((r) => r.type === 'Manual')?.volume_l, 0.1), `rows=${JSON.stringify(rows)}`);
 
   await db.query(`DELETE FROM transactions WHERE product_id = $1`, [pid]);
   await db.query(`DELETE FROM products WHERE id = $1`, [pid]);
@@ -525,10 +538,12 @@ async function testNoResidue(before, startedAt) {
     leftoverProducts.length === 0, leftoverProducts.join(', ') || 'none');
 
   const leftoverTx = await db.query(
-    `SELECT COUNT(*)::int n FROM transactions WHERE notes LIKE '[regression]%' OR shopify_order_id LIKE '#TESTREG%'`
+    `SELECT COUNT(*)::int n FROM transactions WHERE notes LIKE '%[regression]%' OR notes LIKE '%TESTREG%' OR shopify_order_id LIKE '#TESTREG%'`
   );
   record('§18 residue: no test transaction rows left in the ledger',
     leftoverTx.rows[0].n === 0, `${leftoverTx.rows[0].n} rows`);
+  const leftoverMoves = await db.query(`SELECT COUNT(*)::int n FROM sector_movements WHERE reference LIKE 'TESTREG%'`); // by reference only: a real MUSE sale during a run writes one too
+  record('§18 residue: no test sector movements left', leftoverMoves.rows[0].n === 0, `${leftoverMoves.rows[0].n} rows`);
 
   // The trigger-written log is residue too — it is what made ~160 orphan rows
   // pile up from earlier runs before this was caught (2026-07-16).
@@ -545,17 +560,20 @@ async function testNoResidue(before, startedAt) {
 async function main() {
   if (!WEBHOOK_SECRET) throw new Error('SA_SHOPIFY_WEBHOOK_SECRET / SCENT_SHOPIFY_WEBHOOK_SECRET not set');
   console.log('══════════ SA REGRESSION SUITE (Phase 2d) ══════════\n');
-  const uid = await setup();
-  // Taken BEFORE any test writes, compared AFTER cleanup (§18 discipline).
-  const stockBefore = await snapshotStock();
-  const startedAt = (await db.query(`SELECT NOW() AS t`)).rows[0].t;
+  // setup() creates a ROOT user whose password is in this file. It runs inside
+  // the try so a failed login still reaches cleanup — on 28 Sep 2026 one didn't,
+  // and the account sat active in production until 22 Oct.
+  let uid, stockBefore, startedAt;
   try {
+    uid = await setup();
+    // Taken BEFORE any test writes, compared AFTER cleanup (§18 discipline).
+    stockBefore = await snapshotStock();
+    startedAt = (await db.query(`SELECT NOW() AS t`)).rows[0].t;
     await testProductsCrud();
     await testStockOps();
     await testPurchaseOrder();
     await testFormulasReadyStock();
     await testScentedGroup();
-    await testTechStock();
     await testDemandPlanningConsistency();
     await testDemandCountsFragranceConsumption();
     await testWebhooks();

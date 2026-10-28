@@ -267,7 +267,9 @@ h1, h2, h3, h4, h5, h6 {
   margin: 0 auto;
   padding: 0 2rem;
   position: relative;
-  z-index: 1;
+  /* No z-index (Stage 0, 26 Oct 2026): it made every SA page a layer below the
+     sticky top menu, so their windows opened under it. .sa-scope already keeps
+     the page above the grid texture on body::before. */
 }
 
 @media (max-width: 768px) {

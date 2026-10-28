@@ -365,7 +365,7 @@ async function smFulfillmentHandler(req, res, topic, body) {
         try {
         // MUSE variants carry the STORE sku (Muse_RD00001) — that is the join.
         const prod = await tq(
-          `SELECT id, name, current_stock FROM products WHERE sku = $1 FOR UPDATE`,
+          `SELECT id, name, current_stock, business_unit FROM products WHERE sku = $1 FOR UPDATE`,
           [sku]
         );
         if (!prod.rows[0]) {
@@ -443,7 +443,7 @@ async function smFulfillmentHandler(req, res, topic, body) {
           } else {
             const bom = await computeFinishedGoodBom(tq, p.id, toMake);
             if (bom.makeToOrder) {
-              await consumeFragranceOil(tq, bom.oil.oil_id, bom.oil.ml, 'MUSE', `${note} — ${toMake} made to order`);
+              await consumeFragranceOil(tq, bom.oil.oil_id, bom.oil.ml, 'MUSE', `${note} — ${toMake} made to order`, p.business_unit);
               const matResults = [];
               for (const m of bom.materials) {
                 const u = await adjustProductStock(m.product_id, -m.qty, txType, note, null, null, null, tq, opts);

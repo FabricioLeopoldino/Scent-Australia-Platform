@@ -31,6 +31,26 @@ export function effectiveMin(product) {
   return auto != null ? auto : (parseFloat(product?.minStockLevel) || 0);
 }
 
+/**
+ * The stock the status is about. For an oil that is SA's balance (`saStock`,
+ * PRD_STAGE_1_FRAGRANCE_LIBRARY.md S2): oil in the main store or a MUSE stock
+ * is not SA's to sell. Everything else is its whole stock. Oil waiting in the
+ * main store counts nowhere here, as in Demand Planning (R6, decision D1).
+ */
+export function shelfStock(product) {
+  return parseFloat(product?.saStock ?? product?.currentStock) || 0;
+}
+
+/**
+ * Is this one of SA's products? Everything but oils is; an oil is when it has
+ * an ACTIVE registration in SA (S6). A registration's `active` is membership
+ * of the company, not whether the oil is in use — that stays the product's own
+ * status (fix round 1, S1). No `registrations` at all (an older server) counts
+ * as SA, so nothing disappears from SA's screens if the API lags behind.
+ * One rule for SA Fragrances, the Stock page and the Dashboard.
+ */
+export const isSaProduct = (p) => p?.category !== 'OILS' || !p.registrations || p.registrations.SA?.active === true;
+
 const stillToArrive = (o) => Math.max(0, (parseFloat(o.quantity) || 0) - (parseFloat(o.quantityReceived) || 0));
 
 /** Still to arrive on open purchase orders (`incomingOrders` from /api/products). */
@@ -51,7 +71,7 @@ export function incomingQty(product) {
  * open order counts, as before.
  */
 export function coveredStock(product) {
-  const stock = parseFloat(product?.currentStock) || 0;
+  const stock = shelfStock(product);
   const rate = product?.autoDailyRate;
   if (product?.minStockAuto != null && rate > 0) {
     const orders = (product?.incomingOrders || []).map((o) => ({ qty: stillToArrive(o), days: o.etaDays ?? null }));
@@ -77,7 +97,7 @@ export function coveredStock(product) {
  *     Planning, so the two screens agree. (Owner, 2026-10-15.)
  */
 export function getStockStatus(product) {
-  const stock = parseFloat(product?.currentStock) || 0;
+  const stock = shelfStock(product);
   if (stock < 0) return STOCK_STATUS.NEGATIVE;
   if (stock === 0) return STOCK_STATUS.OUT;
   const covered = coveredStock(product);

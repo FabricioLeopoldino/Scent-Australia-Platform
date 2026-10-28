@@ -1,4 +1,4 @@
-import { Router, Route, Switch, Link, useLocation } from 'wouter';
+import { Router, Route, Switch, Link, Redirect, useLocation } from 'wouter';
 import { ToastProvider } from './components/Toast';
 import Dashboard from './pages/Dashboard';
 import StockManagement from './pages/StockManagement';
@@ -8,7 +8,6 @@ import ProductManagement from './pages/ProductManagement';
 import MachineInventory from './pages/MachineInventory';
 import ShopifyPurchaseOrders from './pages/ShopifyPurchaseOrders';
 import ProductReturns from './pages/ProductReturns';
-import ColdRoomMap from './pages/ColdRoomMap';
 import BOMViewer from './pages/BOMViewer';
 import DiffuserMachineBOM from './pages/DiffuserMachineBOM';
 import ReplenishmentDashboard from './pages/ReplenishmentDashboard';
@@ -63,7 +62,9 @@ function SAContent({ user, onSwitchModule, onLogout }) {
           <ul className="nav-links" style={{ flex: 1, justifyContent: 'center' }}>
             <li><Link href="/" className={isActive('/') ? 'nav-active' : ''}>Dashboard</Link></li>
             <li><Link href="/products" className={isActive('/products') ? 'nav-active' : ''}>Products</Link></li>
-            <li><Link href="/fragrance-library" className={isActive('/fragrance-library') ? 'nav-active' : ''}>Fragrance Library</Link></li>
+            {/* SA's own oils (PRD_STAGE_1_FRAGRANCE_LIBRARY.md §2.1). The Fragrance
+                Library itself — every stock — is its own area, from its own tile. */}
+            <li><Link href="/fragrances" className={isActive('/fragrances') ? 'nav-active' : ''}>SA Fragrances</Link></li>
             <li><Link href="/machines" className={isActive('/machines') ? 'nav-active' : ''}>Diffusers</Link></li>
             <li><Link href="/returns" className={isActive('/returns') ? 'nav-active' : ''}>Returns</Link></li>
             {/* Delivery 1 of the Shopify PO integration: read-only, for checking
@@ -75,7 +76,6 @@ function SAContent({ user, onSwitchModule, onLogout }) {
               <li><Link href="/stock" className={isActive('/stock') ? 'nav-active' : ''}>Stock</Link></li>
             )}
             {user.role !== 'technician' && (<>
-              <li><Link href="/cold-room-map" className={isActive('/cold-room-map') ? 'nav-active' : ''}>Fragrance Map</Link></li>
               {user.role !== 'user' && (
                 <li><Link href="/replenishment" className={isActive('/replenishment') ? 'nav-active' : ''}>Demand Planning</Link></li>
               )}
@@ -92,47 +92,15 @@ function SAContent({ user, onSwitchModule, onLogout }) {
           </ul>
 
           {/* Right side: ThemeToggle + Switch System + Logout */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
-            <ThemeToggle />
-            <button
-              onClick={onSwitchModule}
-              style={{
-                background: 'rgba(37, 99, 235, 0.08)',
-                border: '1px solid rgba(37, 99, 235, 0.25)',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                color: '#60a5fa',
-                fontWeight: '600',
-                fontSize: '12px',
-                padding: '6px 14px',
-                fontFamily: 'Inter, sans-serif',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              Switch System
-            </button>
-            <button
-              onClick={onLogout}
-              style={{
-                background: 'rgba(248, 113, 113, 0.08)',
-                border: '1px solid rgba(248, 113, 113, 0.2)',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                color: '#f87171',
-                fontWeight: '600',
-                fontSize: '12px',
-                padding: '6px 14px',
-                fontFamily: 'Inter, sans-serif',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              Logout
-            </button>
-          </div>
+          <ShellActions onSwitchModule={onSwitchModule} onLogout={onLogout} />
         </div>
       </nav>
 
-      <div style={{ padding: '24px 2rem', position: 'relative', zIndex: 1 }}>
+      {/* No z-index here, on purpose. With one, this container was a layer of its
+          own BELOW the sticky top menu (z-index 100), so every window (modal)
+          opened inside a page slid under the menu with its title and close
+          button hidden — 19 windows, since July (Stage 0, PRD_STAGE_0_BASE.md). */}
+      <div style={{ padding: '24px 2rem', position: 'relative' }}>
         <Switch>
           <Route path="/"><Dashboard user={user} /></Route>
           {/* The keys are load-bearing. Both routes render the SAME component,
@@ -144,11 +112,27 @@ function SAContent({ user, onSwitchModule, onLogout }) {
               this often enough to report it as "sempre tenho que dar Hard
               Refresh". A key makes them two pages again. */}
           <Route path="/products"><ProductManagement key="products" user={user} /></Route>
-          <Route path="/fragrance-library"><ProductManagement key="fragrance-library" user={user} libraryMode /></Route>
+          <Route path="/fragrances"><ProductManagement key="sa-fragrances" user={user} libraryMode company="SA" /></Route>
+          {/* The page's old address (it was "Fragrance Library" until Stage 1):
+              a bookmark lands on SA Fragrances, not on a blank page. */}
+          <Route path="/fragrance-library"><Redirect to="/fragrances" /></Route>
           <Route path="/machines"><MachineInventory user={user} /></Route>
-          <Route path="/shopify-po"><ShopifyPurchaseOrders user={user} /></Route>
+          {/* Machines, spare parts and raw materials only: the fragrance lines
+              are received and split in the Fragrance Library (Stage 1 §2.3). */}
+          <Route path="/shopify-po"><ShopifyPurchaseOrders user={user} lines="other" /></Route>
           <Route path="/returns"><ProductReturns user={user} /></Route>
-          <Route path="/cold-room-map"><ColdRoomMap user={user} /></Route>
+          {/* The Fragrance Map was removed (owner, 25 Oct 2026: unused and heavy).
+              It only drew the bin locations every oil already carries. Old links
+              land here rather than on a blank page — the Tech Stock pattern. */}
+          <Route path="/cold-room-map">
+            <div style={{ padding: 40, maxWidth: 620 }}>
+              <h1 className="ed-title" style={{ marginBottom: 12 }}>The Fragrance Map has been removed</h1>
+              <p style={{ color: 'var(--text-muted)', lineHeight: 1.7 }}>
+                Each oil's bin location is on
+                the <Link href="/fragrances" style={{ color: '#60a5fa' }}>SA Fragrances</Link> page.
+              </p>
+            </div>
+          </Route>
           <Route path="/stock"><StockManagement user={user} /></Route>
           <Route path="/replenishment">{!['user', 'technician'].includes(user?.role) ? <ReplenishmentDashboard user={user} /> : null}</Route>
           <Route path="/formulas"><Formulas user={user} /></Route>
@@ -182,6 +166,50 @@ function SAContent({ user, onSwitchModule, onLogout }) {
           <Route path="/raw-materials"><RawMaterials user={user} /></Route>
         </Switch>
       </div>
+    </div>
+  );
+}
+
+// The right side of the menu — theme, back to the picker, log out. Shared with
+// the Fragrance Library's own menu (LibraryModule.jsx), so the two read the same.
+export function ShellActions({ onSwitchModule, onLogout }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
+      <ThemeToggle />
+      <button
+        onClick={onSwitchModule}
+        style={{
+          background: 'rgba(37, 99, 235, 0.08)',
+          border: '1px solid rgba(37, 99, 235, 0.25)',
+          borderRadius: '8px',
+          cursor: 'pointer',
+          color: '#60a5fa',
+          fontWeight: '600',
+          fontSize: '12px',
+          padding: '6px 14px',
+          fontFamily: 'Inter, sans-serif',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        Switch System
+      </button>
+      <button
+        onClick={onLogout}
+        style={{
+          background: 'rgba(248, 113, 113, 0.08)',
+          border: '1px solid rgba(248, 113, 113, 0.2)',
+          borderRadius: '8px',
+          cursor: 'pointer',
+          color: '#f87171',
+          fontWeight: '600',
+          fontSize: '12px',
+          padding: '6px 14px',
+          fontFamily: 'Inter, sans-serif',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        Logout
+      </button>
     </div>
   );
 }

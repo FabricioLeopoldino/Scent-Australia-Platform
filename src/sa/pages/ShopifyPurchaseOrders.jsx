@@ -9,22 +9,34 @@
 // here — it shows beside its fragrance, and the warehouse receives it with the
 // button it already uses. There is no separate receiving flow to learn and no
 // second place for incoming stock to live.
+//
+// Stage 1 (PRD_STAGE_1_FRAGRANCE_LIBRARY.md §2.3) gives the page two halves:
+//   lines="fragrance" — the Fragrance Library's Purchase orders: the oil lines,
+//                       accepted, then received and split between the stocks here;
+//   lines="other"     — SA's Shopify POs: machines, spare parts, raw materials.
 import { useState, useEffect } from 'react';
+import { Link } from 'wouter';
 import { RefreshCw, AlertTriangle, CheckCircle2, ExternalLink, PackageCheck, Link2 } from 'lucide-react';
 import { useToast } from '../components/Toast';
 import { GlowingEffect } from '../components/GlowingEffect';
+import ReceiveSplitModal from '../components/ReceiveSplitModal';
 
 const L = (ml) => `${(ml / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 })} L`;
 
-export default function ShopifyPurchaseOrders({ user }) {
+export default function ShopifyPurchaseOrders({ user, lines = null }) {
   const showToast = useToast();
   const [state, setState] = useState({ loading: true });
   const [accepting, setAccepting] = useState(null);
+  // The line being received — one window for the page, rendered after the
+  // order cards: inside a .card it would slide under the top menu (Stage 0).
+  const [receiving, setReceiving] = useState(null);
+  const fragrance = lines === 'fragrance';
+  const isAdmin = ['admin', 'root'].includes(user?.role);
 
   const load = async () => {
     setState((s) => ({ ...s, loading: true }));
     try {
-      const res = await fetch('/api/shopify-purchase-orders');
+      const res = await fetch(`/api/shopify-purchase-orders${lines ? `?lines=${lines}` : ''}`);
       setState({ loading: false, ...(await res.json()) });
     } catch (e) {
       setState({ loading: false, ok: false, error: e.message, orders: [] });
@@ -58,6 +70,14 @@ export default function ShopifyPurchaseOrders({ user }) {
   };
 
   useEffect(() => { load(); }, []);
+
+  // Fragrance mode, admin/root: every oil of any status, so "Register now" is
+  // never offered for a code an inactive oil already carries (S5).
+  const [allOils, setAllOils] = useState(null);
+  useEffect(() => {
+    if (!fragrance || !isAdmin) return;
+    fetch('/api/products?category=OILS').then((r) => (r.ok ? r.json() : [])).then((d) => setAllOils(Array.isArray(d) ? d : [])).catch(() => setAllOils(null));
+  }, []);
 
   // Accepted here, then deleted in Shopify. The platform would otherwise count
   // that oil as on its way for ever, and silently — the order is gone from the
@@ -94,11 +114,19 @@ export default function ShopifyPurchaseOrders({ user }) {
     <div className="container" style={{ paddingTop: 28 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 6 }}>
         <div>
-          <h2 className="page-title" style={{ margin: 0 }}>Purchase orders raised in Shopify</h2>
-          <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 6, maxWidth: 680 }}>
-            What the platform can see in Shopify right now. <strong>Nothing here changes any stock</strong> —
-            this page only reads, so it can be checked against the store before it is trusted.
-          </p>
+          <h2 className="page-title" style={{ margin: 0 }}>{fragrance ? 'Fragrance purchase orders' : 'Purchase orders raised in Shopify'}</h2>
+          {fragrance ? (
+            <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 6, maxWidth: 680 }}>
+              The fragrance lines of the purchase orders raised in Shopify. Accept a Shopify order, then
+              receive it and split it between the stocks. Nothing is ever written back to Shopify.
+            </p>
+          ) : (
+            <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 6, maxWidth: 680 }}>
+              What the platform can see in Shopify right now. <strong>Nothing here changes any stock</strong> —
+              this page only reads, so it can be checked against the store before it is trusted.
+              {lines === 'other' && ' Fragrance lines are received in the Fragrance Library.'}
+            </p>
+          )}
         </div>
         <button className="btn btn-secondary" onClick={load} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <RefreshCw size={14} /> {loading ? 'Reading…' : 'Read again'}
@@ -168,7 +196,9 @@ export default function ShopifyPurchaseOrders({ user }) {
 
       {ok && orders.length === 0 && (
         <div className="card" style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-          No purchase orders raised in Shopify for the warehouse yet.
+          {fragrance ? 'No fragrance lines on the purchase orders raised in Shopify.'
+            : lines === 'other' ? 'No machine, spare part or raw material lines on the purchase orders raised in Shopify.'
+            : 'No purchase orders raised in Shopify for the warehouse yet.'}
         </div>
       )}
 
@@ -245,6 +275,24 @@ export default function ShopifyPurchaseOrders({ user }) {
                   {!l.matched && (
                     <div style={{ fontSize: 11, color: '#fbbf24', marginTop: 4, marginLeft: 22 }}>
                       {l.reason}{l.supplierSku ? ` · supplier code ${l.supplierSku}` : ''}
+                      {/* The oil does not exist yet: register it from here (§2.3) —
+                          All stock opens with Add Oil and the code's tag. Unless an
+                          oil of ANY status already carries the code (the match reads
+                          active oils only): then a second record would break "one oil,
+                          never a copy" (R1), so it offers that oil instead (S5). */}
+                      {fragrance && isAdmin && l.sku && /^no active product carries the code/.test(l.reason || '') && allOils && (() => {
+                        const owner = allOils.find((p) => Object.values(p.shopifySkus || {}).some((v) => String(v).trim() === l.sku));
+                        return owner ? (
+                          <Link href={`/?find=${encodeURIComponent(owner.productCode || owner.name)}${(owner.status || 'active') === 'inactive' ? '&inactive=1' : ''}`}
+                            style={{ marginLeft: 8, color: '#60a5fa', fontWeight: 700 }}>
+                            This code belongs to {owner.name}{(owner.status || 'active') === 'inactive' ? ' (inactive) — reactivate it' : ''}
+                          </Link>
+                        ) : (
+                          <Link href={`/?add=${encodeURIComponent(l.sku)}`} style={{ marginLeft: 8, color: '#60a5fa', fontWeight: 700 }}>
+                            Register now
+                          </Link>
+                        );
+                      })()}
                     </div>
                   )}
                 </div>
@@ -263,6 +311,19 @@ export default function ShopifyPurchaseOrders({ user }) {
                         : l.receivedMl > 0 ? `${L(l.receivedMl)} received so far`
                         : 'waiting to arrive'}
                     </div>
+                  )}
+                  {/* Receive and split, here (§2.3). Not on a line edited in Shopify
+                      (take the new figure first) nor, being absent from the list, on
+                      one cancelled there — the rule of the card beside the oil. */}
+                  {fragrance && isAdmin && l.accepted && l.acceptedPoId && l.poStatus !== 'received' && !l.changedInShopify && (
+                    <button className="btn btn-primary" style={{ fontSize: 11, padding: '4px 10px', marginTop: 6, background: '#10b981', borderColor: '#10b981' }}
+                      onClick={() => setReceiving({
+                        poId: l.acceptedPoId, orderNumber: po.number,
+                        remaining: l.acceptedMl - (l.receivedMl || 0),
+                        product: { id: l.productId, name: l.productName, unit: l.unit || 'mL' },
+                      })}>
+                      Receive
+                    </button>
                   )}
                   {l.changedInShopify && (
                     <div style={{ fontSize: 11, color: '#fbbf24', marginTop: 4, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -283,6 +344,16 @@ export default function ShopifyPurchaseOrders({ user }) {
           </div>
         </div>
       ))}
+
+      {receiving && (
+        <ReceiveSplitModal
+          {...receiving}
+          user={user}
+          showToast={showToast}
+          onClose={() => setReceiving(null)}
+          onDone={() => { setReceiving(null); load(); }}
+        />
+      )}
 
       {ok && orders.length > 0 && (
         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 20, display: 'flex', alignItems: 'center', gap: 6 }}>

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { SA_DISPLAY_NAME } from '../../../shared/business-names.js';
 import { useToast } from '../components/Toast';
 import {
   Star, AlertTriangle, AlertOctagon, Package, Search,
@@ -7,7 +8,7 @@ import {
 } from 'lucide-react';
 import { exportToShopifyCSV } from '../utils/shopifyExport';
 import { displayStock, displayUnit } from '../utils/unitConversion';
-import { isLowStock, getStockStatus as sharedStockStatus, isReorderSoon, REORDER_SOON_FACTOR, effectiveMin, lowStockAlertItems } from '../utils/stockStatus';
+import { isLowStock, getStockStatus as sharedStockStatus, isReorderSoon, REORDER_SOON_FACTOR, effectiveMin, lowStockAlertItems, shelfStock, isSaProduct } from '../utils/stockStatus';
 import { GlowingEffect } from '../components/GlowingEffect';
 
 const LOW_PREVIEW = 10; // Low Stock Alerts rows shown before "Show all"
@@ -49,7 +50,8 @@ export default function Dashboard({ user }) {
       }
       if (productsRes.status === 'fulfilled' && productsRes.value.ok) {
         const pd = await productsRes.value.json();
-        setProducts(Array.isArray(pd) ? pd : []);
+        // SA's dashboard: SA's products — an oil only when registered in SA (S6).
+        setProducts((Array.isArray(pd) ? pd : []).filter(isSaProduct));
       }
       if (poRes.status === 'fulfilled' && poRes.value.ok) {
         const pd = await poRes.value.json();
@@ -136,7 +138,7 @@ export default function Dashboard({ user }) {
   };
 
   const calculateTotalOilVolume = () =>
-    products.filter(p => p.category === 'OILS').reduce((total, p) => total + (p.currentStock || 0), 0);
+    products.filter(p => p.category === 'OILS').reduce((total, p) => total + shelfStock(p), 0); // SA's balance (S2)
 
   const countByCategory = (category) => products.filter(p => p.category === category).length;
 
@@ -270,7 +272,7 @@ export default function Dashboard({ user }) {
         <div>
           <h2 className="page-title">Dashboard</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 4 }}>
-            Scent Stock Manager — Overview
+            {SA_DISPLAY_NAME} — Overview
           </p>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
@@ -641,7 +643,7 @@ export default function Dashboard({ user }) {
                         )}
                       </div>
                       <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--text-secondary)', flexWrap: 'wrap' }}>
-                        <span>Current: <strong style={{ color: 'var(--text-primary)' }}>{displayStock(product.currentStock, product.unit)}</strong></span>
+                        <span>Current: <strong style={{ color: 'var(--text-primary)' }}>{displayStock(shelfStock(product), product.unit)}</strong></span>
                         <span>Min: <strong style={{ color: 'var(--text-primary)' }}>{displayStock(effectiveMin(product), product.unit)}</strong>{product.minStockAuto != null && ' (auto)'}</span>
                         <span>Supplier: <strong style={{ color: 'var(--text-primary)' }}>{product.supplier || '—'}</strong></span>
                       </div>
@@ -714,7 +716,7 @@ export default function Dashboard({ user }) {
       </div>
 
       {/* Negative Stock Alerts */}
-      {products.filter(p => p.currentStock < 0).length > 0 && (
+      {products.filter(p => shelfStock(p) < 0).length > 0 && (
         <div className="card" style={{
           marginBottom: 28,
           borderLeft: '3px solid #ef4444',
@@ -732,15 +734,15 @@ export default function Dashboard({ user }) {
               whole set so the number never understates it. */}
           <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 10, color: '#f87171', display: 'flex', alignItems: 'center', gap: 8 }}>
             <AlertOctagon size={15} color="#f87171" />
-            Negative Stock ({products.filter(p => p.currentStock < 0).length})
+            Negative Stock ({products.filter(p => shelfStock(p) < 0).length})
             <span style={{ fontWeight: 500, fontSize: 11, color: 'rgba(252,165,165,0.7)' }}>
               — needs a physical count
             </span>
           </h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 6 }}>
             {products
-              .filter(p => p.currentStock < 0)
-              .sort((a, b) => a.currentStock - b.currentStock)
+              .filter(p => shelfStock(p) < 0)
+              .sort((a, b) => shelfStock(a) - shelfStock(b))
               .slice(0, 8)
               .map(product => (
                 <div key={product.id} style={{
@@ -758,14 +760,14 @@ export default function Dashboard({ user }) {
                     <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{product.productCode}</div>
                   </div>
                   <div style={{ fontWeight: 700, color: '#f87171', fontSize: 13, whiteSpace: 'nowrap' }}>
-                    {displayStock(product.currentStock, product.unit)}
+                    {displayStock(shelfStock(product), product.unit)}
                   </div>
                 </div>
               ))}
           </div>
-          {products.filter(p => p.currentStock < 0).length > 8 && (
+          {products.filter(p => shelfStock(p) < 0).length > 8 && (
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
-              +{products.filter(p => p.currentStock < 0).length - 8} more, smaller. Full list on the
+              +{products.filter(p => shelfStock(p) < 0).length - 8} more, smaller. Full list on the
               Products screen, filtered by stock.
             </div>
           )}
@@ -813,7 +815,7 @@ export default function Dashboard({ user }) {
                     </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontWeight: 700, color: '#f87171', fontSize: 14 }}>{displayStock(product.currentStock, product.unit)}</div>
+                    <div style={{ fontWeight: 700, color: '#f87171', fontSize: 14 }}>{displayStock(shelfStock(product), product.unit)}</div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Min: {displayStock(effectiveMin(product), product.unit)}{product.minStockAuto != null && ' (auto)'}</div>
                   </div>
                 </div>

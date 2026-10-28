@@ -176,6 +176,7 @@ async function readIncomingPurchaseOrders(products) {
         unitCost: l.unitCost?.amount != null ? Number(l.unitCost.amount) : null,
         matched: !r.reason,
         reason: r.reason || null,
+        productId: r.product?.id ?? null, // the window that receives the line needs it
         productCode: r.product?.productCode || null,
         productName: r.product?.name || null,
         currentStock: r.product ? Number(r.product.currentStock) : null,
@@ -235,4 +236,11 @@ async function readIncomingPurchaseOrders(products) {
   return { orders, liveLineIds };
 }
 
-export { readIncomingPurchaseOrders, VARIANT_ML, WATCHED_DESTINATIONS, API_VERSION, SINCE };
+/**
+ * What a purchase-order line costs per mL, ex GST: Shopify's "cost per item"
+ * is per bottle. Shopify sends 0, not empty, for a line nobody priced — that
+ * is "No price on the PO" (null), never $0 (PRD_STAGE_1_FRAGRANCE_LIBRARY.md S8).
+ */
+const costPerMl = (unitCost, bottleMl) => (unitCost > 0 && bottleMl > 0 ? unitCost / bottleMl : null);
+
+export { readIncomingPurchaseOrders, costPerMl, VARIANT_ML, WATCHED_DESTINATIONS, API_VERSION, SINCE };

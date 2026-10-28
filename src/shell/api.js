@@ -45,8 +45,8 @@ export function getActiveModule() {
 export function apiBase(module) {
   const m = module || getActiveModule();
   // FRAGLIB is a VIEW over SA, not a module of its own — the Fragrance Library
-  // tile opens /sa/fragrance-library, which is ProductManagement in oils-locked
-  // mode and calls bare fetch('/api/products').
+  // tile opens /library (Stage 1: its own shell, src/sa/LibraryModule.jsx),
+  // whose pages call bare fetch('/api/products') and friends over the SA API.
   //
   // WHY THIS LINE EXISTS (2026-09-15). It was missing, so 'FRAGLIB' fell through
   // to the platform base and every call on that page became
