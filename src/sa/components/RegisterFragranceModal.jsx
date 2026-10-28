@@ -26,7 +26,10 @@ export default function RegisterFragranceModal({ product, company: initialCompan
       active: fromRefusal || (r ? r.active !== false : true),
       commercialName: r?.commercialName || product.name || '',
       binLocation: r?.binLocation || '',
-      usedBy: r?.usedBy?.length ? r.usedBy : ['MUSE_LIBRARY'],
+      // Nothing ticked on a new registration: a pre-ticked Library was kept by
+      // whoever registered for The Archive and forgot to untick it (QA, 29 Oct).
+      // Saving still needs at least one unit.
+      usedBy: r?.usedBy?.length ? r.usedBy : [],
     };
   };
   const [company, setCompany] = useState(initialCompany);
