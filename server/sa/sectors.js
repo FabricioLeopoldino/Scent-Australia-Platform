@@ -313,11 +313,105 @@ export async function recordMovement(client, m) {
 }
 
 /**
- * A refused stock-rule attempt, in Activity (P6, owner 30 Oct: "registrar e
- * bloquear e alertar"): who, when, the oil, the stock, what was typed and, for
- * a receipt, the PO and who it is for. Written after the ROLLBACK, so it stands
- * on its own; stock and the ledger are untouched. Failing to write it must not
- * hide the refusal from the person: logged, never thrown.
+ * A stock adjustment by hand — PRD_H2_STOCK_MANAGEMENT.md A4–A12. ONE function
+ * for every screen that adjusts stock (POST /stock/adjust for any product,
+ * POST /sectors/adjust for one stock of an oil), so the rule has one version.
+ *   SA, or any non-oil product: moves the total, so an oil's change lands in
+ *     SA (S2), which may go negative (S3) — the ledger row the Stock page wrote.
+ *   a MUSE stock, add: the total and that stock rise (a count).
+ *   a MUSE stock, remove for production: a use (S4, S9) — sector_draw, with the
+ *     order number.
+ *   a MUSE stock, any other removal: that stock falls, never below zero (A7).
+ *     Physical oil cannot be below zero, and letting the book go there would
+ *     quietly lower SA, which is the total minus what the others hold.
+ * Never the main store (D4): a wrong receipt is corrected on the receipt.
+ * Inside the caller's transaction; it locks the product row, so two people
+ * adjusting the same oil at once are checked one after the other. A stock-rule
+ * refusal carries `refusal`, for recordRefusal (A12).
+ */
+export async function adjustStock(client, user, { productId, stock = 'SA', type, quantity, reason, reference, note, operatorIds }) {
+  if (!productId || !quantity || !type) throw bad('Missing required fields: productId, quantity, type');
+  if (!['add', 'remove'].includes(type)) throw bad('Type must be either "add" or "remove"');
+  if (stock === 'MAIN') throw bad('The main store is not adjusted: a wrong receipt is corrected on the receipt');
+  if (!SECTOR_KEYS.includes(stock)) throw bad('Choose the stock');
+  const muse = MUSE_STOCKS.includes(stock);
+  // The reason is what turns "how much did technicians use last month" into a
+  // question with an answer (shared/stock-reasons.js).
+  if (!isValidReason(type, reason, { muse })) throw bad('Choose why the stock is being adjusted');
+  const noteText = String(note || '').trim();
+  if (reason === 'other' && !noteText) throw bad('Say why, when the reason is Other');
+  const qty = parseFloat(quantity);
+  if (!(qty > 0)) throw bad('The quantity must be more than zero');
+  const ref = String(reference || '').trim();
+  const use = muse && type === 'remove' && reason === 'production';
+  if (use && !ref) throw bad('Type the order number — every MUSE use needs one');
+
+  // Who physically did it, from the operator list — separate from the login,
+  // because some people work through somebody else's account (owner, 18/08/2026).
+  let opIds = Array.isArray(operatorIds) ? operatorIds.map(Number).filter(Boolean) : [];
+  let opNames = [];
+  if (opIds.length) {
+    const found = (await client.query(
+      `SELECT id, name FROM sa.warehouse_operators WHERE id = ANY($1::int[]) AND active`, [opIds])).rows;
+    if (found.length !== opIds.length) throw bad('One or more operators are unknown or inactive');
+    opIds = found.map((r) => r.id);
+    opNames = found.map((r) => r.name);
+  }
+
+  const product = (await client.query('SELECT * FROM products WHERE id = $1 FOR UPDATE', [productId])).rows[0];
+  if (!product) throw bad('Product not found');
+  if (product.category !== 'OILS' && stock !== 'SA') throw bad('Only fragrance oils are held by stock');
+  // A use is never refused for registration (R5), as in sector_draw's callers.
+  if (product.category === 'OILS' && !use) await requireRegistered(client, product.id, stock);
+  if (muse && type === 'remove' && !use) {
+    const held = Number((await client.query(
+      `SELECT ${col(stock)} AS v FROM sector_held WHERE product_id = $1`, [product.id])).rows[0]?.v || 0);
+    if (qty > Math.max(held, 0) + 0.001) {
+      throw Object.assign(bad(`${sectorLabel(stock)} holds ${qtyText(Math.max(held, 0), product.unit)}. A removal can bring it to zero, not below. If ${sectorLabel(stock)} used oil from SA's shelf, record it as Production with the order number.`),
+        { refusal: { productId: product.id, productName: product.name, stock, type, quantity: qty, held, reason, unit: product.unit } });
+    }
+  }
+
+  const stockNow = (parseFloat(product.currentStock) || 0) + (type === 'add' ? qty : -qty);
+  await client.query('UPDATE products SET "currentStock" = $1, "stockBoxes" = $2 WHERE id = $3',
+    [stockNow, Math.floor(stockNow / (product.unitPerBox || 1)), product.id]);
+  // The note carries the particulars beside the reason; operator names are
+  // resolved here, so the note and the array cannot disagree.
+  const where = stock === 'SA' ? '' : `${use ? 'Used by' : 'Adjusted in'} ${sectorLabel(stock)}`;
+  const txId = (await client.query(
+    `INSERT INTO transactions
+       (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes, user_id, reason, operator_ids)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+    [product.id, product.productCode || product.tag, product.name, product.category, type, qty, product.unit || 'units', stockNow,
+     [reasonLabel(type, reason), where, ref ? `Ref ${ref}` : '', noteText, opNames.length ? `By: ${opNames.join(' / ')}` : '']
+       .filter(Boolean).join(' — '),
+     user.id, reason, opIds.length ? opIds : null])).rows[0].id;
+  if (use) {
+    await client.query(`SELECT sector_draw($1,$2,$3,'use',$4,$5,$6,$7,$8)`,
+      [product.id, stock, qty, reason, ref, noteText || null, txId, user.id]);
+  } else if (muse) {
+    await recordMovement(client, {
+      productId: product.id, from: type === 'add' ? 'COUNT' : stock, to: type === 'add' ? stock : 'USED',
+      quantity: qty, kind: type === 'add' ? 'count' : 'adjust', reason, reference: ref, notes: noteText,
+      transactionId: txId, userId: user.id,
+    });
+  }
+  await client.query(
+    `INSERT INTO audit_log (user_id, action, entity_type, entity_id, entity_name, details)
+     VALUES ($1, 'stock_adjust', 'product', $2, $3, $4)`,
+    [user.id, product.id, product.name, JSON.stringify({
+      productCode: product.productCode, unit: product.unit, stock, type, quantity: qty, reason,
+      reference: ref || null, operators: opNames, balanceAfter: stockNow })]);
+  return { product, newStock: stockNow };
+}
+
+/**
+ * A refused stock-rule attempt, in Activity (H2 A12; P6, owner 30 Oct:
+ * "registrar e bloquear e alertar"): who, when, the oil, the stock, what was
+ * typed and what the stock held — for a receipt, the PO and who it is for.
+ * Written after the ROLLBACK, so it stands on its own; stock and the ledger are
+ * untouched. Failing to write it must not hide the refusal from the person:
+ * logged, never thrown.
  */
 export async function recordRefusal(user, e) {
   if (!e?.refusal) return;
@@ -332,6 +426,29 @@ export async function recordRefusal(user, e) {
 }
 
 const isAdmin = (req) => ['admin', 'root'].includes(req.user?.role);
+
+// ── POST /sectors/adjust — one stock of one oil, admin and root only (A1, S10).
+router.post('/sectors/adjust', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: 'Only admin or root can adjust stock' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const product = (await client.query(`SELECT category FROM products WHERE id = $1`, [req.body?.productId])).rows[0];
+    if (product && product.category !== 'OILS') throw bad('Only fragrance oils are adjusted by stock here');
+    const { newStock } = await adjustStock(client, req.user, req.body || {});
+    await client.query('COMMIT');
+    const sectors = await balancesAfterCommit(req.body.productId, newStock);
+    res.json({ ok: true, total: newStock, sectors, saStock: sectors ? sectors.SA : null });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    await recordRefusal(req.user, e);
+    if (e.status) return res.status(e.status).json(errorBody(e));
+    console.error('Sector adjust error:', e.message);
+    res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
+  }
+});
 
 // ── GET /sectors/movements[?productId=&limit=] — recent movements, every oil or
 //    one; GET /sectors/:productId/movements — one oil's. Newest first.
@@ -369,12 +486,8 @@ router.get(['/sectors/movements', '/sectors/:productId/movements'], async (req, 
  * POST /sectors/move — admin and root only (S10).
  *   kind 'transfer' : lines [{ from, to, quantity }]  any stock → any stock but the main
  *                     store; no change to the total, no ledger row
- *   kind 'count'    : lines [{ to, quantity }]        oil a MUSE stock holds that the system
- *                     did not know; total +, ledger `add` reason `found`
- *   kind 'use'      : lines [{ from, quantity, reason }] + reference (the order number,
- *                     mandatory, S9) — a MUSE use entered by hand; total −, ledger `remove`,
- *                     drawn by sector_draw
- * SA counts and removes on its own Stock page, so count and use are MUSE's.
+ * Counts and uses are adjustments since H2 (D3): POST /sectors/adjust, one rule
+ * for every change to a stock.
  * `reference` and `notes` may be given per line or once for the call. Several
  * lines in one transaction: it lands whole or not at all.
  */
@@ -384,7 +497,8 @@ router.post('/sectors/move', async (req, res) => {
   try {
     const { productId, kind, reference, notes } = req.body || {};
     const lines = Array.isArray(req.body?.lines) ? req.body.lines : [req.body];
-    if (!['transfer', 'count', 'use'].includes(kind)) throw bad('Unknown movement');
+    if (kind === 'count' || kind === 'use') throw bad('Counts and uses are made with Adjust stock');
+    if (kind !== 'transfer') throw bad('Unknown movement');
     if (!lines.length) throw bad('Nothing to move');
 
     await client.query('BEGIN');
@@ -396,71 +510,35 @@ router.post('/sectors/move', async (req, res) => {
     // waiting for its split, so taking out more than it holds is a typing
     // error, not a stock question. Summed over the lines, or two lines of
     // 60 L each out of 100 L would both pass.
-    const outOfMain = lines.filter((l) => kind === 'transfer' && l.from === 'MAIN')
+    const outOfMain = lines.filter((l) => l.from === 'MAIN')
       .reduce((s, l) => s + (parseFloat(l.quantity) || 0), 0);
     if (outOfMain > 0) {
       const main = Number((await client.query(`SELECT main FROM sector_held WHERE product_id = $1`, [product.id])).rows[0]?.main || 0);
       if (outOfMain > main + 0.001) {
-        throw bad(`That takes ${qtyText(outOfMain, product.unit)} out of the main store, which holds ${qtyText(main, product.unit)}.`);
+        throw Object.assign(bad(`That takes ${qtyText(outOfMain, product.unit)} out of the main store, which holds ${qtyText(main, product.unit)}.`),
+          { refusal: { productId: product.id, productName: product.name, stock: 'MAIN', type: 'transfer', quantity: outOfMain, held: main, unit: product.unit } });
       }
     }
-    // Once per move, not per line; a use is valued inside sector_draw instead.
-    const avgCost = kind === 'use' ? null : await averageCost(client, product.id);
-    let stock = parseFloat(product.currentStock) || 0;
+    // Once per move, not per line.
+    const avgCost = await averageCost(client, product.id);
+    const stock = parseFloat(product.currentStock) || 0;
     const done = [];
     for (const l of lines) {
       const qty = parseFloat(l.quantity);
       if (!(qty > 0)) throw bad('Each quantity must be more than zero');
-      const from = kind === 'count' ? 'COUNT' : l.from;
-      const to = kind === 'use' ? 'USED' : l.to;
+      const { from, to } = l;
       const ref = String(l.reference ?? reference ?? '').trim();
       const noteText = String(l.notes ?? notes ?? '').trim();
-      if (kind === 'transfer') {
-        if (!SECTOR_KEYS.includes(from)) throw bad('Choose where the oil comes from');
-        if (!SECTOR_KEYS.includes(to)) throw bad('Choose where the oil goes');
-        if (from === to) throw bad('From and to are the same stock');
-        // It receives only from purchase orders (D2).
-        if (to === 'MAIN') throw bad('The main store receives oil only from a purchase order');
-      }
-      if (kind === 'count' && !MUSE_STOCKS.includes(to)) throw bad('A count goes into a MUSE stock — SA counts on its Stock page');
-      if (kind === 'use') {
-        if (!MUSE_STOCKS.includes(from)) throw bad('A use comes out of a MUSE stock — SA removes oil on its Stock page');
-        if (!ref) throw bad('Type the order number — every MUSE use needs one');
-      }
-      if (kind !== 'use') await requireRegistered(client, product.id, to);
-
-      let transactionId = null;
-      let reason = null;
-      if (kind === 'count' || kind === 'use') {
-        // The total changes, so the ledger records it like any stock change.
-        const type = kind === 'count' ? 'add' : 'remove';
-        reason = kind === 'count' ? 'found' : l.reason;
-        if (!isValidReason(type, reason)) throw bad('Choose why the oil was used');
-        if (reason === 'other' && !noteText) throw bad('Say why, when the reason is Other');
-        stock = kind === 'count' ? stock + qty : stock - qty;
-        await client.query(`UPDATE products SET "currentStock" = $1, "stockBoxes" = $2 WHERE id = $3`,
-          [stock, Math.floor(stock / (product.unitPerBox || 1)), product.id]);
-        const tx = await client.query(
-          `INSERT INTO transactions
-             (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes, user_id, reason)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
-          [product.id, product.productCode || product.tag, product.name, product.category, type, qty,
-           product.unit || 'mL', stock,
-           [reasonLabel(type, reason), `${kind === 'count' ? 'Counted into' : 'Used by'} ${sectorLabel(kind === 'count' ? to : from)}`,
-            ref ? `Ref ${ref}` : '', noteText].filter(Boolean).join(' — '),
-           req.user.id, reason]);
-        transactionId = tx.rows[0].id;
-      }
-      if (kind === 'use') {
-        // Its own stock first, then MUSE (shared), then SA's shelf — for it.
-        await client.query(`SELECT sector_draw($1,$2,$3,'use',$4,$5,$6,$7,$8)`,
-          [product.id, from, qty, reason, ref, noteText || null, transactionId, req.user.id]);
-      } else {
-        await recordMovement(client, {
-          productId: product.id, from, to, quantity: qty, kind, reason,
-          reference: ref, notes: noteText, transactionId, userId: req.user.id, avgCost,
-        });
-      }
+      if (!SECTOR_KEYS.includes(from)) throw bad('Choose where the oil comes from');
+      if (!SECTOR_KEYS.includes(to)) throw bad('Choose where the oil goes');
+      if (from === to) throw bad('From and to are the same stock');
+      // It receives only from purchase orders (D2).
+      if (to === 'MAIN') throw bad('The main store receives oil only from a purchase order');
+      await requireRegistered(client, product.id, to);
+      await recordMovement(client, {
+        productId: product.id, from, to, quantity: qty, kind,
+        reference: ref, notes: noteText, userId: req.user.id, avgCost,
+      });
       done.push({ from, to, quantity: qty, reference: ref || null });
     }
 
@@ -475,6 +553,7 @@ router.post('/sectors/move', async (req, res) => {
     res.json({ ok: true, total: stock, sectors, saStock: sectors ? sectors.SA : null });
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
+    await recordRefusal(req.user, e);
     if (e.status) return res.status(e.status).json(errorBody(e));
     console.error('Sector move error:', e.message);
     res.status(500).json({ error: 'Internal server error' });

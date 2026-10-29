@@ -12,12 +12,12 @@
 import express from 'express';
 import { calcSmartDemand } from '../../shared/demand-calculator.js';
 import { bomVariantFor } from '../../shared/refurb-machines.js';
-import { isValidReason, reasonLabel, NON_DEMAND_REMOVE_REASONS, UNPATTERNED_REMOVE_REASONS } from '../../shared/stock-reasons.js';
+import { NON_DEMAND_REMOVE_REASONS, UNPATTERNED_REMOVE_REASONS } from '../../shared/stock-reasons.js';
 import { readIncomingPurchaseOrders, costPerMl, VARIANT_ML } from './shopify-purchase-orders.js';
 import { refreshOrderActors, TECH_REFILL_DAYS } from './shopify-order-actors.js';
 import { shelfOutlook, orderToCover, SAFETY_STOCK_FACTOR } from '../../shared/shelf-outlook.js';
 import { router as sectorsRouter, migrateSectors, heldByProduct, sectorBalances, recordMovement, balancesAfterCommit,
-  registrationsByProduct, registerOil, requireRegistered, errorBody, qtyText, recordRefusal } from './sectors.js';
+  registrationsByProduct, registerOil, requireRegistered, errorBody, qtyText, recordRefusal, adjustStock } from './sectors.js';
 import { SECTOR_KEYS, COMPANIES, companyOf, sectorLabel, destinationByStock } from '../../shared/sectors.js';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
@@ -189,16 +189,16 @@ const ONE_OFF_ORDER = `(type = 'shopify_sale' AND unit = 'mL'
           WHERE s.shopify_order_id = transactions.shopify_order_id
             AND s.product_id = transactions.product_id
             AND s.type IN ('shopify_sale', 'shopify_reversal')) >= ${ONE_OFF_ORDER_ML})`;
-// A MUSE use entered by hand in the Fragrance Library (POST /sectors/move, kind
-// use) writes a ledger `remove`, because the total really dropped — but it is
-// MUSE's, not SA's demand (S5), even for the part SA's shelf covered. Known by
-// its use movement: drawn from a MUSE stock, or by SA for one (used_for). A use
-// is only ever drawn from SA or a MUSE stock (sa.sector_draw), so "not from
-// SA" is "from a MUSE stock" — written without the imported key list because
+// A MUSE use or removal entered by hand in the Fragrance Library (POST
+// /sectors/adjust: a use, or kind adjust) writes a ledger `remove`, because the
+// total really dropped — but it is MUSE's, not SA's demand (S5, PRD_H2 A8),
+// even for the part SA's shelf covered. Known by its movement: from a MUSE
+// stock, or by SA for one (used_for). Both are only ever drawn from SA or a
+// MUSE stock, so "not from SA" is "from a MUSE stock" — written without the imported key list because
 // regression-demand-excludes-corrections.js evaluates this block on its own.
 // EXISTS, so it cannot be NULL (the trap described above).
 const MUSE_HAND_USE = `EXISTS (SELECT 1 FROM sector_movements m
-     WHERE m.transaction_id = transactions.id AND m.kind = 'use'
+     WHERE m.transaction_id = transactions.id AND m.kind IN ('use', 'adjust')
        AND (m.from_sector <> 'SA' OR m.used_for IS NOT NULL))`;
 const EXCLUDE_NON_DEMAND = `${EXCLUDE_CORRECTIONS}
   AND NOT ${TECHNICIAN_REFILL}
@@ -1338,101 +1338,10 @@ router.post('/stock/adjust', async (req, res) => {
 
   try {
     await client.query('BEGIN');
-    
-    const { productId, quantity, type, note, reason, operatorIds } = req.body;
-
-    if (!productId || !quantity || !type) {
-      throw new Error('Missing required fields: productId, quantity, type');
-    }
-
-    if (!['add', 'remove'].includes(type)) {
-      throw new Error('Type must be either "add" or "remove"');
-    }
-
-    // The reason is what turns "how much did technicians use last month" into a
-    // question with an answer. Validated here rather than trusted from the
-    // screen: a reason that accepts anything is the free-text box wearing a new
-    // name. See shared/stock-reasons.js.
-    if (!isValidReason(type, reason)) {
-      throw Object.assign(new Error('Choose why the stock is being adjusted'), { status: 400 });
-    }
-    const noteText = String(note || '').trim();
-    // "Other" with no note records nothing at all, which is worse than the free
-    // text this replaced.
-    if (reason === 'other' && !noteText) {
-      throw Object.assign(new Error('Say why, when the reason is Other'), { status: 400 });
-    }
-
-    // Who physically did it, from the operator list — separate from the login,
-    // because Gustavo and Wanderson work through somebody else's account. Same
-    // list and same reasoning as stock returns (owner, 18/08/2026).
-    let opIds = Array.isArray(operatorIds) ? operatorIds.map(Number).filter(Boolean) : [];
-    let opNames = [];
-    if (opIds.length) {
-      const found = await client.query(
-        `SELECT id, name FROM sa.warehouse_operators WHERE id = ANY($1::int[]) AND active`, [opIds]);
-      if (found.rows.length !== opIds.length) {
-        throw Object.assign(new Error('One or more operators are unknown or inactive'), { status: 400 });
-      }
-      opIds = found.rows.map((r) => r.id);
-      opNames = found.rows.map((r) => r.name);
-    }
-    
-    const productResult = await client.query(
-      'SELECT * FROM products WHERE id = $1 FOR UPDATE',
-      [productId]
-    );
-
-    if (productResult.rows.length === 0) {
-      throw new Error('Product not found');
-    }
-
-    const product = productResult.rows[0];
-    const currentStock = parseFloat(product.currentStock) || 0;
-    const adjustQuantity = parseFloat(quantity);
-    
-    let newStock;
-    if (type === 'add') {
-      newStock = currentStock + adjustQuantity;
-    } else {
-      newStock = currentStock - adjustQuantity;
-      // Allow negative stock to track discrepancies
-    }
-    
-    // Update product stock
-    await client.query(
-      'UPDATE products SET "currentStock" = $1, "stockBoxes" = $2 WHERE id = $3',
-      [newStock, Math.floor(newStock / (product.unitPerBox || 1)), productId]
-    );
-    
-    // Create transaction record
-    await client.query(
-      `INSERT INTO transactions
-       (product_id, product_code, product_name, category, type, quantity, unit, balance_after,
-        notes, user_id, reason, operator_ids)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-      [
-        productId,
-        product.productCode || product.tag,
-        product.name,
-        product.category,
-        type,
-        adjustQuantity,
-        product.unit || 'units',
-        newStock,
-        // The note carries the particulars beside the reason, and the operator
-        // names are resolved server-side so the note and the array cannot
-        // disagree — the same rule the returns route follows.
-        [reasonLabel(type, reason), noteText, opNames.length ? `By: ${opNames.join(' / ')}` : '']
-          .filter(Boolean).join(' — '),
-        // req.user, never the client's claim about who it is. The previous
-        // version took userId straight from the request body.
-        req.user.id,
-        reason,
-        opIds.length ? opIds : null
-      ]
-    );
-
+    // SA's stock, for any product: the one adjustment rule (sectors.js
+    // adjustStock, PRD_H2_STOCK_MANAGEMENT.md A4), shared with an oil's
+    // adjustment in the Fragrance Library.
+    const { product, newStock } = await adjustStock(client, req.user, { ...req.body, stock: 'SA' });
     await client.query('COMMIT');
 
     res.json({
@@ -1448,7 +1357,7 @@ router.post('/stock/adjust', async (req, res) => {
     await client.query('ROLLBACK');
     // A validation failure is the person's to fix, so it says what is wrong.
     // Anything else stays opaque, as it should.
-    if (error.status === 400) return res.status(400).json({ error: error.message });
+    if (error.status === 400) return res.status(400).json(errorBody(error));
     console.error('POST /stock/adjust error:', error.message);
     res.status(500).json({ error: 'Internal server error' });
   } finally {

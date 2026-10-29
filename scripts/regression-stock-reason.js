@@ -62,6 +62,9 @@ try {
   await sa.query(
     `INSERT INTO products (id, tag, "productCode", name, category, unit, "currentStock", "minStockLevel")
      VALUES ($1, $1, $1, $2, 'OILS', 'mL', 100000, 0)`, [TAG, `${TAG} probe`]);
+  // An oil's SA adjustment needs it registered in SA (PRD_H2 A9), as every oil
+  // created through the platform is. Goes with the product (ON DELETE CASCADE).
+  await sa.query(`INSERT INTO fragrance_registrations (product_id, company) VALUES ($1, 'SA')`, [TAG]);
 
   server = spawn(process.execPath, ['server/index.js'], {
     cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
@@ -167,6 +170,8 @@ try {
   if (server) { try { server.kill('SIGKILL'); } catch { /* gone */ } }
   if (productId) {
     await sa.query('DELETE FROM transactions WHERE product_code = $1', [productId]).catch(() => {});
+// Each adjustment writes its Activity row too (PRD_H2 A10).
+await sa.query('DELETE FROM audit_log WHERE entity_id = $1', [productId]).catch(() => {});
     await sa.query('DELETE FROM products WHERE id = $1', [productId]).catch(() => {});
     const left = Number((await sa.query(
       'SELECT count(*) c FROM transactions WHERE product_code = $1', [productId])).rows[0].c)

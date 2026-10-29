@@ -59,14 +59,19 @@ export const NON_DEMAND_REMOVE_REASONS = ['correction'];
 // ordem eu reclamo." Shown beside the prediction, the planner still sees them.
 export const UNPATTERNED_REMOVE_REASONS = ['other', ''];
 
-export function reasonsFor(type) {
-  return type === 'add' ? ADD_REASONS : REMOVE_REASONS;
+// Not offered on a MUSE stock (PRD_H2_STOCK_MANAGEMENT.md §2.4): technicians
+// are SA's, and oil that is delivered comes in through a PO or + Incoming.
+const SA_ONLY_REASONS = ['technician', 'delivery'];
+
+export function reasonsFor(type, { muse = false } = {}) {
+  const list = type === 'add' ? ADD_REASONS : REMOVE_REASONS;
+  return muse ? list.filter((r) => !SA_ONLY_REASONS.includes(r.id)) : list;
 }
 
 // Validated on the server rather than trusted from the screen: a reason that
 // can hold anything is the free-text box again, wearing a different name.
-export function isValidReason(type, reason) {
-  return reasonsFor(type).some((r) => r.id === reason);
+export function isValidReason(type, reason, opts) {
+  return reasonsFor(type, opts).some((r) => r.id === reason);
 }
 
 export function reasonLabel(type, reason) {

@@ -127,6 +127,10 @@ async function createOil(name, extra = {}) {
 const adjust = (pid, type, litres, reason) =>
   api('root', 'POST', '/api/sa/stock/adjust', { productId: pid, quantity: litres * L, type, reason, note: `[regression] ${reason}` });
 const move = (who, pid, body) => api(who, 'POST', '/api/sa/sectors/move', { productId: pid, ...body });
+// One stock of an oil (PRD_H2 §2.4): counts and uses are adjustments since H2 (D3).
+const adjustIn = (who, pid, body) => api(who, 'POST', '/api/sa/sectors/adjust', { productId: pid, note: '[regression]', ...body });
+const refusalsOf = (pid) => db.query(`SELECT details FROM audit_log WHERE action = 'stock_refused' AND entity_id = $1 ORDER BY id`, [pid])
+  .then((r) => r.rows.map((x) => (typeof x.details === 'string' ? JSON.parse(x.details) : x.details)));
 const register = (pid, company, extra = {}) => api('root', 'POST', '/api/sa/fragrance-registrations', { productId: pid, company, ...extra });
 async function addPo(pid, orderNumber, litres, cost = null) {
   await api('root', 'POST', `/api/sa/products/${pid}/incoming`, { orderNumber, quantity: litres * L, notes: '[regression]' });
@@ -240,10 +244,14 @@ async function run() {
   record('D2: more out of the main store than it holds is refused', r.status === 400 && r.json?.error === 'That takes 120 L out of the main store, which holds 100 L.', r.json?.error);
   r = await move('root', A, { kind: 'transfer', lines: [{ from: 'MAIN', to: 'SA', quantity: 60 * L }, { from: 'MAIN', to: 'MUSE_LIBRARY', quantity: 60 * L }] });
   record('D2: summed over the lines', r.status === 400, r.json?.error);
+  let refused = await refusalsOf(A);
+  record('A12: both refused main store transfers are recorded in Activity, with what it held',
+    refused.length === 2 && refused.every((d) => d.stock === 'MAIN' && near(d.held, 100 * L)) && near(refused[0].quantity, 120 * L), JSON.stringify(refused));
   r = await move('root', A, { kind: 'transfer', lines: [{ from: 'SA', to: 'MAIN', quantity: 1 * L }] });
   record('D2: no transfer into the main store', r.status === 400, r.json?.error);
-  r = await move('root', A, { kind: 'count', lines: [{ to: 'MAIN', quantity: 1 * L }] });
-  record('D2: no count into the main store', r.status === 400, r.json?.error);
+  r = await adjustIn('root', A, { stock: 'MAIN', type: 'add', quantity: 1 * L, reason: 'found' });
+  record('D4: the main store is never adjusted (it is corrected on its receipt)', r.status === 400, r.json?.error);
+  record('A12: a form refusal is not recorded', (await refusalsOf(A)).length === 2);
   r = await move('root', A, { kind: 'transfer', reference: 'TESTREG-SEC-PO3', lines: [{ from: 'MAIN', to: 'SA', quantity: 60 * L }, { from: 'MAIN', to: 'MUSE_LIBRARY', quantity: 40 * L }] });
   record('the main store split: 60 SA, 40 The Library', r.status === 200 && near(r.json?.sectors?.MAIN, 0), `${r.status} ${r.json?.error || ''}`);
   await check('main store split', A, { SA: 129, MUSE: 1, MUSE_ATELIER: 25, MUSE_LIBRARY: 65 });
@@ -261,14 +269,20 @@ async function run() {
   record('refused: zero quantity', r.status === 400);
   r = await move('root', A, { kind: 'transfer', lines: [{ from: 'SA', to: 'MUSE', quantity: 5 * L }, { from: 'SA', to: 'NOWHERE', quantity: 5 * L }] });
   record('refused: a bad line rolls back the good one', r.status === 400);
-  r = await move('root', A, { kind: 'count', lines: [{ to: 'SA', quantity: 1 * L }] });
-  record('refused: a count into SA (SA counts on its Stock page)', r.status === 400, r.json?.error);
-  r = await move('root', A, { kind: 'use', reference: '#TESTREG-1', lines: [{ from: 'SA', quantity: 1 * L, reason: 'sample' }] });
-  record('refused: a use from SA (SA removes on its Stock page)', r.status === 400, r.json?.error);
-  r = await move('root', A, { kind: 'use', reference: '#TESTREG-1', lines: [{ from: 'MAIN', quantity: 1 * L, reason: 'sample' }] });
-  record('refused: a use from the main store', r.status === 400, r.json?.error);
-  r = await move('root', A, { kind: 'use', lines: [{ from: 'MUSE_LIBRARY', quantity: 1 * L, reason: 'production' }] });
+  r = await move('root', A, { kind: 'count', lines: [{ to: 'MUSE', quantity: 1 * L }] });
+  record('D3: a count is no longer a move — it is Adjust stock', r.status === 400 && r.json?.error === 'Counts and uses are made with Adjust stock', r.json?.error);
+  r = await move('root', A, { kind: 'use', reference: '#TESTREG-1', lines: [{ from: 'MUSE', quantity: 1 * L, reason: 'production' }] });
+  record('D3: nor is a use', r.status === 400, r.json?.error);
+  r = await adjustIn('root', A, { stock: 'MAIN', type: 'remove', quantity: 1 * L, reason: 'correction' });
+  record('D4: no removal from the main store either', r.status === 400, r.json?.error);
+  r = await adjustIn('root', A, { stock: 'MUSE_LIBRARY', type: 'remove', quantity: 1 * L, reason: 'production' });
   record('S9: a MUSE use without its order number is refused', r.status === 400 && /order number/.test(r.json?.error || ''), r.json?.error);
+  r = await adjustIn('root', A, { stock: 'MUSE_LIBRARY', type: 'remove', quantity: 1 * L, reason: 'technician' });
+  record('§2.4: Technician is not a reason on a MUSE stock', r.status === 400, r.json?.error);
+  r = await adjustIn('root', A, { stock: 'MUSE_LIBRARY', type: 'add', quantity: 1 * L, reason: 'delivery' });
+  record('§2.4: nor is Supplier delivery', r.status === 400, r.json?.error);
+  r = await adjustIn('user', A, { stock: 'MUSE_LIBRARY', type: 'add', quantity: 1 * L, reason: 'found' });
+  record('refused: a user adjusting', r.status === 403, `status=${r.status}`);
   r = await move('technician', A, { kind: 'transfer', lines: [{ from: 'SA', to: 'MUSE', quantity: 1 * L }] });
   record('refused: a technician moving oil', r.status === 403, `status=${r.status}`);
   r = await api('technician', 'POST', '/api/sa/fragrance-registrations', { productId: A, company: 'MUSE' });
@@ -291,9 +305,12 @@ async function run() {
   r = await api('root', 'POST', '/api/sa/products', { name: '[regression] Sector Oil bad2', category: 'OILS', unit: 'mL', currentStock: 5 * L, registerIn: ['MUSE'] });
   record('V5: registerIn without SA and an opening stock is refused',
     r.status === 400 && r.json?.error === 'An oil not registered in SA cannot start with stock — register it in SA, or receive its stock through a purchase order.', r.json?.error);
-  r = await move('root', E, { kind: 'use', reference: '#TESTREG-SEC-R5', lines: [{ from: 'MUSE_LIBRARY', quantity: 1 * L, reason: 'production' }] });
+  r = await adjustIn('root', E, { stock: 'MUSE_LIBRARY', type: 'remove', quantity: 1 * L, reason: 'production', reference: '#TESTREG-SEC-R5' });
   record('R5: a MUSE use on an oil not registered in MUSE is allowed', r.status === 200, `${r.status} ${r.json?.error || ''}`);
   await check('R5: it came off SA\'s shelf, for The Library', E, { SA: -1 });
+  r = await adjustIn('root', E, { stock: 'MUSE_ARCHIVE', type: 'add', quantity: 1 * L, reason: 'found' });
+  record('A9: any other adjustment in a company where the oil is not registered is refused',
+    r.status === 400 && r.json?.code === 'NOT_REGISTERED' && r.json?.company === 'MUSE', JSON.stringify(r.json));
   // S1 / V1 through the SEED: an oil inactive on day one is registered by the
   // seed — written here, not by the create endpoint, so the test fails on the
   // old rule (inactive oil → inactive registration → its PO refused).
@@ -335,8 +352,8 @@ async function run() {
   r = await move('root', D, { kind: 'transfer', lines: [{ from: 'SA', to: 'MUSE_ARCHIVE', quantity: 10 * L }] });
   record('case 6: allowed once registered', r.status === 200, `${r.status} ${r.json?.error || ''}`);
   // ── Case 7: oil MUSE The Atelier holds that the system did not know.
-  r = await move('root', D, { kind: 'count', lines: [{ to: 'MUSE_ATELIER', quantity: 90 * L }] });
-  record('case 7: count accepted', r.status === 200, `${r.status} ${r.json?.error || ''}`);
+  r = await adjustIn('root', D, { stock: 'MUSE_ATELIER', type: 'add', quantity: 90 * L, reason: 'found' });
+  record('case 7: Adjust · Add · Found accepted', r.status === 200, `${r.status} ${r.json?.error || ''}`);
   await check('case 7: total +90, The Atelier +90, SA unchanged', D, { SA: 10, MUSE_ARCHIVE: 10, MUSE_ATELIER: 90 });
   record('case 7: a count is not demand', (await demandL(D)).rows.length === 0);
   r = await register(D, 'MUSE', { active: false });
@@ -357,24 +374,36 @@ async function run() {
   const B = await createOil('B');
   await register(B, 'MUSE', { usedBy: ['MUSE_LIBRARY'] });
   await adjust(B, 'add', 50, 'delivery');
-  await move('root', B, { kind: 'count', lines: [{ to: 'MUSE_LIBRARY', quantity: 1.5 * L }] });
+  await adjustIn('root', B, { stock: 'MUSE_LIBRARY', type: 'add', quantity: 1.5 * L, reason: 'found' });
   await check('case 4 set-up: The Library 1.5 L, MUSE (shared) 0, SA 50 L', B, { SA: 50, MUSE_LIBRARY: 1.5 });
-  r = await move('root', B, { kind: 'use', reference: '#TESTREG-SEC-4', lines: [{ from: 'MUSE_LIBRARY', quantity: 2 * L, reason: 'production' }] });
+  r = await adjustIn('root', B, { stock: 'MUSE_LIBRARY', type: 'remove', quantity: 2 * L, reason: 'production', reference: '#TESTREG-SEC-4' });
   record('case 4: use accepted', r.status === 200, `${r.status} ${r.json?.error || ''}`);
   await check('case 4: 1.5 L from The Library, 0.5 L from SA — SA reads 49.5 L', B, { SA: 49.5 });
   let parts = await movementsOfTx(await lastTx(B));
   record('case 4: the SA part is recorded "used by MUSE The Library"',
     parts.length === 2 && parts[0].from_sector === 'MUSE_LIBRARY' && near(parts[0].q, 1.5 * L) && parts[0].used_for === null
     && parts[1].from_sector === 'SA' && near(parts[1].q, 0.5 * L) && parts[1].used_for === 'MUSE_LIBRARY', JSON.stringify(parts));
-  await move('root', B, { kind: 'count', lines: [{ to: 'MUSE', quantity: 3 * L }, { to: 'MUSE_ATELIER', quantity: 5 * L }, { to: 'MUSE_LIBRARY', quantity: 2 * L }] });
-  r = await move('root', B, { kind: 'use', reference: '#TESTREG-SEC-5', lines: [{ from: 'MUSE_LIBRARY', quantity: 6 * L, reason: 'production' }] });
+  for (const [stock, l] of [['MUSE', 3], ['MUSE_ATELIER', 5], ['MUSE_LIBRARY', 2]]) {
+    await adjustIn('root', B, { stock, type: 'add', quantity: l * L, reason: 'found' });
+  }
+  r = await adjustIn('root', B, { stock: 'MUSE_LIBRARY', type: 'remove', quantity: 6 * L, reason: 'production', reference: '#TESTREG-SEC-5' });
   parts = await movementsOfTx(await lastTx(B));
   record('use rule: The Library 2 → MUSE (shared) 3 → SA 1, never The Atelier',
     parts.map((m) => `${m.from_sector}:${m.q / L}:${m.used_for}`).join(' ') === 'MUSE_LIBRARY:2:null MUSE:3:MUSE_LIBRARY SA:1:MUSE_LIBRARY', JSON.stringify(parts));
   await check('use rule', B, { SA: 48.5, MUSE_ATELIER: 5 });
-  // MUSE (shared) with nothing left: straight to SA, for MUSE. Reason "other": it
-  // would show in Demand Planning's "manual" figure if the exclusion missed it.
-  r = await move('root', B, { kind: 'use', reference: '#TESTREG-SEC-6', lines: [{ from: 'MUSE', quantity: 1 * L, reason: 'other', notes: '[regression] collab' }] });
+  // A7 (D2): MUSE (shared) holding none — a removal that is not production stops
+  // at zero: blocked, alerted (the message gives both figures and the right
+  // path) and recorded; nothing moves.
+  const txBefore = await lastTx(B);
+  r = await adjustIn('root', B, { stock: 'MUSE', type: 'remove', quantity: 1 * L, reason: 'other', note: '[regression] collab' });
+  record('A7: a MUSE removal below zero is refused, with both figures and the right path',
+    r.status === 400 && r.json?.error === "MUSE (shared) holds 0 L. A removal can bring it to zero, not below. If MUSE (shared) used oil from SA's shelf, record it as Production with the order number.", r.json?.error);
+  refused = await refusalsOf(B);
+  record('A12: and recorded in Activity: the stock, what was typed, what it held, the reason',
+    refused.length === 1 && refused[0].stock === 'MUSE' && near(refused[0].quantity, 1 * L) && near(refused[0].held, 0) && refused[0].reason === 'other', JSON.stringify(refused));
+  record('A7: nothing moved', (await lastTx(B)) === txBefore);
+  // The same as production: straight to SA, for MUSE (S4).
+  r = await adjustIn('root', B, { stock: 'MUSE', type: 'remove', quantity: 1 * L, reason: 'production', reference: '#TESTREG-SEC-6' });
   parts = await movementsOfTx(await lastTx(B));
   record('use rule: MUSE (shared) holding none takes from SA, for MUSE', r.status === 200 && parts.length === 1 && parts[0].from_sector === 'SA' && parts[0].used_for === 'MUSE', JSON.stringify(parts));
   // The MUSE side (CommonJS) draws through the same function, by the product's unit.
@@ -392,6 +421,15 @@ async function run() {
   // Atelier 5 − 2 − 1 (client work is The Atelier's) = 2; The Archive holds none,
   // MUSE (shared) none, so its 1 L is SA's, for it; the reversal goes back to SA.
   await check('MUSE side: by unit, client work is The Atelier, a reversal back to SA', B, { SA: 47.5, MUSE_ATELIER: 2 });
+  // A7 / A8: a MUSE removal that is not production comes off that stock only.
+  // Reason "other": it would show in Demand Planning's "manual" figure (checked
+  // below) if the exclusion missed it.
+  r = await adjustIn('root', B, { stock: 'MUSE_ATELIER', type: 'remove', quantity: 0.5 * L, reason: 'other', note: '[regression] collab sample' });
+  parts = await movementsOfTx(await lastTx(B));
+  record('A7: a MUSE removal within what it holds comes off that stock only, kind adjust',
+    r.status === 200 && parts.length === 1 && parts[0].from_sector === 'MUSE_ATELIER' && parts[0].kind === 'adjust' && parts[0].used_for === null,
+    `${r.status} ${r.json?.error || ''} ${JSON.stringify(parts)}`);
+  await check('A7: The Atelier 1.5 L, SA unchanged', B, { SA: 47.5, MUSE_ATELIER: 1.5 });
   const forArchive = (await db.query(`SELECT from_sector, used_for FROM sector_movements WHERE product_id = $1 AND kind = 'production' AND used_for = 'MUSE_ARCHIVE'`, [B])).rows;
   record('MUSE side: The Archive\'s SA oil is marked used for it', forArchive.length === 1 && forArchive[0].from_sector === 'SA');
   const { DIVISION_NAMES } = await import('../shared/business-names.js');
@@ -407,7 +445,8 @@ async function run() {
   const G = await createOil('G');
   await register(G, 'MUSE', { usedBy: ['MUSE_ARCHIVE', 'MUSE_LIBRARY'] });
   await adjust(G, 'add', 10, 'delivery');
-  await move('root', G, { kind: 'count', lines: [{ to: 'MUSE_ARCHIVE', quantity: 3 * L }, { to: 'MUSE_LIBRARY', quantity: 5 * L }] });
+  await adjustIn('root', G, { stock: 'MUSE_ARCHIVE', type: 'add', quantity: 3 * L, reason: 'found' });
+  await adjustIn('root', G, { stock: 'MUSE_LIBRARY', type: 'add', quantity: 5 * L, reason: 'found' });
   const master = (await db.query(`INSERT INTO sm.products (name, product_code, category, is_master, segment, business_unit)
     VALUES ('[regression] Sector master', 'TESTREG-SEC-MST', 'FINISHED_GOOD', true, 'MUSE', 'library') RETURNING id`)).rows[0].id;
   await db.query(`INSERT INTO sm.products (name, product_code, category, master_product_id, oil_id, segment, business_unit)
@@ -431,6 +470,12 @@ async function run() {
     `manual=${row?.outsideAverage?.manual} realStock=${row?.realStock}`);
   record('S5: nor in the portfolio daily rate (30-day sales stream)', near(row?.totalSold30d, 0) && near(row?.retailDailyAvg, 0, 1e-6),
     `sold30=${row?.totalSold30d} retail=${row?.retailDailyAvg}`);
+  // A7 race (PRD_H2 §7): The Atelier holds 1.5 L; two removals of 1 L at the
+  // same moment — the row lock checks them one after the other.
+  const raced2 = await Promise.all([1, 2].map(() => adjustIn('root', B, { stock: 'MUSE_ATELIER', type: 'remove', quantity: 1 * L, reason: 'correction' })));
+  record('A7 race: one removal lands, the other is refused and recorded',
+    raced2.map((x) => x.status).sort().join() === '200,400' && (await refusalsOf(B)).length === 2, `statuses=${raced2.map((x) => x.status)}`);
+  await check('A7 race: The Atelier 0.5 L, never below zero', B, { SA: 47.5, MUSE_ATELIER: 0.5 });
 
   // ── Case 5: an SA debit beyond SA's oil — SA negative, MUSE untouched, SA demand.
   // (A sale and a removal are both SA ledger debits with no stock movement; the
@@ -438,7 +483,7 @@ async function run() {
   const C = await createOil('C');
   await register(C, 'MUSE', { usedBy: ['MUSE_LIBRARY'] });
   await adjust(C, 'add', 3, 'delivery');
-  await move('root', C, { kind: 'count', lines: [{ to: 'MUSE', quantity: 25 * L }] });
+  await adjustIn('root', C, { stock: 'MUSE', type: 'add', quantity: 25 * L, reason: 'found' });
   r = await adjust(C, 'remove', 5, 'sample');
   record('case 5: the SA debit is accepted', r.status === 200, `${r.status} ${r.json?.error || ''}`);
   await check('case 5: SA reads −2 L, MUSE untouched', C, { SA: -2, MUSE: 25 });
@@ -453,6 +498,17 @@ async function run() {
   // ── Case 9: a stocktake on SA's Stock page changes SA only.
   await adjust(C, 'add', 1, 'correction');
   await check('case 9: the stocktake lands in SA, MUSE does not move', C, { SA: -1, MUSE: 25 });
+  // A4: the same adjustment, made in the Fragrance Library with the stock named SA.
+  r = await adjustIn('root', C, { stock: 'SA', type: 'remove', quantity: 1 * L, reason: 'correction' });
+  const saTx = await lastTx(C);
+  const saRow = (await db.query(`SELECT type, reason, notes FROM transactions WHERE id = $1`, [saTx])).rows[0];
+  record('A4: an SA adjustment in the Fragrance Library writes the Stock page\'s ledger row, no stock movement',
+    r.status === 200 && saRow?.type === 'remove' && saRow?.reason === 'correction' && saRow?.notes === 'Correcting a count — [regression]'
+    && (await movementsOfTx(saTx)).length === 0, `${r.status} ${r.json?.error || ''} ${JSON.stringify(saRow)}`);
+  await check('A4: it lands in SA', C, { SA: -2, MUSE: 25 });
+  const act = (await db.query(`SELECT details FROM audit_log WHERE action = 'stock_adjust' AND entity_id = $1 ORDER BY id DESC LIMIT 1`, [C])).rows[0];
+  const actD = typeof act?.details === 'string' ? JSON.parse(act.details) : act?.details;
+  record('A10: every adjustment writes its Activity row: stock, type, quantity, reason', actD?.stock === 'SA' && actD?.type === 'remove' && near(actD?.quantity, 1 * L) && actD?.reason === 'correction', JSON.stringify(actD));
 
   // ── P6 (owner, 29–30 Oct): the Shopify PO destination names the company.
   // An accepted Shopify line is an ordinary PO row plus its destination_stock
@@ -567,7 +623,7 @@ async function run() {
 
   // R6: Demand Planning lists only oils with an active SA registration.
   const H = await createOil('H', { registerIn: ['MUSE'] });
-  await move('root', H, { kind: 'count', lines: [{ to: 'MUSE_LIBRARY', quantity: 5 * L }] });
+  await adjustIn('root', H, { stock: 'MUSE_LIBRARY', type: 'add', quantity: 5 * L, reason: 'found' });
   const rep = (await api('root', 'GET', '/api/sa/dashboard/replenishment')).json;
   record('R6: an oil that is only MUSE\'s is not in Demand Planning; an SA one is',
     !rep?.products?.some((x) => x.id === H) && rep?.products?.some((x) => x.id === C), `rows=${rep?.products?.length}`);
