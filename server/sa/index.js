@@ -17,8 +17,8 @@ import { readIncomingPurchaseOrders, costPerMl, VARIANT_ML } from './shopify-pur
 import { refreshOrderActors, TECH_REFILL_DAYS } from './shopify-order-actors.js';
 import { shelfOutlook, orderToCover, SAFETY_STOCK_FACTOR } from '../../shared/shelf-outlook.js';
 import { router as sectorsRouter, migrateSectors, heldByProduct, sectorBalances, recordMovement, balancesAfterCommit,
-  registrationsByProduct, registerOil, requireRegistered, errorBody, qtyText } from './sectors.js';
-import { SECTOR_KEYS, COMPANIES } from '../../shared/sectors.js';
+  registrationsByProduct, registerOil, requireRegistered, errorBody, qtyText, recordRefusal } from './sectors.js';
+import { SECTOR_KEYS, COMPANIES, companyOf, sectorLabel, destinationByStock } from '../../shared/sectors.js';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import multer from 'multer';
@@ -649,7 +649,7 @@ router.get('/products', async (req, res) => {
       pool.query(query, params),
       // eta_days in Sydney time, from Postgres: a DATE handed to the browser as
       // a JS Date lands a day off depending on the server's own timezone.
-      pool.query(`SELECT id, product_id, order_number, quantity, quantity_received, supplier, status, notes, added_at, added_by, estimated_delivery_date, shopify_missing_since,
+      pool.query(`SELECT id, product_id, order_number, quantity, quantity_received, supplier, status, notes, added_at, added_by, estimated_delivery_date, shopify_missing_since, destination_stock,
                          estimated_delivery_date - (NOW() AT TIME ZONE 'Australia/Sydney')::date AS eta_days
                   FROM purchase_orders WHERE status IN ('pending','partial') ORDER BY added_at ASC`),
       // Only oils carry one; a machines or spares list does not need it.
@@ -674,7 +674,10 @@ router.get('/products', async (req, res) => {
         addedBy: po.added_by || '',
         estimatedDeliveryDate: po.estimated_delivery_date || null,
         etaDays: po.eta_days == null ? null : Number(po.eta_days),
-        shopifyMissingSince: po.shopify_missing_since || null
+        shopifyMissingSince: po.shopify_missing_since || null,
+        // The company stock a Shopify PO is for (P6); null = a manual order, SA's.
+        // SA's status and on order read only SA's (utils/stockStatus).
+        stock: po.destination_stock || null,
       });
     }
 
@@ -1519,7 +1522,7 @@ router.get('/audit', async (req, res) => {
     // exist as a type — so filtering the Activity Log by "Tech Batch (Scanner)"
     // silently returned 0 rows while real entries sat in audit_log. Restores
     // parity with the live SA system; keep this list in sync with it.
-    const AUDIT_LOG_TYPES = ['product_created', 'product_deleted', 'sku_published', 'sku_added', 'po_created', 'po_cancelled', 'po_received', 'formula_created', 'formula_updated', 'formula_deleted', 'formula_ready_received', 'formula_ready_adjusted', 'product_deactivated', 'product_activated', 'scented_group_created', 'scented_group_deleted', 'tech_transfer', 'tech_remove', 'tech_return', 'tech_batch', 'shopify_po_accepted', 'shopify_po_quantity_synced', 'product_reorder_watch_changed'];
+    const AUDIT_LOG_TYPES = ['product_created', 'product_deleted', 'sku_published', 'sku_added', 'po_created', 'po_cancelled', 'po_received', 'formula_created', 'formula_updated', 'formula_deleted', 'formula_ready_received', 'formula_ready_adjusted', 'product_deactivated', 'product_activated', 'scented_group_created', 'scented_group_deleted', 'tech_transfer', 'tech_remove', 'tech_return', 'tech_batch', 'shopify_po_accepted', 'shopify_po_quantity_synced', 'product_reorder_watch_changed', 'stock_refused'];
     const isAuditLogType = AUDIT_LOG_TYPES.includes(type);
 
     // ── Stock transactions ─────────────────────────────────────────────────
@@ -3188,7 +3191,7 @@ router.post('/products/:id/incoming', async (req, res) => {
     );
 
     const posResult = await pool.query(
-      `SELECT id, order_number, quantity, quantity_received, supplier, status, notes, added_at, added_by, estimated_delivery_date
+      `SELECT id, order_number, quantity, quantity_received, supplier, status, notes, added_at, added_by, estimated_delivery_date, destination_stock
        FROM purchase_orders WHERE product_id = $1 AND status IN ('pending','partial') ORDER BY added_at ASC`,
       [id]
     );
@@ -3197,7 +3200,8 @@ router.post('/products/:id/incoming', async (req, res) => {
       quantityReceived: parseFloat(po.quantity_received) || 0,
       supplier: po.supplier || '', status: po.status, notes: po.notes || '',
       addedAt: po.added_at, addedBy: po.added_by || '',
-      estimatedDeliveryDate: po.estimated_delivery_date || null
+      estimatedDeliveryDate: po.estimated_delivery_date || null,
+      stock: po.destination_stock || null,
     }));
 
     // Audit log — po_created
@@ -3355,7 +3359,12 @@ router.post('/purchase-orders/:poId/receive', async (req, res) => {
     // a company where the oil is not registered (S6) — the main store needs none.
     let receiptLines = null;
     if (product.category === 'OILS') {
-      receiptLines = split || [{ to: 'SA', quantity: receivedQty }];
+      // A Shopify PO's destination names the company (P6, shared/sectors.js):
+      // with no lines it all goes to that stock, and a line outside its stocks
+      // is refused, recorded and explained (owner, 30 Oct: "registrar e
+      // bloquear e alertar"). A manual PO has no destination: anywhere, as before.
+      const dest = destinationByStock(po.destination_stock);
+      receiptLines = split || [{ to: dest?.stock || 'SA', quantity: receivedQty }];
       if (receiptLines.some((l) => !SECTOR_KEYS.includes(l.to) || !(l.quantity > 0))) {
         await client.query('ROLLBACK');
         return res.status(400).json({ error: 'Each line needs a stock and a quantity above zero' });
@@ -3364,6 +3373,22 @@ router.post('/purchase-orders/:poId/receive', async (req, res) => {
       if (Math.abs(total - receivedQty) > 0.001) {
         await client.query('ROLLBACK');
         return res.status(400).json({ error: `The lines add up to ${qtyText(total, product.unit)}; ${qtyText(receivedQty, product.unit)} arrived.` });
+      }
+      const outside = dest ? receiptLines.filter((l) => !dest.receiveInto.includes(l.to)) : [];
+      if (outside.length) {
+        const allowed = dest.receiveInto.map(sectorLabel).join(', ');
+        throw Object.assign(new Error(
+          `${po.order_number} is a purchase order for ${dest.label}. It can only be received into ${allowed}, `
+          + `not into ${outside.map((l) => sectorLabel(l.to)).join(', ')}.`), {
+          status: 400, code: 'WRONG_STOCK',
+          fix: `Receive it into ${allowed}. If part of this oil really belongs to another company, receive it here first, `
+            + 'then move that part with a Transfer in the Fragrance Library: the transfer records who moved it, when and why.',
+          refusal: {
+            productId: product.id, productName: product.name, type: 'receipt', reference: po.order_number,
+            stock: outside[0].to, quantity: outside.reduce((s, l) => s + l.quantity, 0), unit: product.unit,
+            destination: dest.label, allowed: dest.receiveInto,
+          },
+        });
       }
       for (const l of receiptLines) await requireRegistered(client, product.id, l.to);
     } else if (split) {
@@ -3435,7 +3460,8 @@ router.post('/purchase-orders/:poId/receive', async (req, res) => {
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    if (error.status) return res.status(error.status).json(errorBody(error)); // NOT_REGISTERED
+    await recordRefusal(req.user, error); // WRONG_STOCK (P6); nothing else carries a refusal
+    if (error.status) return res.status(error.status).json(errorBody(error)); // NOT_REGISTERED, WRONG_STOCK
     console.error('Receive PO error:', error);
     res.status(500).json({ error: 'Internal server error' });
   } finally {
@@ -4479,9 +4505,15 @@ router.get('/shopify-purchase-orders', async (req, res) => {
          LEFT JOIN products pr ON pr.id = po.product_id
         WHERE po.shopify_line_id IS NOT NULL`)).rows;
     const byLine = new Map(accepted.map((r) => [r.shopify_line_id, r]));
+    // An oil must be registered in the company the PO is for before it can be
+    // accepted (P6): flagged on the line here, so it is seen before the click.
+    const regs = await registrationsByProduct();
     for (const o of orders) {
+      const company = companyOf(o.destinationStock);
       for (const l of o.lines) {
         const row = byLine.get(l.lineId);
+        l.registerCompany = company;
+        l.registered = !l.matched || !company || regs.get(l.productId)?.[company]?.active === true;
         l.accepted = !!row;
         l.receivedMl = row ? row.rec : null;
         l.poStatus = row ? row.status : null;
@@ -4494,7 +4526,8 @@ router.get('/shopify-purchase-orders', async (req, res) => {
         l.changedInShopify = !!row && l.matched && Math.abs(row.q - l.incomingMl) > 0.001;
       }
       o.acceptedLines = o.lines.filter((l) => l.accepted).length;
-      o.acceptableLines = o.lines.filter((l) => l.matched && !l.accepted).length;
+      o.acceptableLines = o.destinationStock ? o.lines.filter((l) => l.matched && !l.accepted && l.registered).length : 0;
+      o.unregisteredLines = o.lines.filter((l) => l.matched && !l.accepted && !l.registered).length;
     }
 
     // Accepted, then deleted in Shopify. Without this the platform would go on
@@ -4587,10 +4620,28 @@ router.post('/shopify-purchase-orders/accept', async (req, res) => {
       return res.status(409).json({ error: 'That purchase order is no longer in Shopify. Refresh the page.' });
     }
 
+    // The destination names the company (P6). An unknown one — a fourth
+    // location, a rename — is never guessed: nothing on it is accepted.
+    if (!fresh.destinationStock) return res.status(400).json({ error: fresh.destinationError });
+    const company = companyOf(fresh.destinationStock);
+
     const byCode = new Map(products.map((p) => [p.productCode, p]));
-    const usable = fresh.lines.filter((l) => l.matched && byCode.has(l.productCode));
-    if (usable.length === 0) {
+    const matchedLines = fresh.lines.filter((l) => l.matched && byCode.has(l.productCode));
+    if (matchedLines.length === 0) {
       return res.status(400).json({ error: 'No line on this purchase order matches a product yet' });
+    }
+    // An oil not registered in that company is left out and named, so it is
+    // registered BEFORE the oil arrives (owner, 29 Oct), not found at the receipt.
+    const regs = await registrationsByProduct();
+    const isRegistered = (l) => regs.get(byCode.get(l.productCode).id)?.[company]?.active === true;
+    const usable = matchedLines.filter(isRegistered);
+    const notRegistered = matchedLines.filter((l) => !isRegistered(l))
+      .map((l) => ({ productId: byCode.get(l.productCode).id, productCode: l.productCode, name: l.productName, company }));
+    if (usable.length === 0) {
+      return res.status(400).json({
+        error: `Not accepted: ${notRegistered.map((n) => n.name).join(', ')} ${notRegistered.length > 1 ? 'are' : 'is'} not registered in ${company} Fragrances. Register ${notRegistered.length > 1 ? 'them' : 'it'} first, then accept again.`,
+        code: 'NOT_REGISTERED', notRegistered,
+      });
     }
 
     client = await pool.connect();
@@ -4601,18 +4652,20 @@ router.post('/shopify-purchase-orders/accept', async (req, res) => {
       const ins = await client.query(
         `INSERT INTO purchase_orders
            (product_id, order_number, quantity, supplier, notes, added_by, created_by,
-            shopify_po_gid, shopify_line_id, cost_per_unit)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            shopify_po_gid, shopify_line_id, cost_per_unit, destination_stock)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
          ON CONFLICT (shopify_line_id) WHERE shopify_line_id IS NOT NULL DO NOTHING
          RETURNING id`,
         // added_by is the label the screens show; created_by is the user id.
         // The existing PO insert keeps them apart and so must this one.
         // cost_per_unit: per mL, ex GST; a Shopify cost of 0 is NULL, "No
         // price on the PO", never $0 (costPerMl, S8).
+        // destination_stock: whose oil it is (P6) — what the receipt may go
+        // into, and whether it is SA's on order.
         [product.id, fresh.number, line.incomingMl, fresh.supplier || null,
          `From Shopify ${fresh.number} — ${line.bottles} × ${line.bottleMl} mL`,
          req.user.name || 'shopify', req.user.id, shopifyId, line.lineId,
-         costPerMl(line.unitCost, line.bottleMl)]
+         costPerMl(line.unitCost, line.bottleMl), fresh.destinationStock]
       );
       // The name as well as the code: the activity screen is read by people, and
       // "FRAG_0045" tells them nothing that "Dream" does not tell them better.
@@ -4625,7 +4678,8 @@ router.post('/shopify-purchase-orders/accept', async (req, res) => {
        VALUES ($1, 'shopify_po_accepted', 'purchase_order', NULL, $2, $3)`,
       [req.user.id, fresh.number,
        JSON.stringify({ shopifyId, supplier: fresh.supplier, lines: created,
-                        skippedUnmatched: fresh.unmatchedCount })]
+                        destination: fresh.destination, destinationStock: fresh.destinationStock,
+                        skippedUnmatched: fresh.unmatchedCount, skippedNotRegistered: notRegistered })]
     );
     await client.query('COMMIT');
 
@@ -4634,6 +4688,7 @@ router.post('/shopify-purchase-orders/accept', async (req, res) => {
       accepted: created.length,
       alreadyAccepted: usable.length - created.length,
       unmatched: fresh.unmatchedCount,
+      notRegistered,
     });
   } catch (e) {
     if (client) await client.query('ROLLBACK').catch(() => {});
@@ -5033,6 +5088,10 @@ async function buildReplenishment() {
                estimated_delivery_date - (NOW() AT TIME ZONE 'Australia/Sydney')::date AS eta_days
         FROM purchase_orders
         WHERE status IN ('pending', 'partial')
+          -- SA's on order only (P6): a PO for MUSE The Atelier or MUSE is that
+          -- company's, and Demand Planning is SA's alone (owner, 25 Oct). A
+          -- manual order has no destination and stays SA's, as before.
+          AND (destination_stock IS NULL OR destination_stock = 'SA')
       `),
       // What technicians actually drew on contracted oils — the forecast as it
       // really happened. See the B2B stream below.

@@ -11,7 +11,7 @@ import MlHelper from '../components/MlHelper';
 import { LiquidMetalButton } from '../components/LiquidMetalButton';
 import ReceiveSplitModal from '../components/ReceiveSplitModal';
 import RegisterFragranceModal from '../components/RegisterFragranceModal';
-import { SECTORS } from '../../../shared/sectors.js';
+import { SECTORS, destinationByStock } from '../../../shared/sectors.js';
 
 // libraryMode (D15 follow-up, 2026-07-30): renders this exact same page — same
 // engine, same product-code sequence, same endpoints — as a locked-down,
@@ -1169,6 +1169,13 @@ export default function ProductManagement({ user, libraryMode = false, company =
                                 <span style={{ color: '#fbbf24' }}>
                                   ({displayStock(order.quantity, product.unit)})
                                 </span>
+                                {/* Whose order it is (P6): a MUSE one is not SA's on order. */}
+                                {order.stock && order.stock !== 'SA' && (
+                                  <span title="This purchase order is for MUSE: it is not counted as SA's on order"
+                                    style={{ fontSize: 10, fontWeight: 700, color: '#d4b574', border: '1px solid rgba(212,181,116,0.45)', borderRadius: 4, padding: '1px 6px' }}>
+                                    {destinationByStock(order.stock)?.label || order.stock}
+                                  </span>
+                                )}
                                 {/* Cancelled in Shopify. The dangerous part of an
                                     order that no longer exists is not that it
                                     sits here — it is the green button beside it,
@@ -1865,6 +1872,7 @@ export default function ProductManagement({ user, libraryMode = false, company =
           orderNumber={splitReceive.order.orderNumber}
           remaining={splitReceive.order.quantity - (splitReceive.order.quantityReceived || 0)}
           product={splitReceive.product}
+          destinationStock={splitReceive.order.stock}
           user={user}
           showToast={showToast}
           onClose={() => setSplitReceive(null)}

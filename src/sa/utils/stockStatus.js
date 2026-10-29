@@ -53,9 +53,14 @@ export const isSaProduct = (p) => p?.category !== 'OILS' || !p.registrations || 
 
 const stillToArrive = (o) => Math.max(0, (parseFloat(o.quantity) || 0) - (parseFloat(o.quantityReceived) || 0));
 
-/** Still to arrive on open purchase orders (`incomingOrders` from /api/products). */
+// SA's own orders: a Shopify PO for MUSE The Atelier or MUSE is that company's
+// (P6, the server's Demand Planning query says the same). A manual order has
+// no destination and is SA's, as before.
+const saOrders = (product) => (product?.incomingOrders || []).filter((o) => !o.stock || o.stock === 'SA');
+
+/** Still to arrive on SA's open purchase orders (`incomingOrders` from /api/products). */
 export function incomingQty(product) {
-  return (product?.incomingOrders || []).reduce((sum, o) => sum + stillToArrive(o), 0);
+  return saOrders(product).reduce((sum, o) => sum + stillToArrive(o), 0);
 }
 
 /**
@@ -74,9 +79,9 @@ export function coveredStock(product) {
   const stock = shelfStock(product);
   const rate = product?.autoDailyRate;
   if (product?.minStockAuto != null && rate > 0) {
-    const orders = (product?.incomingOrders || []).map((o) => ({ qty: stillToArrive(o), days: o.etaDays ?? null }));
+    const orders = saOrders(product).map((o) => ({ qty: stillToArrive(o), days: o.etaDays ?? null }));
     // Capped like the server: an over-received open order nets off the total.
-    const netOnOrder = Math.max(0, (product?.incomingOrders || []).reduce((s, o) =>
+    const netOnOrder = Math.max(0, saOrders(product).reduce((s, o) =>
       s + (parseFloat(o.quantity) || 0) - (parseFloat(o.quantityReceived) || 0), 0));
     return Math.min(stock + shelfOutlook(stock, rate, orders).inTimeQty, stock + netOnOrder);
   }

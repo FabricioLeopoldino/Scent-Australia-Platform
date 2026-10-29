@@ -60,7 +60,10 @@ try {
 
   console.log('\n2. The guards are in the code, not in someone’s memory');
   check(/po\.status !== 'ORDERED'/.test(reader), 'drafts are skipped');
-  check(/WATCHED_DESTINATIONS\.includes\(destination\)/.test(reader), 'only the watched destination is read');
+  // Every destination is read and named by the one table (P6, 30 Oct); one it
+  // does not know is kept with its error, never dropped.
+  check(/destinationByName\(destination\)/.test(reader) && /destinationError/.test(reader),
+    'each destination maps to a company, an unknown one is shown with its error');
   check(/sydneyDate\(po\.dateCreated\) < SINCE/.test(reader), `only orders since the cut-off (${SINCE})`);
   check(/archivedAt/.test(reader), 'archived orders are skipped');
   check(Object.keys(VARIANT_ML).length >= 5 && VARIANT_ML.SA_1L === 1000,

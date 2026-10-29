@@ -94,6 +94,14 @@ export async function migrateSectors() {
     END $fn$`);
   // Shopify's "cost per item" ÷ the bottle size, stored when a Shopify PO is accepted.
   await pool.query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS cost_per_unit NUMERIC`);
+  // The company stock a Shopify PO is for, from its destination (P6,
+  // shared/sectors.js PO_DESTINATIONS). NULL = a manual order (+ Incoming, the
+  // Excel import): no destination, received anywhere, SA's on order, as before.
+  // Every Shopify line accepted before P6 came from "SA Warehouse", the only
+  // destination then read, so it is SA's — once, idempotent.
+  await pool.query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS destination_stock TEXT`);
+  await pool.query(`UPDATE purchase_orders SET destination_stock = 'SA'
+                     WHERE shopify_line_id IS NOT NULL AND destination_stock IS NULL`);
   // Held balances per oil. SA is not here: it is the total minus these.
   // `held` counts only what a stock actually has. A stock below zero used oil
   // it did not hold, and that oil physically came off the shared shelf — SA's.
@@ -266,7 +274,12 @@ export async function requireRegistered(db, productId, to) {
 }
 
 /** The JSON body of a refused request: the message, and the code when there is one. */
-export const errorBody = (e) => ({ error: e.message, ...(e.code && { code: e.code, company: e.company, productId: e.productId }) });
+export const errorBody = (e) => ({
+  error: e.message,
+  ...(e.code && { code: e.code, company: e.company, productId: e.productId }),
+  // How to put it right, for the pop-up a refused receipt opens (P6).
+  ...(e.fix && { fix: e.fix, allowed: e.refusal?.allowed }),
+});
 
 /** Register an oil in each of `companies` (no-op where it already is). Inside the caller's client or pool. */
 export async function registerOil(db, productId, companies, userId) {
@@ -297,6 +310,25 @@ export async function recordMovement(client, m) {
     [m.productId, m.from, m.to, m.quantity, m.kind, m.reason || null, m.reference || null,
      cost, m.notes || null, m.transactionId || null, m.userId || null]);
   return r.rows[0].id;
+}
+
+/**
+ * A refused stock-rule attempt, in Activity (P6, owner 30 Oct: "registrar e
+ * bloquear e alertar"): who, when, the oil, the stock, what was typed and, for
+ * a receipt, the PO and who it is for. Written after the ROLLBACK, so it stands
+ * on its own; stock and the ledger are untouched. Failing to write it must not
+ * hide the refusal from the person: logged, never thrown.
+ */
+export async function recordRefusal(user, e) {
+  if (!e?.refusal) return;
+  try {
+    await pool.query(
+      `INSERT INTO audit_log (user_id, action, entity_type, entity_id, entity_name, details)
+       VALUES ($1, 'stock_refused', 'product', $2, $3, $4)`,
+      [user?.id || null, e.refusal.productId, e.refusal.productName, JSON.stringify({ ...e.refusal, message: e.message })]);
+  } catch (err) {
+    console.error('[sectors] refusal not recorded:', err.message);
+  }
 }
 
 const isAdmin = (req) => ['admin', 'root'].includes(req.user?.role);

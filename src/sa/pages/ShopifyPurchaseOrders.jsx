@@ -14,14 +14,21 @@
 //   lines="fragrance" — the Fragrance Library's Purchase orders: the oil lines,
 //                       accepted, then received and split between the stocks here;
 //   lines="other"     — SA's Shopify POs: machines, spare parts, raw materials.
+// P6 (owner, 29–30 Oct): the Shopify destination names the company — SA
+// Warehouse, SA Custom Orders (MUSE The Atelier), MUSE (The Library and The
+// Archive) — with a filter by company. A destination the platform does not
+// know is shown in red under every filter, never hidden.
 import { useState, useEffect } from 'react';
 import { Link } from 'wouter';
 import { RefreshCw, AlertTriangle, CheckCircle2, ExternalLink, PackageCheck, Link2 } from 'lucide-react';
 import { useToast } from '../components/Toast';
 import { GlowingEffect } from '../components/GlowingEffect';
 import ReceiveSplitModal from '../components/ReceiveSplitModal';
+import RegisterFragranceModal from '../components/RegisterFragranceModal';
+import { PO_DESTINATIONS } from '../../../shared/sectors.js';
 
 const L = (ml) => `${(ml / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 })} L`;
+const COMPANY_FILTERS = [{ key: 'ALL', label: 'All' }, ...PO_DESTINATIONS.map((d) => ({ key: d.stock, label: d.label }))];
 
 export default function ShopifyPurchaseOrders({ user, lines = null }) {
   const showToast = useToast();
@@ -30,6 +37,8 @@ export default function ShopifyPurchaseOrders({ user, lines = null }) {
   // The line being received — one window for the page, rendered after the
   // order cards: inside a .card it would slide under the top menu (Stage 0).
   const [receiving, setReceiving] = useState(null);
+  const [companyFilter, setCompanyFilter] = useState('ALL');
+  const [registerFor, setRegisterFor] = useState(null); // { product, company } — an oil to register before accepting
   const fragrance = lines === 'fragrance';
   const isAdmin = ['admin', 'root'].includes(user?.role);
 
@@ -59,8 +68,9 @@ export default function ShopifyPurchaseOrders({ user, lines = null }) {
       if (!res.ok) throw new Error(body.error || 'Could not accept');
       showToast(
         `${body.number}: ${body.accepted} line(s) now showing against their fragrance`
-        + (body.unmatched ? ` · ${body.unmatched} still not recognised` : ''),
-        'success');
+        + (body.unmatched ? ` · ${body.unmatched} still not recognised` : '')
+        + (body.notRegistered?.length ? ` · not accepted until registered: ${body.notRegistered.map((n) => n.name).join(', ')}` : ''),
+        body.notRegistered?.length ? 'warning' : 'success');
       await load();
     } catch (e) {
       showToast(e.message, 'error');
@@ -108,7 +118,10 @@ export default function ShopifyPurchaseOrders({ user, lines = null }) {
     finally { setAccepting(null); }
   };
 
-  const { ok, error, orders = [], orphans = [], counts, readAt, loading } = state;
+  const { ok, error, orders: allOrders = [], orphans = [], counts, readAt, loading } = state;
+  // An unknown destination is an error to see, so it shows under every filter.
+  const orders = allOrders.filter((o) => companyFilter === 'ALL' || !o.destinationStock || o.destinationStock === companyFilter);
+  const unknownCount = allOrders.filter((o) => !o.destinationStock).length;
 
   return (
     <div className="container" style={{ paddingTop: 28 }}>
@@ -134,9 +147,31 @@ export default function ShopifyPurchaseOrders({ user, lines = null }) {
       </div>
 
       {readAt && (
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 20 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 14 }}>
           Read {new Date(readAt).toLocaleString('en-AU', { timeZone: 'Australia/Sydney' })}
           {counts ? ` · ${counts.orders} orders · ${counts.lines} lines · ${counts.unmatched} not recognised` : ''}
+        </div>
+      )}
+
+      {/* Who each order is for (P6): the company its Shopify destination names. */}
+      {ok && allOrders.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 18 }} role="group" aria-label="Filter by company">
+          {COMPANY_FILTERS.map((f) => {
+            const n = f.key === 'ALL' ? allOrders.length : allOrders.filter((o) => o.destinationStock === f.key).length;
+            return (
+              <button key={f.key} type="button" onClick={() => setCompanyFilter(f.key)} aria-pressed={companyFilter === f.key}
+                className={companyFilter === f.key ? 'btn btn-primary' : 'btn btn-secondary'} style={{ fontSize: 12.5, padding: '7px 14px' }}>
+                {f.label} <span style={{ opacity: 0.7, marginLeft: 4 }}>{n}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {unknownCount > 0 && (
+        <div role="alert" style={{ padding: '10px 14px', borderRadius: 8, marginBottom: 18, fontSize: 13,
+          background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.4)', color: '#f87171' }}>
+          {unknownCount} purchase order{unknownCount > 1 ? 's have' : ' has'} a destination the platform does not know
+          (shown in red below). Nothing on {unknownCount > 1 ? 'them' : 'it'} can be accepted until an admin links the destination to a company.
         </div>
       )}
 
@@ -205,7 +240,8 @@ export default function ShopifyPurchaseOrders({ user, lines = null }) {
       {orders.map((po) => (
         <div key={po.shopifyId} className="card" style={{
           marginBottom: 18, position: 'relative', overflow: 'visible',
-          borderLeft: `3px solid ${po.unmatchedCount > 0 ? '#fbbf24' : '#10b981'}`,
+          borderLeft: `3px solid ${!po.destinationStock ? '#ef4444' : po.unmatchedCount > 0 || po.unregisteredLines > 0 ? '#fbbf24' : '#10b981'}`,
+          ...(!po.destinationStock && { background: 'rgba(239,68,68,0.05)' }),
         }}>
           <GlowingEffect spread={35} glow={false} disabled={false} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
 
@@ -220,6 +256,19 @@ export default function ShopifyPurchaseOrders({ user, lines = null }) {
               }}>
                 SHOPIFY
               </span>
+              {po.destinationStock ? (
+                <span style={{
+                  fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 20,
+                  color: po.destinationStock === 'SA' ? '#60a5fa' : '#d4b574',
+                  border: `1px solid ${po.destinationStock === 'SA' ? 'rgba(96,165,250,0.4)' : 'rgba(212,181,116,0.45)'}`,
+                }} title={`Shopify destination: ${po.destination}`}>
+                  {po.destinationLabel}
+                </span>
+              ) : (
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#f87171', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <AlertTriangle size={13} /> Unknown destination
+                </span>
+              )}
               {po.arrivedInShopify && (
                 <span style={{ fontSize: 11, color: '#34d399', display: 'flex', alignItems: 'center', gap: 4 }}>
                   <PackageCheck size={13} /> received in Shopify
@@ -252,6 +301,10 @@ export default function ShopifyPurchaseOrders({ user, lines = null }) {
             </div>
           </div>
 
+          {po.destinationError && (
+            <div style={{ fontSize: 12.5, color: '#f87171', marginTop: 10, fontWeight: 600 }}>{po.destinationError}</div>
+          )}
+
           <div style={{ display: 'grid', gap: 6, marginTop: 14 }}>
             {po.lines.map((l) => (
               <div key={l.lineId} style={{
@@ -268,6 +321,19 @@ export default function ShopifyPurchaseOrders({ user, lines = null }) {
                     <span style={{ fontFamily: 'monospace', color: 'var(--text-primary)' }}>{l.sku || '(no code)'}</span>
                     {l.matched && <span style={{ color: 'var(--text-secondary)' }}>{l.productName}</span>}
                   </div>
+                  {/* P6: registered in the company the PO is for, BEFORE it is
+                      accepted — so the oil is never found unregistered on arrival. */}
+                  {l.matched && !l.accepted && !l.registered && (
+                    <div style={{ fontSize: 11, color: '#f87171', marginTop: 4, marginLeft: 22, fontWeight: 600 }}>
+                      Not registered in {l.registerCompany} Fragrances — it cannot be accepted yet.
+                      {fragrance && isAdmin && (
+                        <button type="button" onClick={() => setRegisterFor({ product: { id: l.productId, name: l.productName, productCode: l.productCode, unit: l.unit || 'mL' }, company: l.registerCompany })}
+                          style={{ marginLeft: 8, background: 'none', border: 'none', padding: 0, color: '#60a5fa', fontWeight: 700, cursor: 'pointer', fontSize: 11 }}>
+                          Register now
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {/* The reason is the whole point of this line existing. A code
                       that does not match must reach a person, never be skipped —
                       that is how 30 litres sold in July without leaving the
@@ -321,6 +387,7 @@ export default function ShopifyPurchaseOrders({ user, lines = null }) {
                         poId: l.acceptedPoId, orderNumber: po.number,
                         remaining: l.acceptedMl - (l.receivedMl || 0),
                         product: { id: l.productId, name: l.productName, unit: l.unit || 'mL' },
+                        destinationStock: po.destinationStock,
                       })}>
                       Receive
                     </button>
@@ -355,10 +422,25 @@ export default function ShopifyPurchaseOrders({ user, lines = null }) {
         />
       )}
 
+      {registerFor && (
+        <RegisterFragranceModal
+          product={registerFor.product}
+          company={registerFor.company}
+          fromRefusal
+          showToast={showToast}
+          onClose={() => setRegisterFor(null)}
+          onDone={(regs, active) => {
+            setRegisterFor(null);
+            if (active) showToast('Registered — the line can be accepted now', 'success');
+            load();
+          }}
+        />
+      )}
+
       {ok && orders.length > 0 && (
         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 20, display: 'flex', alignItems: 'center', gap: 6 }}>
           <ExternalLink size={12} />
-          Only orders raised for the warehouse since the new process started are shown. Shopify never closes a
+          Only orders raised since the new process started are shown. Shopify never closes a
           purchase order, so older ones stay marked "ordered" there for ever and would otherwise fill this page.
         </div>
       )}

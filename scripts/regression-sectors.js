@@ -454,6 +454,56 @@ async function run() {
   await adjust(C, 'add', 1, 'correction');
   await check('case 9: the stocktake lands in SA, MUSE does not move', C, { SA: -1, MUSE: 25 });
 
+  // ── P6 (owner, 29–30 Oct): the Shopify PO destination names the company.
+  // An accepted Shopify line is an ordinary PO row plus its destination_stock
+  // (accepting needs Shopify, blanked here), so that is what is written.
+  const P = await createOil('P');
+  await register(P, 'MUSE', { usedBy: ['MUSE_ATELIER', 'MUSE_LIBRARY', 'MUSE_ARCHIVE'] });
+  const poFor = async (num, litres, stock) => {
+    const id = await addPo(P, num, litres);
+    await db.query(`UPDATE purchase_orders SET destination_stock = $1 WHERE id = $2`, [stock, id]);
+    return id;
+  };
+  const poMuse = await poFor('TESTREG-SEC-P6M', 10, 'MUSE');
+  const poAtelier = await poFor('TESTREG-SEC-P6A', 5, 'MUSE_ATELIER');
+  const poSa = await poFor('TESTREG-SEC-P6S', 4, 'SA');
+  row = await dpRow(P);
+  record('P6: only the SA Warehouse PO is SA\'s on order in Demand Planning (4 L of 19 L)', near(row?.incomingStock, 4, 0.06), `incoming=${row?.incomingStock}`);
+  p = await oil(P);
+  record('P6: every open PO is listed on the oil, each with its company stock',
+    p?.incomingOrders?.map((o) => o.stock).sort().join() === 'MUSE,MUSE_ATELIER,SA', JSON.stringify(p?.incomingOrders?.map((o) => o.stock)));
+  const { incomingQty } = await import('../src/sa/utils/stockStatus.js');
+  record('P6: and SA\'s status counts SA\'s order only (4 L)', near(incomingQty(p), 4 * L), `incoming=${incomingQty(p) / L}`);
+  // Blocked, recorded, explained (owner, 30 Oct).
+  r = await receive(poMuse, { quantityReceived: 2 * L, lines: [{ to: 'SA', quantity: 2 * L }] });
+  record('P6: a MUSE PO received into SA is refused, with the fix',
+    r.status === 400 && r.json?.code === 'WRONG_STOCK'
+    && r.json?.error === 'TESTREG-SEC-P6M is a purchase order for MUSE (The Library and The Archive). It can only be received into MUSE (shared), MUSE The Library, MUSE The Archive, not into SA.'
+    && /then move that part with a Transfer/.test(r.json?.fix || ''), JSON.stringify(r.json));
+  const refusedP = (await db.query(`SELECT details FROM audit_log WHERE action = 'stock_refused' AND entity_id = $1`, [P])).rows
+    .map((x) => (typeof x.details === 'string' ? JSON.parse(x.details) : x.details));
+  record('P6: the attempt is recorded in Activity: the PO, the stock, the quantity, who it is for',
+    refusedP.length === 1 && refusedP[0].type === 'receipt' && refusedP[0].reference === 'TESTREG-SEC-P6M' && refusedP[0].stock === 'SA'
+    && near(refusedP[0].quantity, 2 * L) && refusedP[0].destination === 'MUSE (The Library and The Archive)', JSON.stringify(refusedP));
+  await check('P6: the refusal moved nothing', P, {});
+  r = await receive(poMuse, { quantityReceived: 10 * L, lines: [{ to: 'MAIN', quantity: 10 * L }] });
+  record('P6: nor into the main store', r.status === 400 && r.json?.code === 'WRONG_STOCK', r.json?.error);
+  r = await receive(poMuse, { quantityReceived: 10 * L, lines: [{ to: 'MUSE_LIBRARY', quantity: 6 * L }, { to: 'MUSE_ARCHIVE', quantity: 4 * L }] });
+  record('P6: a MUSE PO split between The Library and The Archive is accepted', r.status === 200, `${r.status} ${r.json?.error || ''}`);
+  r = await receive(poAtelier, { quantityReceived: 5 * L });
+  record('P6: with no lines, an Atelier PO goes to MUSE The Atelier, not SA', r.status === 200, `${r.status} ${r.json?.error || ''}`);
+  r = await receive(poSa, { quantityReceived: 4 * L, lines: [{ to: 'MUSE', quantity: 4 * L }] });
+  record('P6: an SA Warehouse PO received into MUSE is refused too', r.status === 400 && r.json?.code === 'WRONG_STOCK', r.json?.error);
+  r = await receive(poSa, { quantityReceived: 4 * L });
+  record('P6: and goes to SA', r.status === 200, `${r.status} ${r.json?.error || ''}`);
+  await check('P6: each PO in its company\'s stocks', P, { SA: 4, MUSE_LIBRARY: 6, MUSE_ARCHIVE: 4, MUSE_ATELIER: 5 });
+  row = await dpRow(P);
+  record('P6: nothing left on order', near(row?.incomingStock, 0, 0.06), `incoming=${row?.incomingStock}`);
+  // A manual order (+ Incoming) has no destination: received anywhere, as before.
+  const poManual = await addPo(P, 'TESTREG-SEC-P6X', 1);
+  r = await receive(poManual, { quantityReceived: 1 * L, lines: [{ to: 'MAIN', quantity: 1 * L }] });
+  record('P6: a manual order is unchanged — the main store still takes it', r.status === 200, `${r.status} ${r.json?.error || ''}`);
+
   // ── Seeing (R4) and costs (S10).
   const all = (await api('technician', 'GET', '/api/sa/sectors/movements?limit=500')).json || [];
   const mine = all.filter((m) => PIDS.includes(m.productId));
