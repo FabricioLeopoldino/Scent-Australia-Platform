@@ -503,12 +503,11 @@ async function run() {
   const saTx = await lastTx(C);
   const saRow = (await db.query(`SELECT type, reason, notes FROM transactions WHERE id = $1`, [saTx])).rows[0];
   record('A4: an SA adjustment in the Fragrance Library writes the Stock page\'s ledger row, no stock movement',
-    r.status === 200 && saRow?.type === 'remove' && saRow?.reason === 'correction' && saRow?.notes === 'Correcting a count — [regression]'
+    r.status === 200 && saRow?.type === 'remove' && saRow?.reason === 'correction' && saRow?.notes === 'Correcting a count — Adjusted in SA — [regression]'
     && (await movementsOfTx(saTx)).length === 0, `${r.status} ${r.json?.error || ''} ${JSON.stringify(saRow)}`);
   await check('A4: it lands in SA', C, { SA: -2, MUSE: 25 });
-  const act = (await db.query(`SELECT details FROM audit_log WHERE action = 'stock_adjust' AND entity_id = $1 ORDER BY id DESC LIMIT 1`, [C])).rows[0];
-  const actD = typeof act?.details === 'string' ? JSON.parse(act.details) : act?.details;
-  record('A10: every adjustment writes its Activity row: stock, type, quantity, reason', actD?.stock === 'SA' && actD?.type === 'remove' && near(actD?.quantity, 1 * L) && actD?.reason === 'correction', JSON.stringify(actD));
+  const museNote = (await db.query(`SELECT notes FROM transactions WHERE product_id = $1 AND type = 'add' AND reason = 'found' ORDER BY id DESC LIMIT 1`, [C])).rows[0]?.notes;
+  record('A10: the ledger row names the stock it was made in', museNote === 'Found in the warehouse — Adjusted in MUSE (shared) — [regression]', museNote);
 
   // ── P6 (owner, 29–30 Oct): the Shopify PO destination names the company.
   // An accepted Shopify line is an ordinary PO row plus its destination_stock

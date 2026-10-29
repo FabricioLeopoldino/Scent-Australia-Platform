@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { displayStock } from '../utils/unitConversion';
 import { GlowingEffect } from '../components/GlowingEffect';
 import { sectorLabel } from '../../../shared/sectors.js';
+import { reasonLabel } from '../../../shared/stock-reasons.js';
 
 const TYPE_LABELS = {
   add:             { label: 'Add Stock',       color: '#22c55e' },
@@ -35,7 +36,7 @@ const TYPE_LABELS = {
   shopify_po_accepted:          { label: 'Shopify PO Accepted',  color: '#f59e0b' },
   shopify_po_quantity_synced:   { label: 'Shopify PO Changed',   color: '#fbbf24' },
   product_reorder_watch_changed:{ label: 'Reorder Watch',        color: '#60a5fa' },
-  // A stock rule refused an attempt (P6: a receipt outside its PO's company); nothing moved.
+  // A stock rule refused an attempt (PRD_H2 A12; P6: a receipt outside its PO's company); nothing moved.
   stock_refused:                { label: 'Refused',              color: '#f87171' },
 };
 
@@ -340,9 +341,13 @@ export default function ActivityLog({ user }) {
                       notesDisplay = `${actionLabels[d.action] || d.action}${totalStr}${oilList ? ` · ${oilList}` : ''}${d.notes ? ` · ${d.notes}` : ''}`;
                     } else if (log.action === 'stock_refused') {
                       const q = (v) => displayStock(v || 0, d.unit);
+                      // A receipt outside its PO's company (P6), or an adjustment
+                      // or transfer a stock rule refused (PRD_H2 A12).
+                      const what = d.type === 'transfer' ? 'Transfer out of' : d.type === 'add' ? 'Add to' : 'Remove from';
                       notesDisplay = d.type === 'receipt'
                         ? `Receive ${d.reference} into ${sectorLabel(d.stock)}: ${q(d.quantity)} — the PO is for ${d.destination} · nothing moved`
-                        : `${d.type === 'add' ? 'Add to' : d.type === 'transfer' ? 'Transfer out of' : 'Remove from'} ${sectorLabel(d.stock)}: ${q(d.quantity)} · nothing moved`;
+                        : `${what} ${sectorLabel(d.stock)}: ${q(d.quantity)}, it held ${q(d.held)}`
+                          + `${d.reason ? ` · ${reasonLabel(d.type, d.reason)}` : ''} · nothing moved`;
                     } else if (log.action === 'formula_ready_received') {
                       const ml = d.quantityMl || 0;
                       const total = d.newTotalMl || 0;

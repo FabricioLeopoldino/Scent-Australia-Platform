@@ -15,6 +15,7 @@ import { bomVariantFor } from '../../shared/refurb-machines.js';
 import { NON_DEMAND_REMOVE_REASONS, UNPATTERNED_REMOVE_REASONS } from '../../shared/stock-reasons.js';
 import { readIncomingPurchaseOrders, costPerMl, VARIANT_ML } from './shopify-purchase-orders.js';
 import { refreshOrderActors, TECH_REFILL_DAYS } from './shopify-order-actors.js';
+import { readShopifyImage } from './shopify-image.js';
 import { shelfOutlook, orderToCover, SAFETY_STOCK_FACTOR } from '../../shared/shelf-outlook.js';
 import { router as sectorsRouter, migrateSectors, heldByProduct, sectorBalances, recordMovement, balancesAfterCommit,
   registrationsByProduct, registerOil, requireRegistered, errorBody, qtyText, recordRefusal, adjustStock } from './sectors.js';
@@ -732,10 +733,25 @@ router.get('/products', async (req, res) => {
   }
 });
 
+// The product sheet's image and SKU statuses, read live from the SA store
+// (PRD_H2_STOCK_MANAGEMENT.md §2.3). Never stored; when Shopify cannot be
+// asked the answer is simply "no image" (R8), never an error.
+router.get('/products/:id/shopify', async (req, res) => {
+  try {
+    const row = (await pool.query('SELECT "shopifySkus" FROM products WHERE id = $1', [req.params.id])).rows[0];
+    if (!row) return res.status(404).json({ error: 'Product not found' });
+    const r = await readShopifyImage(Object.values(parseJSONB(row.shopifySkus) || {}));
+    res.json({ enabled: !!r, image: r?.image || null, variants: r?.variants || [] });
+  } catch (error) {
+    console.error('GET /products/:id/shopify error:', error.message);
+    res.json({ enabled: false, image: null, variants: [] });
+  }
+});
+
 router.get('/products/:id', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM products WHERE id = $1', [req.params.id]);
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Product not found' });
     }

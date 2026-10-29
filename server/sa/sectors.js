@@ -376,8 +376,9 @@ export async function adjustStock(client, user, { productId, stock = 'SA', type,
   await client.query('UPDATE products SET "currentStock" = $1, "stockBoxes" = $2 WHERE id = $3',
     [stockNow, Math.floor(stockNow / (product.unitPerBox || 1)), product.id]);
   // The note carries the particulars beside the reason; operator names are
-  // resolved here, so the note and the array cannot disagree.
-  const where = stock === 'SA' ? '' : `${use ? 'Used by' : 'Adjusted in'} ${sectorLabel(stock)}`;
+  // resolved here, so the note and the array cannot disagree. An oil's note
+  // names its stock, SA included — "for which company" (owner, 29 Oct).
+  const where = product.category !== 'OILS' ? '' : `${use ? 'Used by' : 'Adjusted in'} ${sectorLabel(stock)}`;
   const txId = (await client.query(
     `INSERT INTO transactions
        (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes, user_id, reason, operator_ids)
@@ -396,12 +397,7 @@ export async function adjustStock(client, user, { productId, stock = 'SA', type,
       transactionId: txId, userId: user.id,
     });
   }
-  await client.query(
-    `INSERT INTO audit_log (user_id, action, entity_type, entity_id, entity_name, details)
-     VALUES ($1, 'stock_adjust', 'product', $2, $3, $4)`,
-    [user.id, product.id, product.name, JSON.stringify({
-      productCode: product.productCode, unit: product.unit, stock, type, quantity: qty, reason,
-      reference: ref || null, operators: opNames, balanceAfter: stockNow })]);
+  // The ledger row is the Activity row (Activity lists the ledger): no second one.
   return { product, newStock: stockNow };
 }
 

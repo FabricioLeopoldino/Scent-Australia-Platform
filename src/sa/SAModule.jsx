@@ -1,17 +1,14 @@
 import { Router, Route, Switch, Link, Redirect, useLocation } from 'wouter';
 import { ToastProvider } from './components/Toast';
 import Dashboard from './pages/Dashboard';
-import StockManagement from './pages/StockManagement';
 import SkuMapping from './pages/SkuMapping';
 import TransactionHistory from './pages/TransactionHistory';
 import ProductManagement from './pages/ProductManagement';
-import MachineInventory from './pages/MachineInventory';
 import ShopifyPurchaseOrders from './pages/ShopifyPurchaseOrders';
 import ProductReturns from './pages/ProductReturns';
 import BOMViewer from './pages/BOMViewer';
 import DiffuserMachineBOM from './pages/DiffuserMachineBOM';
 import ReplenishmentDashboard from './pages/ReplenishmentDashboard';
-import RawMaterials from './pages/RawMaterials';
 import Formulas from './pages/Formulas';
 import ActivityLog from './pages/ActivityLog';
 import ScentedProducts from './pages/ScentedProducts';
@@ -61,19 +58,17 @@ function SAContent({ user, onSwitchModule, onLogout }) {
               which is platform-level now via the Module Picker) */}
           <ul className="nav-links" style={{ flex: 1, justifyContent: 'center' }}>
             <li><Link href="/" className={isActive('/') ? 'nav-active' : ''}>Dashboard</Link></li>
-            <li><Link href="/products" className={isActive('/products') ? 'nav-active' : ''}>Products</Link></li>
+            {/* One page for every non-oil product: Products, Diffusers, Stock and
+                Raw Materials became Stock Management (PRD_H2_STOCK_MANAGEMENT.md, D1). */}
+            <li><Link href="/stock-management" className={isActive('/stock-management') ? 'nav-active' : ''}>Stock Management</Link></li>
             {/* SA's own oils (PRD_STAGE_1_FRAGRANCE_LIBRARY.md §2.1). The Fragrance
                 Library itself — every stock — is its own area, from its own tile. */}
             <li><Link href="/fragrances" className={isActive('/fragrances') ? 'nav-active' : ''}>SA Fragrances</Link></li>
-            <li><Link href="/machines" className={isActive('/machines') ? 'nav-active' : ''}>Diffusers</Link></li>
             <li><Link href="/returns" className={isActive('/returns') ? 'nav-active' : ''}>Returns</Link></li>
             {/* Delivery 1 of the Shopify PO integration: read-only, for checking
                 against the store before anything is allowed to act on it. */}
             {user.role !== 'technician' && (
               <li><Link href="/shopify-po" className={isActive('/shopify-po') ? 'nav-active' : ''}>Shopify POs</Link></li>
-            )}
-            {user.role !== 'technician' && (
-              <li><Link href="/stock" className={isActive('/stock') ? 'nav-active' : ''}>Stock</Link></li>
             )}
             {user.role !== 'technician' && (<>
               {user.role !== 'user' && (
@@ -111,12 +106,17 @@ function SAContent({ user, onSwitchModule, onLogout }) {
               parts and all, until a hard refresh forced a remount. The owner hit
               this often enough to report it as "sempre tenho que dar Hard
               Refresh". A key makes them two pages again. */}
-          <Route path="/products"><ProductManagement key="products" user={user} /></Route>
+          <Route path="/stock-management"><ProductManagement key="stock-management" user={user} /></Route>
+          {/* The four pages it replaced (D1): an old bookmark opens it, filtered
+              to the same products; the old Stock page also says where oils went. */}
+          <Route path="/products"><Redirect to="/stock-management" /></Route>
+          <Route path="/machines"><Redirect to="/stock-management?filter=SCENT_MACHINES" /></Route>
+          <Route path="/raw-materials"><Redirect to="/stock-management?filter=RAW_MATERIALS" /></Route>
+          <Route path="/stock"><Redirect to="/stock-management?from=stock" /></Route>
           <Route path="/fragrances"><ProductManagement key="sa-fragrances" user={user} libraryMode company="SA" /></Route>
           {/* The page's old address (it was "Fragrance Library" until Stage 1):
               a bookmark lands on SA Fragrances, not on a blank page. */}
           <Route path="/fragrance-library"><Redirect to="/fragrances" /></Route>
-          <Route path="/machines"><MachineInventory user={user} /></Route>
           {/* Machines, spare parts and raw materials only: the fragrance lines
               are received and split in the Fragrance Library (Stage 1 §2.3). */}
           <Route path="/shopify-po"><ShopifyPurchaseOrders user={user} lines="other" /></Route>
@@ -133,7 +133,6 @@ function SAContent({ user, onSwitchModule, onLogout }) {
               </p>
             </div>
           </Route>
-          <Route path="/stock"><StockManagement user={user} /></Route>
           <Route path="/replenishment">{!['user', 'technician'].includes(user?.role) ? <ReplenishmentDashboard user={user} /> : null}</Route>
           <Route path="/formulas"><Formulas user={user} /></Route>
           <Route path="/scented-products"><ScentedProducts user={user} /></Route>
@@ -163,7 +162,6 @@ function SAContent({ user, onSwitchModule, onLogout }) {
           <Route path="/sku-mapping">{['admin', 'root'].includes(user?.role) ? <SkuMapping user={user} /> : null}</Route>
           <Route path="/history"><TransactionHistory user={user} /></Route>
           <Route path="/activity">{['admin', 'root'].includes(user?.role) ? <ActivityLog user={user} /> : null}</Route>
-          <Route path="/raw-materials"><RawMaterials user={user} /></Route>
         </Switch>
       </div>
     </div>

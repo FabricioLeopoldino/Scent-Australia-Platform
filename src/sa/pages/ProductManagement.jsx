@@ -11,6 +11,8 @@ import MlHelper from '../components/MlHelper';
 import { LiquidMetalButton } from '../components/LiquidMetalButton';
 import ReceiveSplitModal from '../components/ReceiveSplitModal';
 import RegisterFragranceModal from '../components/RegisterFragranceModal';
+import AdjustStockModal from '../components/AdjustStockModal';
+import ProductSheet, { Swatch } from '../components/ProductSheet';
 import { SECTORS, destinationByStock } from '../../../shared/sectors.js';
 
 // libraryMode (D15 follow-up, 2026-07-30): renders this exact same page — same
@@ -28,6 +30,10 @@ import { SECTORS, destinationByStock } from '../../../shared/sectors.js';
 export default function ProductManagement({ user, libraryMode = false, company = null }) {
   const saView = libraryMode && company === 'SA';
   const fullLibrary = libraryMode && !company;
+  // Not libraryMode: SA's Stock Management (PRD_H2_STOCK_MANAGEMENT.md §2.2) —
+  // every non-oil product, which Products, Diffusers, Stock and Raw Materials
+  // used to show between them.
+  const stockMode = !libraryMode;
   const [, navigate] = useLocation();
   const showToast = useToast();
   const [confirmState, setConfirmState] = useState(null);
@@ -44,6 +50,10 @@ export default function ProductManagement({ user, libraryMode = false, company =
   // All stock only: which company the oil is registered with (S6).
   const [companyFilter, setCompanyFilter] = useState('ALL');
   const [registerFor, setRegisterFor] = useState(null);   // the oil open in the Register window
+  const [adjustFor, setAdjustFor] = useState(null);       // the product open in the Adjust window (PRD_H2 §2.4)
+  const [sheetFor, setSheetFor] = useState(null);         // the product open in its sheet (PRD_H2 §2.3)
+  // Stock Management: the diffusers' colour, as round swatches (PRD_H2 §2.2).
+  const [colorFilter, setColorFilter] = useState('');
   const [splitReceive, setSplitReceive] = useState(null); // { product, order } — an oil being received
   const [registerInSa, setRegisterInSa] = useState(true); // Add Oil, All stock: register it in SA as well
   const [addForSku, setAddForSku] = useState(null);       // Add Oil opened from a PO line's unknown code
@@ -154,7 +164,7 @@ export default function ProductManagement({ user, libraryMode = false, company =
   // break again if someone removes the keys.
   useEffect(() => {
     filterProducts();
-  }, [products, categoryFilter, searchTerm, showIncomingOnly, showInactive, libraryMode, statusFilter, companyFilter]);
+  }, [products, categoryFilter, searchTerm, showIncomingOnly, showInactive, libraryMode, statusFilter, companyFilter, colorFilter]);
 
   // Compute next Tag/ProductCode suggestion when category changes (new product only)
   useEffect(() => {
@@ -225,6 +235,7 @@ export default function ProductManagement({ user, libraryMode = false, company =
     if (!libraryMode && categoryFilter !== 'ALL') {
       filtered = filtered.filter(p => p.category === categoryFilter);
     }
+    if (stockMode && colorFilter) filtered = filtered.filter((p) => p.color === colorFilter);
 
     if (searchTerm) {
       filtered = filtered.filter(p =>
@@ -706,6 +717,30 @@ export default function ProductManagement({ user, libraryMode = false, company =
     return badges[category] || 'badge-gray';
   };
 
+  // The sheet's actions: today's operations for this place, each with the
+  // permission it had — admin and root act, everyone else reads (PRD_H2 A1).
+  // SA Fragrances has no Adjust: an oil is adjusted in the Fragrance Library (O1).
+  const sheetActions = (p) => {
+    if (!['admin', 'root'].includes(user.role)) return [];
+    const go = (fn) => () => { setSheetFor(null); fn(); };
+    const inactive = (p.status || 'active') === 'inactive';
+    return [
+      ...(saView ? [] : [{ key: 'adjust', label: 'Adjust stock', primary: true, onClick: go(() => setAdjustFor(p)) }]),
+      ...(fullLibrary ? [
+        { key: 'move', label: 'Move', title: 'Transfer this oil between the stocks', onClick: go(() => navigate(`/transfers?oil=${encodeURIComponent(p.id)}`)) },
+        { key: 'register', label: 'Register', title: 'Register this oil in SA or MUSE', onClick: go(() => setRegisterFor(p)) },
+      ] : []),
+      { key: 'edit', label: 'Edit', onClick: go(() => handleEdit(p)) },
+      { key: 'incoming', label: '+ Incoming', title: 'Add Incoming Order / Purchase Order', onClick: go(() => handleOpenIncomingModal(p)) },
+      { key: 'aliases', label: 'Aliases', title: 'Alternative names for this product', onClick: go(() => handleOpenAliasModal(p)) },
+      { key: 'status', label: inactive ? '↑ Reactivate' : '↓ Deactivate', onClick: go(() => handleToggleStatus(p)) },
+      { key: 'delete', label: 'Delete', danger: true, onClick: go(() => handleDelete(p.id)) },
+    ];
+  };
+  // The colours the listed products carry, for the swatches (only diffusers have one today).
+  const colours = stockMode ? [...new Set(products.filter((p) => p.category !== 'OILS' && p.color
+    && (p.status || 'active') === (showInactive ? 'inactive' : 'active')).map((p) => p.color))].sort() : [];
+
   if (loading) {
     return (
       <div className="container" style={{ paddingTop: '40px' }}>
@@ -719,13 +754,21 @@ export default function ProductManagement({ user, libraryMode = false, company =
   return (
     <div className="container" style={{ paddingTop: '40px' }}>
       <div className="page-header">
-        <h2 className="page-title">{saView ? 'SA Fragrances' : fullLibrary ? 'All stock' : 'Product Management'}</h2>
+        <h2 className="page-title">{saView ? 'SA Fragrances' : fullLibrary ? 'All stock' : 'Stock Management'}</h2>
         <p style={{ color: 'rgba(232,234,242,0.45)', marginTop: '8px' }}>
           {saView ? "SA's oils — SA's balance. The rest is in the Fragrance Library."
             : fullLibrary ? 'Every oil — main store, SA and MUSE'
-            : 'Manage all products across categories'}
+            : 'Diffusers, spare parts and raw materials. Click a name to open its sheet.'}
         </p>
       </div>
+
+      {/* An old Stock page bookmark (PRD_H2 §2.1): oils moved, say where. */}
+      {stockMode && new URLSearchParams(search).get('from') === 'stock' && (
+        <div style={{ padding: '10px 14px', borderRadius: 8, marginBottom: 16, fontSize: 13,
+          background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.3)', color: '#7dd3fc' }}>
+          Fragrance oils are adjusted in the Fragrance Library: open the oil in All stock and choose Adjust stock.
+        </div>
+      )}
 
       {/* Action Buttons */}
       <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -769,6 +812,8 @@ export default function ProductManagement({ user, libraryMode = false, company =
         {/* Right-side group: BOM (irrelevant to raw oils, hidden in libraryMode) + Add */}
         <div style={{ display: 'flex', gap: 12, marginLeft: 'auto', alignItems: 'center' }}>
           {!libraryMode && <LiquidMetalButton label="🧩 BOM" width={108} onClick={() => window.location.href = '/sa/bom'} />}
+          {/* It was a button on the Diffusers page; both go to the BOM section in H3. */}
+          {stockMode && <LiquidMetalButton label="🧩 Diffuser BOM" width={150} onClick={() => window.location.href = '/sa/diffuser-bom'} />}
           {['admin', 'root'].includes(user.role) && (
             <button
               className="btn btn-primary"
@@ -877,12 +922,13 @@ export default function ProductManagement({ user, libraryMode = false, company =
             {/* Category chips hidden in libraryMode — this page is oils-only by design,
                 nothing to switch between. "Oils" removed from the generic page's chips —
                 oils are excluded here unconditionally; manage them in the Fragrance Library. */}
+            {/* No "Scented" chip: the 354 retired Scented products stay out (O5)
+                and show only under Show Inactive. */}
             {!libraryMode && [
               { value: 'ALL', label: 'All' },
-              { value: 'SA_SCENTED_PRODUCTS', label: 'Scented' },
-              { value: 'SCENT_MACHINES', label: 'Diffuser Machines' },
-              { value: 'MACHINES_SPARES', label: 'Spares' },
-              { value: 'RAW_MATERIALS', label: 'Raw Materials' }
+              { value: 'SCENT_MACHINES', label: 'Diffusers' },
+              { value: 'MACHINES_SPARES', label: 'Spare parts' },
+              { value: 'RAW_MATERIALS', label: 'Raw materials' }
             ].map(cat => (
               <button
                 key={cat.value}
@@ -973,6 +1019,29 @@ export default function ProductManagement({ user, libraryMode = false, company =
             ))}
           </div>
         </div>
+        {/* Colour swatches (PRD_H2 §2.2): round, named on hover and for screen
+            readers, a ring when chosen. Only where the listed products carry a
+            colour — today the diffusers. */}
+        {stockMode && colours.length > 0 && ['ALL', 'SCENT_MACHINES'].includes(categoryFilter) && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' }} role="group" aria-label="Filter by colour">
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Colour</span>
+            {colours.map((c) => (
+              <button key={c} type="button" onClick={() => setColorFilter((v) => (v === c ? '' : c))}
+                aria-pressed={colorFilter === c} title={c} aria-label={`Colour ${c}`}
+                style={{ width: 30, height: 30, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'pointer', background: 'transparent', transition: 'box-shadow 150ms',
+                  border: colorFilter === c ? '2px solid #3b82f6' : '1px solid var(--border)',
+                  boxShadow: colorFilter === c ? '0 0 0 3px rgba(59,130,246,0.25)' : 'none' }}>
+                <Swatch color={c} size={18} />
+              </button>
+            ))}
+            {colorFilter && (
+              <button type="button" className="btn btn-secondary" onClick={() => setColorFilter('')} style={{ fontSize: 12, padding: '4px 10px' }}>
+                Any colour
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Products Table */}
@@ -990,13 +1059,15 @@ export default function ProductManagement({ user, libraryMode = false, company =
           <table className="table">
             <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: '#0e0e1a' }}>
               <tr>
-                <th>Tag</th>
+                {/* Stock Management: the owner's columns (PRD_H2 §2.2). The tag
+                    stays searchable and the bin location is on the sheet. */}
+                {stockMode ? <th>Colour</th> : <th>Tag</th>}
                 <th>Product Code</th>
                 <th>Name</th>
                 {/* Always "Oils" on All stock; the room goes to the Stock cell's lines. */}
                 {!fullLibrary && <th>Category</th>}
-                <th>Bin Location</th>
-                <th>{fullLibrary ? 'Total stock' : 'Stock'}</th>
+                {!stockMode && <th>Bin Location</th>}
+                <th>{fullLibrary ? 'Total stock' : stockMode ? 'Current Stock' : 'Stock'}</th>
                 {/* No minimum or status on All stock: the central store holds every
                     company's oil, so no single minimum fits it (owner, 27 Oct). SA's
                     minimum and status live on SA Fragrances. */}
@@ -1025,12 +1096,20 @@ export default function ProductManagement({ user, libraryMode = false, company =
                       borderLeft: '4px solid rgba(148,163,184,0.4)'
                     } : {}}
                   >
-                    <td style={{ fontFamily: 'monospace', fontSize: '12px' }}>{product.tag}</td>
+                    {stockMode
+                      ? <td style={{ textAlign: 'center' }}>{product.color ? <Swatch color={product.color} /> : <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
+                      : <td style={{ fontFamily: 'monospace', fontSize: '12px' }}>{product.tag}</td>}
                     <td style={{ fontFamily: 'monospace', fontSize: '12px' }}>{product.productCode}</td>
                     <td style={{ fontWeight: '600' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        {product.name}
-                        {product.color && (
+                        {/* Opens the product sheet, for everyone (PRD_H2 §2.3). */}
+                        <button type="button" onClick={() => setSheetFor(product)} title="Open the product sheet"
+                          style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 600,
+                            color: 'inherit', cursor: 'pointer', textAlign: 'left', textDecoration: 'underline',
+                            textDecorationColor: 'rgba(148,163,184,0.35)', textUnderlineOffset: 3 }}>
+                          {product.name}
+                        </button>
+                        {product.color && !stockMode && (
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5,
                             fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)',
                             background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)',
@@ -1076,11 +1155,16 @@ export default function ProductManagement({ user, libraryMode = false, company =
                         <span className={`badge ${getCategoryBadge(product.category)}`}>
                           {getCategoryLabel(product.category)}
                         </span>
+                        {stockMode && product.sub_category && (
+                          <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 3 }}>{product.sub_category}</div>
+                        )}
                       </td>
                     )}
-                    <td style={{ fontSize: '12px', color: 'rgba(232,234,242,0.45)' }}>
-                      {product.bin_location || '-'}
-                    </td>
+                    {!stockMode && (
+                      <td style={{ fontSize: '12px', color: 'rgba(232,234,242,0.45)' }}>
+                        {product.bin_location || '-'}
+                      </td>
+                    )}
                     <td>
                       <span style={{
                         fontWeight: isNegative ? '900' : 'normal',
@@ -1268,6 +1352,19 @@ export default function ProductManagement({ user, libraryMode = false, company =
                           >
                             Edit
                           </button>
+                          {/* Stock Management: what the Stock and Raw Materials pages
+                              did. All stock: one stock of the oil (PRD_H2 §2.4, O1).
+                              Not SA Fragrances: an oil is adjusted in the Library. */}
+                          {!saView && (
+                            <button
+                              className="btn btn-primary"
+                              onClick={() => setAdjustFor(product)}
+                              style={{ fontSize: '12px', padding: '6px 12px' }}
+                              title={fullLibrary ? 'Add or remove oil in one stock: SA or a MUSE stock' : 'Add or remove stock, with the reason and who did it'}
+                            >
+                              Adjust
+                            </button>
+                          )}
                           {fullLibrary && (
                             <>
                               <button
@@ -1284,12 +1381,25 @@ export default function ProductManagement({ user, libraryMode = false, company =
                                 onClick={() => navigate(`/transfers?oil=${encodeURIComponent(product.id)}`)}
                                 style={{ fontSize: '12px', padding: '6px 12px',
                                   ...((product.sectors?.MAIN || 0) > 0 && { borderColor: '#38bdf8', color: '#38bdf8' }) }}
-                                title="Transfer, count or use this oil between the stocks"
+                                title="Transfer this oil between the stocks"
                               >
                                 Move
                               </button>
                             </>
                           )}
+                          {/* Stock Management keeps its rows short: the rest of the
+                              actions are on the sheet (PRD_H2 §2.2), one click away. */}
+                          {stockMode ? (
+                            <button
+                              className="btn btn-secondary"
+                              onClick={() => setSheetFor(product)}
+                              style={{ fontSize: '12px', padding: '6px 12px' }}
+                              title="More: + Incoming, Aliases, Deactivate, Delete — on the product sheet"
+                              aria-label={`More actions for ${product.name}`}
+                            >
+                              ⋯
+                            </button>
+                          ) : (<>
                           <button
                             className="btn"
                             onClick={() => handleOpenIncomingModal(product)}
@@ -1332,6 +1442,7 @@ export default function ProductManagement({ user, libraryMode = false, company =
                           >
                             Delete
                           </button>
+                          </>)}
                         </div>
                       </td>
                     )}
@@ -1863,6 +1974,30 @@ export default function ProductManagement({ user, libraryMode = false, company =
             setRegisterFor(null);
             fetchProducts();
           }}
+        />
+      )}
+
+      {adjustFor && (
+        <AdjustStockModal
+          product={adjustFor}
+          showToast={showToast}
+          onClose={() => setAdjustFor(null)}
+          onDone={(data) => {
+            // The row at once, from the server's reply; the full list reloads after.
+            setProducts((prev) => prev.map((p) => (p.id === adjustFor.id
+              ? { ...p, currentStock: data.total, ...(data.sectors && { sectors: data.sectors, saStock: data.sectors.SA }) } : p)));
+            setAdjustFor(null);
+            fetchProducts();
+          }}
+        />
+      )}
+
+      {sheetFor && (
+        <ProductSheet
+          product={products.find((p) => p.id === sheetFor.id) || sheetFor}
+          place={stockMode ? 'stock' : saView ? 'sa' : 'library'}
+          actions={sheetActions(products.find((p) => p.id === sheetFor.id) || sheetFor)}
+          onClose={() => setSheetFor(null)}
         />
       )}
 
