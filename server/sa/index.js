@@ -16,6 +16,8 @@ import { NON_DEMAND_REMOVE_REASONS, UNPATTERNED_REMOVE_REASONS } from '../../sha
 import { readIncomingPurchaseOrders, costPerMl, VARIANT_ML } from './shopify-purchase-orders.js';
 import { refreshOrderActors, TECH_REFILL_DAYS } from './shopify-order-actors.js';
 import { readShopifyImage } from './shopify-image.js';
+import { publishOil, addMissingOilSizes } from './shopify-products.js';
+import { OIL_PATTERN } from '../../shared/shopify-product-pattern.js';
 import { shelfOutlook, orderToCover, SAFETY_STOCK_FACTOR } from '../../shared/shelf-outlook.js';
 import { router as sectorsRouter, migrateSectors, heldByProduct, sectorBalances, recordMovement, balancesAfterCommit,
   registrationsByProduct, registerOil, requireRegistered, errorBody, qtyText, recordRefusal, adjustStock } from './sectors.js';
@@ -946,7 +948,12 @@ router.post('/products', async (req, res) => {
     const withholdFromShopify = category === 'OILS' && !!finalExclusivity;
     if (withholdFromShopify) {
       console.log(`🔒 Oil "${row.name}" is exclusive to ${finalExclusivity} — withheld from the Scent Shopify store (D15 §10)`);
-    } else if (['OILS', 'SCENT_MACHINES', 'MACHINES_SPARES', 'RAW_MATERIALS'].includes(category) && process.env.SHOPIFY_SYNC_ENABLED === 'true') {
+    } else if (category === 'OILS') {
+      // An oil goes to Shopify from SKU Mapping's Publish, where its cost per
+      // litre is typed (P7, owner 30 Oct): created here it would go up Active,
+      // on Point of Sale, with no cost per item.
+      console.log(`ℹ️ Oil "${row.name}" created — publish it to Shopify from SKU Mapping (P7)`);
+    } else if (['SCENT_MACHINES', 'MACHINES_SPARES', 'RAW_MATERIALS'].includes(category) && process.env.SHOPIFY_SYNC_ENABLED === 'true') {
       try {
         await createProductInShopify(row);
         console.log(`✅ Product synced to Shopify: ${row.name}`);
@@ -1996,13 +2003,19 @@ const getVariantFromSKU = (sku) => {
 // ========================================================================
 router.get('/shopify/status', async (req, res) => {
   try {
-    const accessToken = process.env.SHOPIFY_ACCESS_TOKEN || process.env.SHOPIFY_API_PASSWORD;
-    if (!process.env.SHOPIFY_STORE_NAME || !accessToken) {
+    // The SA store the platform publishes oils to (P7, shopify-products.js)
+    // and reads POs from; the legacy variables only where it is not set, so
+    // the statuses shown are the store the Publish button writes to.
+    const accessToken = process.env.SA_SHOPIFY_ACCESS_TOKEN || process.env.SHOPIFY_ACCESS_TOKEN || process.env.SHOPIFY_API_PASSWORD;
+    const storeName = (process.env.SA_SHOPIFY_ACCESS_TOKEN
+      ? (process.env.SA_SHOPIFY_SHOP_DOMAIN || process.env.SA_SHOPIFY_STORE_NAME)
+      : process.env.SHOPIFY_STORE_NAME || '').replace(/\.myshopify\.com$/i, '');
+    if (!storeName || !accessToken) {
       return res.json({ enabled: false, statuses: {} });
     }
 
     let allProducts = [];
-    let url = `https://${process.env.SHOPIFY_STORE_NAME}.myshopify.com/admin/api/2025-01/products.json?limit=250&fields=id,title,status,variants`;
+    let url = `https://${storeName}.myshopify.com/admin/api/2025-01/products.json?limit=250&fields=id,title,status,product_type,variants`;
 
     while (url) {
       const response = await fetch(url, {
@@ -2016,18 +2029,22 @@ router.get('/shopify/status', async (req, res) => {
       url = nextMatch ? nextMatch[1] : null;
     }
 
-    // Build SKU → { status, shopifyId, title, variantId } map
+    // Build SKU → { status, shopifyId, title, variantId } map. While the old
+    // one-per-size listings and the new main product (P7) both carry a SKU,
+    // the main product is the one shown.
     const statuses = {};
     allProducts.forEach(product => {
       (product.variants || []).forEach(variant => {
-        if (variant.sku) {
-          statuses[variant.sku] = {
-            status: product.status,        // 'active' | 'draft' | 'archived'
-            shopifyId: product.id,
-            title: product.title,
-            variantId: variant.id
-          };
-        }
+        if (!variant.sku) return;
+        const isMain = product.product_type === OIL_PATTERN.productType;
+        if (statuses[variant.sku]?.main && !isMain) return;
+        statuses[variant.sku] = {
+          status: product.status,        // 'active' | 'draft' | 'archived'
+          shopifyId: product.id,
+          title: product.title,
+          variantId: variant.id,
+          main: isMain,
+        };
       });
     });
 
@@ -2111,6 +2128,13 @@ router.post('/shopify/publish/:productId', async (req, res) => {
     const result = await pool.query('SELECT * FROM products WHERE id = $1', [productId]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Product not found' });
     const product = { ...result.rows[0], shopifySkus: parseJSONB(result.rows[0].shopifySkus) };
+    // An oil: ONE main product with its five sizes, in the owner's pattern
+    // (P7), priced, costed from the cost per litre, on Point of Sale only.
+    if (product.category === 'OILS') {
+      const out = await publishOilChecked(product, req.body || {});
+      await auditShopifyOil(req.user.id, product, 'sku_published', out);
+      return res.json({ success: true, pattern: true, added: out.skus.length, failed: 0, ...out });
+    }
     const { added, failed } = await createProductInShopify(product);
     // Log to audit_log
     try {
@@ -2122,10 +2146,38 @@ router.post('/shopify/publish/:productId', async (req, res) => {
     } catch (auditErr) { console.warn('audit_log failed:', auditErr.message); }
     res.json({ success: true, added: added.length, failed: failed.length, addedProducts: added, failedProducts: failed });
   } catch (err) {
+    // A refusal the person can act on (already published, Shopify's own words) says so.
+    if (err.status && err.status < 500) return res.status(err.status).json({ error: err.message });
     console.error('Shopify publish error:', err.message);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(err.status === 502 ? 502 : 500).json({ error: err.status === 502 ? err.message : 'Internal server error' });
   }
 });
+
+// The checks every oil publish passes first (P7). An oil reserved for MUSE or
+// SM is never sold in the SA store (D15 §10), nor is one SA does not register (S6).
+async function publishOilChecked(product, body, add = false) {
+  // SA-exclusive (a client's Signature Fragrance, kept from MUSE) IS an SA oil.
+  if (['MUSE', 'SM'].includes(product.exclusivity)) {
+    throw Object.assign(new Error(`${product.name} is exclusive to ${product.exclusivity}: it is not sold in the SA store.`), { status: 400 });
+  }
+  const reg = await pool.query(`SELECT 1 FROM fragrance_registrations WHERE product_id = $1 AND company = 'SA' AND active`, [product.id]);
+  if (!reg.rowCount) throw Object.assign(new Error(`${product.name} is not registered in SA Fragrances.`), { status: 400 });
+  const costPerLitre = body.costPerLitre === '' || body.costPerLitre == null ? null : Number(body.costPerLitre);
+  if (costPerLitre != null && !(costPerLitre > 0)) throw Object.assign(new Error('The cost per litre must be more than zero, or left empty'), { status: 400 });
+  const opts = { costPerLitre, prices: body.prices || {} };
+  return add ? addMissingOilSizes(product, opts) : publishOil(product, opts);
+}
+
+async function auditShopifyOil(userId, product, action, out) {
+  try {
+    await pool.query(
+      `INSERT INTO audit_log (user_id, action, entity_type, entity_id, entity_name, details)
+       VALUES ($1, $2, 'product', $3, $4, $5)`,
+      [userId, action, product.id, product.name, JSON.stringify({
+        pattern: true, productCode: product.productCode, shopifyProduct: out.productId || null, title: out.title || out.productTitle,
+        added: out.skus?.length || 0, skus: out.skus || [], posPublished: out.posPublished ?? null, posError: out.posError || null })]);
+  } catch (auditErr) { console.warn('audit_log failed:', auditErr.message); }
+}
 
 // ========================================================================
 // SHOPIFY ADD MISSING PRODUCTS - create separate Shopify products for missing SKUs
@@ -2134,6 +2186,15 @@ router.post('/shopify/publish/:productId', async (req, res) => {
 router.post('/shopify/add-missing-variants/:productId', async (req, res) => {
   if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can publish to Shopify' });
   try {
+    // An oil: the missing sizes become variants of its main product (P7),
+    // never products of their own.
+    const oilRow = (await pool.query(`SELECT * FROM products WHERE id = $1 AND category = 'OILS'`, [req.params.productId])).rows[0];
+    if (oilRow) {
+      const product = { ...oilRow, shopifySkus: parseJSONB(oilRow.shopifySkus) };
+      const out = await publishOilChecked(product, req.body || {}, true);
+      await auditShopifyOil(req.user.id, product, 'sku_added', out);
+      return res.json({ success: true, pattern: true, failed: 0, ...out });
+    }
     const accessToken = process.env.SHOPIFY_ACCESS_TOKEN || process.env.SHOPIFY_API_PASSWORD;
     if (!process.env.SHOPIFY_STORE_NAME || !accessToken) {
       return res.status(400).json({ error: 'Shopify credentials not configured.' });
@@ -2233,8 +2294,9 @@ router.post('/shopify/add-missing-variants/:productId', async (req, res) => {
       failedProducts: failed
     });
   } catch (err) {
+    if (err.status && err.status < 500) return res.status(err.status).json({ error: err.message });
     console.error('Add missing variants error:', err.message);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(err.status === 502 ? 502 : 500).json({ error: err.status === 502 ? err.message : 'Internal server error' });
   }
 });
 

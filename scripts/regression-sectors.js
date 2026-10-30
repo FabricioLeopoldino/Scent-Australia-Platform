@@ -627,6 +627,20 @@ async function run() {
   record('R6: an oil that is only MUSE\'s is not in Demand Planning; an SA one is',
     !rep?.products?.some((x) => x.id === H) && rep?.products?.some((x) => x.id === C), `rows=${rep?.products?.length}`);
 
+  // ── P7: publishing an oil to Shopify checks the oil first, before Shopify is
+  // asked (Shopify is blanked here, so a check that passes stops at "not connected").
+  r = await api('root', 'POST', `/api/sa/shopify/publish/${E}`, { costPerLitre: 42.4 });
+  record('P7: an oil not registered in SA is not published to the SA store', r.status === 400 && /not registered in SA Fragrances/.test(r.json?.error || ''), r.json?.error);
+  const X = await createOil('X', { exclusivity: 'MUSE' });
+  r = await api('root', 'POST', `/api/sa/shopify/publish/${X}`, { costPerLitre: 42.4 });
+  record('P7: nor one exclusive to MUSE (D15 §10)', r.status === 400 && /exclusive to MUSE/.test(r.json?.error || ''), r.json?.error);
+  r = await api('root', 'POST', `/api/sa/shopify/publish/${A}`, { costPerLitre: -1 });
+  record('P7: a negative cost per litre is refused', r.status === 400 && /cost per litre/.test(r.json?.error || ''), r.json?.error);
+  r = await api('root', 'POST', `/api/sa/shopify/publish/${A}`, { costPerLitre: 42.4 });
+  record('P7: an SA oil passes the checks and reaches Shopify (not connected here)', r.status === 400 && /Shopify is not connected/.test(r.json?.error || ''), r.json?.error);
+  r = await api('user', 'POST', `/api/sa/shopify/publish/${A}`, { costPerLitre: 42.4 });
+  record('P7: a user cannot publish', r.status === 403, `status=${r.status}`);
+
   // ── Shopify POs: the filter is validated before Shopify is asked.
   r = await api('root', 'GET', '/api/sa/shopify-purchase-orders?lines=bogus');
   record('Shopify POs: lines is fragrance or other', r.status === 400);

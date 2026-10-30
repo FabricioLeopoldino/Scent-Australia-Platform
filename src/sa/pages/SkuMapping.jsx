@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { SA_SKU_KEYS, skuSizeLabel } from '../../../shared/sa-sku-variants.js';
 import { GlowingEffect } from '../components/GlowingEffect';
 import { useToast } from '../components/Toast';
+import PublishOilModal from '../components/PublishOilModal';
 
 export default function SkuMapping({ user }) {
   const showToast = useToast();
@@ -45,7 +46,12 @@ export default function SkuMapping({ user }) {
     }
   };
 
+  // An oil opens the publish window (P7: one main product, priced and costed,
+  // Point of Sale only). The old one-click path stays for anything else.
+  const [publishFor, setPublishFor] = useState(null); // { product, mode, missingSkus }
+
   const handlePublish = async (product) => {
+    if (product.category === 'OILS') { setPublishFor({ product: product.productObj, mode: 'publish' }); return; }
     setPublishing(prev => ({ ...prev, [product.productId]: true }));
     try {
       const res = await fetch(`/api/shopify/publish/${product.productId}`, {
@@ -68,6 +74,11 @@ export default function SkuMapping({ user }) {
   };
 
   const handleAddMissingVariants = async (product) => {
+    if (product.category === 'OILS') {
+      const missingSkus = Object.values(product.productObj.shopifySkus || {}).filter((s) => s && !shopifyStatuses[s]);
+      setPublishFor({ product: product.productObj, mode: 'add', missingSkus });
+      return;
+    }
     setPublishing(prev => ({ ...prev, [`missing_${product.productId}`]: true }));
     try {
       const res = await fetch(`/api/shopify/add-missing-variants/${product.productId}`, {
@@ -485,6 +496,18 @@ export default function SkuMapping({ user }) {
           <div style={{ fontSize: '13px', color: 'rgba(232,234,242,0.45)', fontWeight: '600' }}>Total SKUs</div>
         </div>
       </div>
+
+      {/* At the page's top level: inside a card it would sit under the menu (Stage 0). */}
+      {publishFor && (
+        <PublishOilModal
+          product={publishFor.product}
+          mode={publishFor.mode}
+          missingSkus={publishFor.missingSkus}
+          showToast={showToast}
+          onClose={() => setPublishFor(null)}
+          onDone={() => fetchShopifyStatuses()}
+        />
+      )}
     </div>
   );
 }
