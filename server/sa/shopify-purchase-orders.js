@@ -22,12 +22,18 @@
 //   - `origin` is an InventorySupplierSnapshot whose only field is supplierName.
 //   - Line items expose `totalQuantity`, not `quantity`.
 
+import { destinationByName } from '../../shared/sectors.js';
+
 const API_VERSION = 'unstable';
 
-// Only these destinations are stock we care about. #PO250 and #PO251 are
-// Print Express labels into "SA Custom Orders" — real purchase orders, but not
-// oil, and they must not raise an expectation of incoming stock.
-const WATCHED_DESTINATIONS = ['SA Warehouse'];
+// The destination names the company (owner, 29–30 Oct, shared/sectors.js
+// PO_DESTINATIONS): SA Warehouse, SA Custom Orders (MUSE The Atelier) and MUSE.
+// Until then only SA Warehouse was read, so a PO into any other location was
+// invisible. Every destination is read now, and one the table does not know
+// (a fourth location, a rename) is shown with its error instead of hidden.
+// #PO250 and #PO251 (Print Express labels into "SA Custom Orders") show under
+// MUSE The Atelier: their lines are not oil, so nothing can be accepted and no
+// stock is expected from them.
 
 // Shopify NEVER closes a purchase order. #PO76 was raised in July 2025, was
 // delivered long ago, and still reads ORDERED today — so "ORDERED" means "was
@@ -162,8 +168,8 @@ async function readIncomingPurchaseOrders(products) {
     if (po.status !== 'ORDERED') continue;
     if (po.archivedAt) continue;
     const destination = po.destination?.name || '';
-    if (!WATCHED_DESTINATIONS.includes(destination)) continue;
     if (sydneyDate(po.dateCreated) < SINCE) continue;
+    const dest = destinationByName(destination);
 
     const lines = po.lineItems.nodes.map((l) => {
       const r = resolveLine(l, bySku);
@@ -176,6 +182,7 @@ async function readIncomingPurchaseOrders(products) {
         unitCost: l.unitCost?.amount != null ? Number(l.unitCost.amount) : null,
         matched: !r.reason,
         reason: r.reason || null,
+        productId: r.product?.id ?? null, // the window that receives the line needs it
         productCode: r.product?.productCode || null,
         productName: r.product?.name || null,
         currentStock: r.product ? Number(r.product.currentStock) : null,
@@ -193,6 +200,11 @@ async function readIncomingPurchaseOrders(products) {
       status: po.status,
       supplier: po.origin?.supplierName || null,
       destination,
+      // The company stock the order is for, or null with the reason (P6).
+      destinationStock: dest?.stock || null,
+      destinationLabel: dest?.label || null,
+      destinationError: dest ? null
+        : `The destination "${destination || '(none)'}" is not linked to a company. Nothing on it can be accepted until an admin links it.`,
       dateCreated: po.dateCreated,
       dateCreatedLocal: sydneyDate(po.dateCreated),
       orderedAt: po.orderedAt,
@@ -235,4 +247,11 @@ async function readIncomingPurchaseOrders(products) {
   return { orders, liveLineIds };
 }
 
-export { readIncomingPurchaseOrders, VARIANT_ML, WATCHED_DESTINATIONS, API_VERSION, SINCE };
+/**
+ * What a purchase-order line costs per mL, ex GST: Shopify's "cost per item"
+ * is per bottle. Shopify sends 0, not empty, for a line nobody priced — that
+ * is "No price on the PO" (null), never $0 (PRD_STAGE_1_FRAGRANCE_LIBRARY.md S8).
+ */
+const costPerMl = (unitCost, bottleMl) => (unitCost > 0 && bottleMl > 0 ? unitCost / bottleMl : null);
+
+export { readIncomingPurchaseOrders, costPerMl, VARIANT_ML, API_VERSION, SINCE };

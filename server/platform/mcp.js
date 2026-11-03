@@ -37,7 +37,8 @@ import { redirectUriMatches } from '@modelcontextprotocol/sdk/server/auth/handle
 import { platformPool, withTransaction } from '../db.js';
 import rateLimit from 'express-rate-limit';
 import { getJwtSecret, getUserModules, auditLog } from './auth.js';
-import { getStockStatus, effectiveMin, lowStockAlertItems } from '../../src/sa/utils/stockStatus.js';
+import { getStockStatus, effectiveMin, lowStockAlertItems, isSaProduct } from '../../src/sa/utils/stockStatus.js';
+import { sectorLabel, HELD_SECTORS } from '../../shared/sectors.js';
 
 const ACCESS_TTL_S = 60 * 60;            // 1 hour
 const REFRESH_TTL_S = 30 * 24 * 60 * 60; // 30 days, rotated on every use
@@ -305,6 +306,18 @@ function stockView(p) {
   return {
     code: p.productCode, name: p.name, category: p.category, active: (p.status || 'active') === 'active',
     stock: toDisplay(p.currentStock, p.unit),
+    // An oil: SA's own balance — what the SA screens show, and what the status
+    // and minimum are about — and where the rest of the oil sits
+    // (PRD_STAGE_1_FRAGRANCE_LIBRARY.md §2.6). Equal to the total until oil
+    // moves into the main store or MUSE.
+    ...(p.sectors && {
+      stock: toDisplay(p.saStock, p.unit),
+      stockIs: 'SA',
+      total: toDisplay(p.currentStock, p.unit),
+      elsewhere: Object.fromEntries(HELD_SECTORS.map((k) => [sectorLabel(k), toDisplay(p.sectors[k] || 0, p.unit)])),
+      // The companies the oil belongs to (an active registration), e.g. ['SA', 'MUSE'].
+      registeredIn: Object.entries(p.registrations || {}).filter(([, r]) => r.active).map(([c]) => c),
+    }),
     minimum: { ...toDisplay(effectiveMin(p), p.unit), source: auto ? 'automatic (Demand Planning safety stock)' : 'typed' },
     status: STATUS_WORD[getStockStatus(p).key],
     binLocation: p.bin_location || null,
@@ -365,7 +378,7 @@ function buildServer(user) {
     });
 
   tool('get_stock',
-    'Stock of one product: quantity, minimum (automatic for oils with demand, otherwise typed), status (Healthy / Low Stock / Critical / Out of Stock) and open purchase orders with their due dates. Same rule as the Fragrance Library.',
+    'Stock of one product: quantity, minimum (automatic for oils with demand, otherwise typed), status (Healthy / Low Stock / Critical / Out of Stock) and open purchase orders with their due dates. Same rule as the Fragrance Library. For a fragrance oil the quantity is SA\'s own balance; the oil\'s total and what the main store and the MUSE stocks hold are beside it.',
     { product: z.string().min(1).describe('Product code, tag or exact name') },
     async ({ product }) => stockView(await resolve(product)));
 
@@ -373,7 +386,10 @@ function buildServer(user) {
     'The Dashboard\'s Low Stock Alerts, most urgent first: Critical (even an order placed today lands after it runs out) before Low Stock (order now). Oils appear only when they have real demand (an automatic minimum).',
     { category: z.enum(['OILS', 'SCENT_MACHINES', 'MACHINES_SPARES', 'RAW_MATERIALS', 'SA_SCENTED_PRODUCTS']).optional().describe('Only this category') },
     async ({ category }) => {
-      const items = lowStockAlertItems(await products()).filter((x) => !category || x.p.category === category);
+      // SA's alerts only, as on SA's Dashboard: an oil that is not SA's (no
+      // active SA registration) is never "SA out of stock" (fix round 3, F4).
+      const items = lowStockAlertItems((await products()).filter(isSaProduct))
+        .filter((x) => !category || x.p.category === category);
       return { count: items.length, alerts: items.map((x) => stockView(x.p)) };
     });
 
@@ -391,7 +407,11 @@ function buildServer(user) {
       return {
         code: d.productCode, name: d.name, status: d.safetyStatus, supplier: d.supplier || null,
         leadTimeDays: d.leadTime, leadTimeIsDefault: d.leadTimeSource === 'fallback',
-        stock: { onShelf: d.realStock, onOrder: d.incomingStock, unit: d.unit },
+        // onShelf is SA's balance. The main store and MUSE are information
+        // only — in no figure here (R6) — and the warning says when oil
+        // received into the main store waits for its split (D1).
+        stock: { onShelf: d.realStock, onOrder: d.incomingStock, unit: d.unit,
+                 mainStore: d.mainStore, muse: d.museTotal, warning: d.mainStoreWarning },
         perDay: { total: rate, customerSales: d.retailDailyAvg, b2b: d.b2bDaily, b2bFrom: d.b2bSource === 'technicians' ? 'technician refills' : 'Salesforce contract', technicianRefills: d.technicianDaily },
         salesforce: d.hasForecast ? { next120Days: d.forecast120Days, perDay: d.forecastDaily, importedDaysAgo: d.forecastAgeDays } : null,
         safetyStock: d.safetyStockLevel,

@@ -202,6 +202,39 @@ function ForecastFreshnessCard({ meta }) {
 }
 
 // ─── Product Detail Modal ─────────────────────────────────────────────────────
+// Where the rest of the oil is — information only, in no figure on this screen
+// (PRD_STAGE_1_FRAGRANCE_LIBRARY.md S5, R6). Oil received into the main store
+// is no longer on order and not yet SA's, so it gets a warning of its own: the
+// screen could otherwise say "order now" for oil already in the building (D1).
+// Never a quantity that reads 0 (fix round 2, R3): one decimal, more when one
+// decimal would print "0.0" — the server's rounding of these two fields, so the
+// line agrees with the warning beside it ("0.04 L in the main store").
+// Formatted here, not through fmt: fmt prints '0' from 9,990 up (a live
+// quirk of this screen, left as it is), which would put "Main store 0 L" beside
+// a correct warning (fix round 3, FV1).
+const fmtSeen = (v) => {
+  const d = v && Math.round(v * 10) === 0 ? 3 : 1;
+  return Number(v).toLocaleString('en-AU', { minimumFractionDigits: 1, maximumFractionDigits: d });
+};
+function StockElsewhere({ p }) {
+  const info = [
+    p.mainStore > 0 && `Main store ${fmtSeen(p.mainStore)} ${p.unit}`,
+    p.museTotal > 0 && `MUSE ${fmtSeen(p.museTotal)} ${p.unit}`,
+  ].filter(Boolean);
+  return (
+    <>
+      {info.length > 0 && (
+        <div title="Information only — not in this calculation" style={{ fontSize: 10.5, color: '#38bdf8', marginTop: 2 }}>
+          {info.join(' · ')}
+        </div>
+      )}
+      {p.mainStoreWarning && (
+        <div style={{ fontSize: 10.5, fontWeight: 700, color: '#fbbf24', marginTop: 2 }}>{p.mainStoreWarning}</div>
+      )}
+    </>
+  );
+}
+
 function ProductDetailModal({ product, detail, loading, onClose }) {
   if (!product) return null;
 
@@ -212,7 +245,7 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
   // Build bar chart data from daily sales
   const dailySales = detail?.dailySales || [];
   const maxVol = dailySales.length > 0 ? Math.max(...dailySales.map(d => d.volume_l)) : 1;
-  // Small MUSE productions are a few mL: 2.5 mL printed as "0.00 L" read as a
+  // Small movements are a few mL: 2.5 mL printed as "0.00 L" read as a
   // row of nothing (owner, 2026-10-15).
   const volUnit = product.unit || 'L';
   const fmtVolume = (v) => volUnit !== 'L' ? `${v.toLocaleString('en-AU')} ${volUnit}`
@@ -307,6 +340,9 @@ function ProductDetailModal({ product, detail, loading, onClose }) {
               </div>
             ))}
           </div>
+          {(product.mainStore > 0 || product.museTotal > 0) && (
+            <div style={{ marginTop: -8, marginBottom: 16, textAlign: 'center' }}><StockElsewhere p={product} /></div>
+          )}
 
           {/* The answer first. Everything below it is the working — a person
               deciding a purchase order should not have to assemble it from
@@ -1096,7 +1132,7 @@ export default function ReplenishmentDashboard({ user }) {
               <th style={thStyle}>Product Code</th>
               <th style={{ ...thStyle, padding: '10px 4px' }}><Tooltip text="In the latest Salesforce forecast report. Blank = not in the report.">SF</Tooltip></th>
               <th style={thStyle}>Product Name</th>
-              <th style={{ ...thStyle, textAlign: 'right' }}><Tooltip text="Current physical stock. Oils in L, machines/materials in units.">Real Stock</Tooltip></th>
+              <th style={{ ...thStyle, textAlign: 'right' }}><Tooltip text="SA's stock now — for an oil, SA's balance (the main store and MUSE are shown under it, information only). Oils in L, machines/materials in units.">Real Stock</Tooltip></th>
               <th style={{ ...thStyle, textAlign: 'right', color: '#60a5fa' }}><Tooltip text="Average daily customer sales over the last 30 days. Technician refills of contracted oils are left out — they are already inside B2B.">Retail/day</Tooltip></th>
               <th style={{ ...thStyle, textAlign: 'right', color: '#a78bfa' }}><Tooltip text="Daily B2B demand: the Salesforce forecast (120d ÷ 120), or what technicians actually drew over the same 120 days when that is higher.">B2B/day</Tooltip></th>
               <th style={{ ...thStyle, textAlign: 'right', background: 'rgba(220,38,38,0.06)', color: '#f87171' }}><Tooltip text="Conservative: peak retail + 100% B2B (contract or technician refills). Use this for buy-safe decisions.">Cons. Days</Tooltip></th>
@@ -1142,6 +1178,7 @@ export default function ReplenishmentDashboard({ user }) {
                         +{fmt(p.incomingStock, 1)}
                       </span>
                     )}
+                    <StockElsewhere p={p} />
                   </td>
                   <td style={{ ...tdStyle, textAlign: 'right', color: '#60a5fa' }}>{p.retailDailyAvg > 0 ? fmt(p.retailDailyAvg, 3) : <span style={{color:'rgba(232,234,242,0.25)'}}>—</span>}</td>
                   {/* No per-row staleness mark any more. It made sense while a

@@ -90,6 +90,9 @@ async function dropTestOils() {
     await db.query(`DELETE FROM production_order_components WHERE product_id = ANY($1::int[])`, [ids]).catch(() => {});
     await db.query(`DELETE FROM products WHERE id = ANY($1::int[])`, [ids]);
   }
+  // A MUSE debit writes a sector movement too (PRD_LIBRARY_SECTORS.md), which
+  // references the oil — left in place it blocks the oil's own deletion.
+  await db.query(`DELETE FROM sa.sector_movements WHERE product_id LIKE $1`, [`${TEST_OIL_PREFIX}%`]);
   await db.query(`DELETE FROM sa.transactions WHERE product_id LIKE $1`, [`${TEST_OIL_PREFIX}%`]);
   await db.query(`DELETE FROM sa.products WHERE id LIKE $1`, [`${TEST_OIL_PREFIX}%`]);
 }
@@ -124,9 +127,10 @@ async function setup() {
 
 async function main() {
   console.log('══════════ SM REGRESSION SUITE (Phase 3c) ══════════\n');
-  const uid = await setup();
-
+  // setup() creates a ROOT user whose password is in this file; inside the try
+  // so a failed login still reaches the teardown that removes it.
   try {
+    await setup();
     // ── Seed catalog (idempotent; intentionally left in place as base data) ──
     const supplier = await api('POST', '/api/sm/suppliers', { name: 'Seed Supplier Co', lead_time: 30 });
     record('seed: supplier', supplier.status === 200 || supplier.status === 201);
@@ -439,7 +443,11 @@ async function main() {
     // must not survive the run — sa is production data.
     await dropTestOils().catch((e) => console.error(`teardown: could not drop test oils — ${e.message}`));
     await db.query(`DELETE FROM products WHERE product_code = 'RD200_LEGACY_TEST'`).catch(() => {});
+    // sm.audit_log's FK is ON DELETE SET NULL too: the suite's own audit rows would stay behind, unowned.
+    await db.query(`DELETE FROM audit_log WHERE user_id IN (SELECT id FROM users WHERE name = '__regression_sm')`);
     await db.query(`DELETE FROM users WHERE name = '__regression_sm'`);
+    // platform.audit_log's FK is ON DELETE SET NULL: the login row would stay behind, unowned.
+    await db.query(`DELETE FROM platform.audit_log WHERE user_id IN (SELECT id FROM platform.users WHERE name = '__regression_sm')`);
     await db.query(`DELETE FROM platform.users WHERE name = '__regression_sm'`);
     await db.end();
   }

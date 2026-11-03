@@ -13,9 +13,12 @@ import express from 'express';
 import { calcSmartDemand } from '../../shared/demand-calculator.js';
 import { bomVariantFor } from '../../shared/refurb-machines.js';
 import { isValidReason, reasonLabel, NON_DEMAND_REMOVE_REASONS, UNPATTERNED_REMOVE_REASONS } from '../../shared/stock-reasons.js';
-import { readIncomingPurchaseOrders } from './shopify-purchase-orders.js';
+import { readIncomingPurchaseOrders, costPerMl, VARIANT_ML } from './shopify-purchase-orders.js';
 import { refreshOrderActors, TECH_REFILL_DAYS } from './shopify-order-actors.js';
 import { shelfOutlook, orderToCover, SAFETY_STOCK_FACTOR } from '../../shared/shelf-outlook.js';
+import { router as sectorsRouter, migrateSectors, heldByProduct, sectorBalances, recordMovement, balancesAfterCommit,
+  registrationsByProduct, registerOil, requireRegistered, errorBody, qtyText, recordRefusal } from './sectors.js';
+import { SECTOR_KEYS, COMPANIES, companyOf, sectorLabel, destinationByStock } from '../../shared/sectors.js';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import multer from 'multer';
@@ -25,7 +28,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 // Platform DB with search_path=sa,public (PRD §7.3) — unqualified SA queries
 // resolve to schema sa with zero SQL changes. UTC type parser lives in db.js.
-import { saPool as pool } from '../db.js';
+import { saPool as pool, withTransaction } from '../db.js';
 import { SA_SKU_VARIANTS, SA_SKU_KEYS } from '../../shared/sa-sku-variants.js';
 import { withinWarehouseHours } from '../../shared/warehouse-hours.js';
 
@@ -50,6 +53,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const router = express.Router();
+// Fragrance Library sectors (PRD_LIBRARY_SECTORS.md) — /sectors/* routes.
+router.use(sectorsRouter);
 
 // ========================================================================
 // IN-MEMORY WEBHOOK LOCK
@@ -77,24 +82,24 @@ const storage = multer.diskStorage({
   }
 });
 
-// D14.7 — Transaction types that count as OIL DEMAND for replenishment planning.
-// Retail streams (remove/shopify_sale/sale) PLUS the three Fragrance-Library debit
-// types: when SM/MUSE production draws oil from the shared pool, that oil really
-// left SA's building and must pull SA reordering. Reversal types
-// (muse_reversal/sm_std_reversal/sm_major_reversal) are deliberately EXCLUDED —
-// they credit oil back; a reversed production conservatively overstates demand
-// only until its debit row ages out of the 30-day window (buy-safe, matches the
-// DP Conservative scenario). Single source of truth so the replenishment query
-// and the per-product detail query can never drift apart.
+// Transaction types that count as OIL DEMAND for replenishment planning: SA's
+// own movements — Shopify SA sales, removals, technicians — and nothing else
+// (S5 / R6, PRD_STAGE_1_FRAGRANCE_LIBRARY.md). The owner, 21 Oct 2026: "a MUSE
+// não deveria entrar no demand planning (pois ele vai ter seu próprio controle
+// de stock)". So the three Fragrance-Library debit types D14.7 added here
+// (muse_production, sm_std_production, sm_major_production) are out again,
+// even when MUSE takes SA's oil: SA's stock still drops, because the oil
+// really left, but it is not SA's demand. The one intended difference from
+// live (PRD §6: 8 oils, 0.385 L over 30 days on 22 Oct). A MUSE use typed by
+// hand is a `remove` and is taken out by MUSE_HAND_USE below. Single source of
+// truth so the replenishment query and the per-product detail query can never
+// drift apart.
 // A forecast import is expected monthly, so 35 days without one is a missed
 // cycle rather than ordinary lateness. Used for both the order penalty and the
 // warning on screen, so the two can never disagree.
 const FORECAST_STALE_DAYS = 35;
 
-const DEMAND_TX_TYPES = [
-  'remove', 'shopify_sale', 'sale',
-  'muse_production', 'sm_std_production', 'sm_major_production',
-];
+const DEMAND_TX_TYPES = ['remove', 'shopify_sale', 'sale'];
 
 // A stocktake correction is not demand. It is the book being reconciled to the
 // shelf — the shelf lost nothing, the number did — and counting it as
@@ -184,11 +189,23 @@ const ONE_OFF_ORDER = `(type = 'shopify_sale' AND unit = 'mL'
           WHERE s.shopify_order_id = transactions.shopify_order_id
             AND s.product_id = transactions.product_id
             AND s.type IN ('shopify_sale', 'shopify_reversal')) >= ${ONE_OFF_ORDER_ML})`;
+// A MUSE use entered by hand in the Fragrance Library (POST /sectors/move, kind
+// use) writes a ledger `remove`, because the total really dropped — but it is
+// MUSE's, not SA's demand (S5), even for the part SA's shelf covered. Known by
+// its use movement: drawn from a MUSE stock, or by SA for one (used_for). A use
+// is only ever drawn from SA or a MUSE stock (sa.sector_draw), so "not from
+// SA" is "from a MUSE stock" — written without the imported key list because
+// regression-demand-excludes-corrections.js evaluates this block on its own.
+// EXISTS, so it cannot be NULL (the trap described above).
+const MUSE_HAND_USE = `EXISTS (SELECT 1 FROM sector_movements m
+     WHERE m.transaction_id = transactions.id AND m.kind = 'use'
+       AND (m.from_sector <> 'SA' OR m.used_for IS NOT NULL))`;
 const EXCLUDE_NON_DEMAND = `${EXCLUDE_CORRECTIONS}
   AND NOT ${TECHNICIAN_REFILL}
   AND NOT ${REVERSED_SALE}
   AND NOT ${UNPATTERNED_REMOVAL}
-  AND NOT ${ONE_OFF_ORDER}`;
+  AND NOT ${ONE_OFF_ORDER}
+  AND NOT ${MUSE_HAND_USE}`;
 
 const ALLOWED_MIME_TYPES = new Set([
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
@@ -627,15 +644,18 @@ router.get('/products', async (req, res) => {
     // ✅ Sequential ordering
     query += ' ORDER BY tag';
     
-    const [result, posResult, autoMins] = await Promise.all([
+    const withOils = !category || category === 'ALL' || category === 'OILS';
+    const [result, posResult, autoMins, held, regs] = await Promise.all([
       pool.query(query, params),
       // eta_days in Sydney time, from Postgres: a DATE handed to the browser as
       // a JS Date lands a day off depending on the server's own timezone.
-      pool.query(`SELECT id, product_id, order_number, quantity, quantity_received, supplier, status, notes, added_at, added_by, estimated_delivery_date, shopify_missing_since,
+      pool.query(`SELECT id, product_id, order_number, quantity, quantity_received, supplier, status, notes, added_at, added_by, estimated_delivery_date, shopify_missing_since, destination_stock,
                          estimated_delivery_date - (NOW() AT TIME ZONE 'Australia/Sydney')::date AS eta_days
                   FROM purchase_orders WHERE status IN ('pending','partial') ORDER BY added_at ASC`),
       // Only oils carry one; a machines or spares list does not need it.
-      !category || category === 'ALL' || category === 'OILS' ? getAutoMinimums() : null
+      withOils ? getAutoMinimums() : null,
+      withOils ? heldByProduct() : new Map(),
+      withOils ? registrationsByProduct() : new Map(),
     ]);
 
     // Build PO map: productId → [POs]
@@ -654,9 +674,17 @@ router.get('/products', async (req, res) => {
         addedBy: po.added_by || '',
         estimatedDeliveryDate: po.estimated_delivery_date || null,
         etaDays: po.eta_days == null ? null : Number(po.eta_days),
-        shopifyMissingSince: po.shopify_missing_since || null
+        shopifyMissingSince: po.shopify_missing_since || null,
+        // The company stock a Shopify PO is for (P6); null = a manual order, SA's.
+        // SA's status and on order read only SA's (utils/stockStatus).
+        stock: po.destination_stock || null,
       });
     }
+
+    const oilFields = (row) => {
+      const sectors = sectorBalances(parseFloat(row.currentStock) || 0, held.get(row.id));
+      return { sectors, saStock: sectors.SA, registrations: regs.get(row.id) || {} };
+    };
 
     // Map to camelCase for frontend
     const products = result.rows.map(row => ({
@@ -670,7 +698,11 @@ router.get('/products', async (req, res) => {
       location: row.location || '',
       bin_location: row.bin_location || '',
       unit: row.unit,
+      // An oil's total. Where it sits is below — the main store, SA and the
+      // four MUSE stocks (shared/sectors.js keys); the status and the minimum
+      // are SA's (saStock). Its registrations say which companies hold it (S6).
       currentStock: parseFloat(row.currentStock) || 0,
+      ...(row.category === 'OILS' && oilFields(row)),
       minStockLevel: parseFloat(row.minStockLevel) || 0,
       // Decides "low" where present — see getAutoMinimums. minStockLevel stays
       // the typed value, so the edit form never saves the automatic one over it.
@@ -758,6 +790,18 @@ router.post('/products', async (req, res) => {
       return res.status(400).json({ error: 'Name and category are required' });
     }
 
+    // A new oil is registered in SA unless the request says where (S6,
+    // registerIn: ['SA','MUSE'] or []), so every existing caller keeps today's
+    // behaviour: the oil shows in SA Fragrances.
+    const registerIn = category === 'OILS' ? (req.body.registerIn ?? ['SA']) : [];
+    if (!Array.isArray(registerIn) || registerIn.some((c) => !COMPANIES.includes(c))) {
+      return res.status(400).json({ error: 'registerIn is a list of SA and/or MUSE' });
+    }
+    // An opening stock is SA's by construction (S2), so it needs the oil in SA.
+    if (category === 'OILS' && !registerIn.includes('SA') && parseFloat(currentStock) > 0) {
+      return res.status(400).json({ error: 'An oil not registered in SA cannot start with stock — register it in SA, or receive its stock through a purchase order.' });
+    }
+
     // D15: Fragrance Library exclusivity — 'SHARED' is the form's sentinel for
     // "no restriction" (NULL); MUSE/SM are the D14 exclusivity buckets.
     let finalExclusivity = null;
@@ -836,7 +880,9 @@ router.post('/products', async (req, res) => {
     const skuMultipliersJson = skuMultipliers && typeof skuMultipliers === 'object'
       ? JSON.stringify(skuMultipliers) : '{}';
 
-    const result = await pool.query(
+    // The oil and its registrations land together, or neither does.
+    const row = await withTransaction(pool, async (c) => {
+    const result = await c.query(
       `INSERT INTO products
        (id, tag, "productCode", name, category, unit, "currentStock", "minStockLevel",
         "shopifySkus", "skuMultipliers", supplier, "supplier_code", "unitPerBox", "stockBoxes", "incoming_orders",
@@ -850,15 +896,17 @@ router.post('/products', async (req, res) => {
         finalSubCategory, finalColor, finalLocation, finalBinLocation, finalExclusivity
       ]
     );
-    
-    const row = result.rows[0];
+    await registerOil(c, result.rows[0].id, registerIn, req.user.id);
+    return result.rows[0];
+    });
 
     // Log product creation to audit_log
     try {
       await pool.query(
         `INSERT INTO audit_log (user_id, action, entity_type, entity_id, entity_name, details)
          VALUES ($1, 'product_created', 'product', $2, $3, $4)`,
-        [req.user.id, row.id, row.name, JSON.stringify({ category: row.category, productCode: row.productCode })]
+        [req.user.id, row.id, row.name, JSON.stringify({ category: row.category, productCode: row.productCode,
+          ...(registerIn.length && { registeredIn: registerIn }) })]
       );
     } catch (auditErr) {
       console.warn('⚠️ audit_log insert failed:', auditErr.message);
@@ -1122,8 +1170,10 @@ router.delete('/products/:id', async (req, res) => {
     // every transaction row it ever had, silently destroying history that other
     // reports (Oil Usage, Demand Planning, Activity Log) are computed from.
     // A product that has moved stock can only be DEACTIVATED, never hard-deleted.
+    // Sector movements are history too, and some (a transfer) write no ledger row.
     const txCount = await client.query(
-      'SELECT COUNT(*)::int n FROM transactions WHERE product_id = $1',
+      `SELECT ((SELECT COUNT(*) FROM transactions WHERE product_id = $1)
+            + (SELECT COUNT(*) FROM sector_movements WHERE product_id = $1))::int AS n`,
       [productId]
     );
     if (txCount.rows[0].n > 0) {
@@ -1472,7 +1522,7 @@ router.get('/audit', async (req, res) => {
     // exist as a type — so filtering the Activity Log by "Tech Batch (Scanner)"
     // silently returned 0 rows while real entries sat in audit_log. Restores
     // parity with the live SA system; keep this list in sync with it.
-    const AUDIT_LOG_TYPES = ['product_created', 'product_deleted', 'sku_published', 'sku_added', 'po_created', 'po_cancelled', 'po_received', 'formula_created', 'formula_updated', 'formula_deleted', 'formula_ready_received', 'formula_ready_adjusted', 'product_deactivated', 'product_activated', 'scented_group_created', 'scented_group_deleted', 'tech_transfer', 'tech_remove', 'tech_return', 'tech_batch', 'shopify_po_accepted', 'shopify_po_quantity_synced', 'product_reorder_watch_changed'];
+    const AUDIT_LOG_TYPES = ['product_created', 'product_deleted', 'sku_published', 'sku_added', 'po_created', 'po_cancelled', 'po_received', 'formula_created', 'formula_updated', 'formula_deleted', 'formula_ready_received', 'formula_ready_adjusted', 'product_deactivated', 'product_activated', 'scented_group_created', 'scented_group_deleted', 'tech_transfer', 'tech_remove', 'tech_return', 'tech_batch', 'shopify_po_accepted', 'shopify_po_quantity_synced', 'product_reorder_watch_changed', 'stock_refused'];
     const isAuditLogType = AUDIT_LOG_TYPES.includes(type);
 
     // ── Stock transactions ─────────────────────────────────────────────────
@@ -3141,7 +3191,7 @@ router.post('/products/:id/incoming', async (req, res) => {
     );
 
     const posResult = await pool.query(
-      `SELECT id, order_number, quantity, quantity_received, supplier, status, notes, added_at, added_by, estimated_delivery_date
+      `SELECT id, order_number, quantity, quantity_received, supplier, status, notes, added_at, added_by, estimated_delivery_date, destination_stock
        FROM purchase_orders WHERE product_id = $1 AND status IN ('pending','partial') ORDER BY added_at ASC`,
       [id]
     );
@@ -3150,7 +3200,8 @@ router.post('/products/:id/incoming', async (req, res) => {
       quantityReceived: parseFloat(po.quantity_received) || 0,
       supplier: po.supplier || '', status: po.status, notes: po.notes || '',
       addedAt: po.added_at, addedBy: po.added_by || '',
-      estimatedDeliveryDate: po.estimated_delivery_date || null
+      estimatedDeliveryDate: po.estimated_delivery_date || null,
+      stock: po.destination_stock || null,
     }));
 
     // Audit log — po_created
@@ -3267,15 +3318,23 @@ router.post('/purchase-orders/:poId/receive', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const { quantityReceived, notes, receivedBy, userId } = req.body;
-    const receivedQty = parseFloat(quantityReceived);
+    const { quantityReceived, notes, receivedBy, userId, lines } = req.body;
+    // An oil may arrive split across the stocks (S7): lines [{ to, quantity }],
+    // one per destination. They add up to quantityReceived, or give it.
+    const split = Array.isArray(lines) && lines.length
+      ? lines.map((l) => ({ to: l?.to, quantity: parseFloat(l?.quantity) })) : null;
+    const linesTotal = split ? split.reduce((s, l) => s + (l.quantity || 0), 0) : null;
+    const receivedQty = split && (quantityReceived == null || quantityReceived === '')
+      ? linesTotal : parseFloat(quantityReceived);
     if (!receivedQty || isNaN(receivedQty) || receivedQty <= 0) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'quantityReceived must be a positive number' });
     }
 
     // Get PO
-    const poResult = await client.query('SELECT * FROM purchase_orders WHERE id = $1', [req.params.poId]);
+    // FOR UPDATE: two receipts of the same PO at once queue here, so the
+    // second sees what the first received and cannot over-receive.
+    const poResult = await client.query('SELECT * FROM purchase_orders WHERE id = $1 FOR UPDATE', [req.params.poId]);
     if (poResult.rows.length === 0) throw new Error('Purchase order not found');
     const po = poResult.rows[0];
 
@@ -3294,6 +3353,49 @@ router.post('/purchase-orders/:poId/receive', async (req, res) => {
     if (productResult.rows.length === 0) throw new Error('Product not found');
     const product = productResult.rows[0];
 
+    // An oil goes where its lines say — with none, all of it to SA, as for
+    // every caller before the Fragrance Library. Lines that do not add up to
+    // what arrived are a typing error and are refused (S7); so is a line into
+    // a company where the oil is not registered (S6) — the main store needs none.
+    let receiptLines = null;
+    if (product.category === 'OILS') {
+      // A Shopify PO's destination names the company (P6, shared/sectors.js):
+      // with no lines it all goes to that stock, and a line outside its stocks
+      // is refused, recorded and explained (owner, 30 Oct: "registrar e
+      // bloquear e alertar"). A manual PO has no destination: anywhere, as before.
+      const dest = destinationByStock(po.destination_stock);
+      receiptLines = split || [{ to: dest?.stock || 'SA', quantity: receivedQty }];
+      if (receiptLines.some((l) => !SECTOR_KEYS.includes(l.to) || !(l.quantity > 0))) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Each line needs a stock and a quantity above zero' });
+      }
+      const total = receiptLines.reduce((s, l) => s + l.quantity, 0);
+      if (Math.abs(total - receivedQty) > 0.001) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `The lines add up to ${qtyText(total, product.unit)}; ${qtyText(receivedQty, product.unit)} arrived.` });
+      }
+      const outside = dest ? receiptLines.filter((l) => !dest.receiveInto.includes(l.to)) : [];
+      if (outside.length) {
+        const allowed = dest.receiveInto.map(sectorLabel).join(', ');
+        throw Object.assign(new Error(
+          `${po.order_number} is a purchase order for ${dest.label}. It can only be received into ${allowed}, `
+          + `not into ${outside.map((l) => sectorLabel(l.to)).join(', ')}.`), {
+          status: 400, code: 'WRONG_STOCK',
+          fix: `Receive it into ${allowed}. If part of this oil really belongs to another company, receive it here first, `
+            + 'then move that part with a Transfer in the Fragrance Library: the transfer records who moved it, when and why.',
+          refusal: {
+            productId: product.id, productName: product.name, type: 'receipt', reference: po.order_number,
+            stock: outside[0].to, quantity: outside.reduce((s, l) => s + l.quantity, 0), unit: product.unit,
+            destination: dest.label, allowed: dest.receiveInto,
+          },
+        });
+      }
+      for (const l of receiptLines) await requireRegistered(client, product.id, l.to);
+    } else if (split) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only fragrance oil is split between stocks' });
+    }
+
     // Update stock
     const newStock = parseFloat(product.currentStock || 0) + receivedQty;
     await client.query(
@@ -3310,10 +3412,10 @@ router.post('/purchase-orders/:poId/receive', async (req, res) => {
     );
 
     // Create transaction
-    await client.query(
+    const tx = await client.query(
       `INSERT INTO transactions
        (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes, user_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
       [
         product.id, product.productCode || product.tag, product.name, product.category,
         'add', receivedQty, product.unit || 'units', newStock,
@@ -3321,6 +3423,17 @@ router.post('/purchase-orders/:poId/receive', async (req, res) => {
         userId || null
       ]
     );
+
+    // One ledger row for the total (above), one movement per line — the SA
+    // line too, for the history. The PO's Shopify cost travels with each; a PO
+    // without one shows "No price on the PO" (S8).
+    for (const l of receiptLines || []) {
+      await recordMovement(client, {
+        productId: product.id, from: 'SUPPLIER', to: l.to, quantity: l.quantity, kind: 'receipt',
+        reference: po.order_number, costPerUnit: po.cost_per_unit == null ? null : Number(po.cost_per_unit),
+        transactionId: tx.rows[0].id, userId: req.user.id,
+      });
+    }
 
     // Audit log inside transaction — if this fails the whole receive rolls back (consistent)
     await client.query(
@@ -3333,16 +3446,22 @@ router.post('/purchase-orders/:poId/receive', async (req, res) => {
         receiveType: newStatus === 'received' ? 'full' : 'partial',
         unit: product.unit,
         productCode: product.productCode || product.tag,
-        category: product.category
+        category: product.category,
+        ...(receiptLines && { lines: receiptLines })
       })]
     );
 
     await client.query('COMMIT');
     console.log(`✅ PO Received: ${product.name} — ${po.order_number} (+${receivedQty} ${product.unit}) [${newStatus}]`);
 
-    res.json({ success: true, newStock, status: newStatus, message: `PO ${newStatus}. Stock updated.` });
+    res.json({
+      success: true, newStock, status: newStatus, lines: receiptLines, message: `PO ${newStatus}. Stock updated.`,
+      ...(receiptLines && { sectors: await balancesAfterCommit(product.id, newStock) }), // null if the read-back fails (R8)
+    });
   } catch (error) {
     await client.query('ROLLBACK');
+    await recordRefusal(req.user, error); // WRONG_STOCK (P6); nothing else carries a refusal
+    if (error.status) return res.status(error.status).json(errorBody(error)); // NOT_REGISTERED, WRONG_STOCK
     console.error('Receive PO error:', error);
     res.status(500).json({ error: 'Internal server error' });
   } finally {
@@ -4160,7 +4279,7 @@ router.post('/forecast/import', upload.single('file'), async (req, res) => {
         )
         SELECT p.product_code, p.f, pr.name
         FROM prior p JOIN products pr ON pr."productCode" = p.product_code
-        WHERE p.f > 0 AND pr.status = 'active'
+        WHERE p.f > 0 AND pr.status = 'active' AND ${SA_MEMBER('pr')}
           AND p.product_code NOT IN (SELECT product_code FROM forecasts WHERE import_date = $1)
         ORDER BY p.f DESC
       `, [importDate])).rows;
@@ -4348,13 +4467,32 @@ router.get('/shopify-purchase-orders', async (req, res) => {
   // The menu hides this from technicians; a menu is not a permission. Supplier
   // names, unit costs and stock positions are on this page.
   if (req.user.role === 'technician') return res.status(403).json({ error: 'Not available for technicians' });
+  // ?lines=fragrance | other — the Fragrance Library shows the fragrance lines,
+  // SA's page the machines, spare parts and raw materials (PRD Stage 1 §2.3).
+  // Without it, everything, as before.
+  const want = req.query.lines;
+  if (want && !['fragrance', 'other'].includes(want)) return res.status(400).json({ error: 'lines is fragrance or other' });
   try {
     const products = (await pool.query(
-      `SELECT "productCode", name, "currentStock", unit, "shopifySkus", status, category
+      `SELECT id, "productCode", name, "currentStock", unit, "shopifySkus", status, category
          FROM products WHERE status = 'active'`)).rows
       .map((r) => ({ ...r, shopifySkus: parseJSONB(r.shopifySkus) }));
 
-    const { orders, liveLineIds } = await readIncomingPurchaseOrders(products);
+    const read = await readIncomingPurchaseOrders(products);
+    const { liveLineIds } = read;
+    // A fragrance line is an oil's — or, when no product carries its code yet,
+    // one coded as an oil bottle (SA_1L_…), so it can be registered from the
+    // Fragrance Library. A line with no code at all stays on SA's page.
+    const categoryOf = new Map(products.map((p) => [p.productCode, p.category]));
+    const isFragrance = (l) => l.productCode
+      ? categoryOf.get(l.productCode) === 'OILS'
+      : Object.keys(VARIANT_ML).some((p) => (l.sku || '').startsWith(`${p}_`));
+    const orders = !want ? read.orders : read.orders
+      .map((o) => {
+        const lines = o.lines.filter((l) => isFragrance(l) === (want === 'fragrance'));
+        return { ...o, lines, unmatchedCount: lines.filter((l) => !l.matched).length };
+      })
+      .filter((o) => o.lines.length);
 
     // What has already been linked. Read per line, not per order: a purchase
     // order can be accepted while one of its lines is still unrecognised, and
@@ -4367,9 +4505,15 @@ router.get('/shopify-purchase-orders', async (req, res) => {
          LEFT JOIN products pr ON pr.id = po.product_id
         WHERE po.shopify_line_id IS NOT NULL`)).rows;
     const byLine = new Map(accepted.map((r) => [r.shopify_line_id, r]));
+    // An oil must be registered in the company the PO is for before it can be
+    // accepted (P6): flagged on the line here, so it is seen before the click.
+    const regs = await registrationsByProduct();
     for (const o of orders) {
+      const company = companyOf(o.destinationStock);
       for (const l of o.lines) {
         const row = byLine.get(l.lineId);
+        l.registerCompany = company;
+        l.registered = !l.matched || !company || regs.get(l.productId)?.[company]?.active === true;
         l.accepted = !!row;
         l.receivedMl = row ? row.rec : null;
         l.poStatus = row ? row.status : null;
@@ -4382,7 +4526,8 @@ router.get('/shopify-purchase-orders', async (req, res) => {
         l.changedInShopify = !!row && l.matched && Math.abs(row.q - l.incomingMl) > 0.001;
       }
       o.acceptedLines = o.lines.filter((l) => l.accepted).length;
-      o.acceptableLines = o.lines.filter((l) => l.matched && !l.accepted).length;
+      o.acceptableLines = o.destinationStock ? o.lines.filter((l) => l.matched && !l.accepted && l.registered).length : 0;
+      o.unregisteredLines = o.lines.filter((l) => l.matched && !l.accepted && !l.registered).length;
     }
 
     // Accepted, then deleted in Shopify. Without this the platform would go on
@@ -4410,7 +4555,9 @@ router.get('/shopify-purchase-orders', async (req, res) => {
         [presentIds]);
     }
 
-    const orphans = accepted
+    // Only a matched line can be accepted, and a match is an oil bottle size,
+    // so every accepted line is a fragrance one: none on SA's page.
+    const orphans = want === 'other' ? [] : accepted
       .filter((r) => ['pending', 'partial'].includes(r.status) && !liveLineIds.has(r.shopify_line_id))
       .map((r) => ({
         id: r.id,
@@ -4473,10 +4620,28 @@ router.post('/shopify-purchase-orders/accept', async (req, res) => {
       return res.status(409).json({ error: 'That purchase order is no longer in Shopify. Refresh the page.' });
     }
 
+    // The destination names the company (P6). An unknown one — a fourth
+    // location, a rename — is never guessed: nothing on it is accepted.
+    if (!fresh.destinationStock) return res.status(400).json({ error: fresh.destinationError });
+    const company = companyOf(fresh.destinationStock);
+
     const byCode = new Map(products.map((p) => [p.productCode, p]));
-    const usable = fresh.lines.filter((l) => l.matched && byCode.has(l.productCode));
-    if (usable.length === 0) {
+    const matchedLines = fresh.lines.filter((l) => l.matched && byCode.has(l.productCode));
+    if (matchedLines.length === 0) {
       return res.status(400).json({ error: 'No line on this purchase order matches a product yet' });
+    }
+    // An oil not registered in that company is left out and named, so it is
+    // registered BEFORE the oil arrives (owner, 29 Oct), not found at the receipt.
+    const regs = await registrationsByProduct();
+    const isRegistered = (l) => regs.get(byCode.get(l.productCode).id)?.[company]?.active === true;
+    const usable = matchedLines.filter(isRegistered);
+    const notRegistered = matchedLines.filter((l) => !isRegistered(l))
+      .map((l) => ({ productId: byCode.get(l.productCode).id, productCode: l.productCode, name: l.productName, company }));
+    if (usable.length === 0) {
+      return res.status(400).json({
+        error: `Not accepted: ${notRegistered.map((n) => n.name).join(', ')} ${notRegistered.length > 1 ? 'are' : 'is'} not registered in ${company} Fragrances. Register ${notRegistered.length > 1 ? 'them' : 'it'} first, then accept again.`,
+        code: 'NOT_REGISTERED', notRegistered,
+      });
     }
 
     client = await pool.connect();
@@ -4487,15 +4652,20 @@ router.post('/shopify-purchase-orders/accept', async (req, res) => {
       const ins = await client.query(
         `INSERT INTO purchase_orders
            (product_id, order_number, quantity, supplier, notes, added_by, created_by,
-            shopify_po_gid, shopify_line_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+            shopify_po_gid, shopify_line_id, cost_per_unit, destination_stock)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
          ON CONFLICT (shopify_line_id) WHERE shopify_line_id IS NOT NULL DO NOTHING
          RETURNING id`,
         // added_by is the label the screens show; created_by is the user id.
         // The existing PO insert keeps them apart and so must this one.
+        // cost_per_unit: per mL, ex GST; a Shopify cost of 0 is NULL, "No
+        // price on the PO", never $0 (costPerMl, S8).
+        // destination_stock: whose oil it is (P6) — what the receipt may go
+        // into, and whether it is SA's on order.
         [product.id, fresh.number, line.incomingMl, fresh.supplier || null,
          `From Shopify ${fresh.number} — ${line.bottles} × ${line.bottleMl} mL`,
-         req.user.name || 'shopify', req.user.id, shopifyId, line.lineId]
+         req.user.name || 'shopify', req.user.id, shopifyId, line.lineId,
+         costPerMl(line.unitCost, line.bottleMl), fresh.destinationStock]
       );
       // The name as well as the code: the activity screen is read by people, and
       // "FRAG_0045" tells them nothing that "Dream" does not tell them better.
@@ -4508,7 +4678,8 @@ router.post('/shopify-purchase-orders/accept', async (req, res) => {
        VALUES ($1, 'shopify_po_accepted', 'purchase_order', NULL, $2, $3)`,
       [req.user.id, fresh.number,
        JSON.stringify({ shopifyId, supplier: fresh.supplier, lines: created,
-                        skippedUnmatched: fresh.unmatchedCount })]
+                        destination: fresh.destination, destinationStock: fresh.destinationStock,
+                        skippedUnmatched: fresh.unmatchedCount, skippedNotRegistered: notRegistered })]
     );
     await client.query('COMMIT');
 
@@ -4517,6 +4688,7 @@ router.post('/shopify-purchase-orders/accept', async (req, res) => {
       accepted: created.length,
       alreadyAccepted: usable.length - created.length,
       unmatched: fresh.unmatchedCount,
+      notRegistered,
     });
   } catch (e) {
     if (client) await client.query('ROLLBACK').catch(() => {});
@@ -4682,12 +4854,9 @@ router.get('/products/:id/transactions', async (req, res) => {
 
     const dailySales = result.rows.map(r => ({
       date: new Date(r.date).toLocaleDateString('en-AU', { day: '2-digit', month: 'short' }),
-      volume_l: parseFloat((parseFloat(r.volume_raw) / R).toFixed(6)), // 6dp: a 2.5 mL MUSE run must survive
+      volume_l: parseFloat((parseFloat(r.volume_raw) / R).toFixed(6)), // 6dp: a few-mL movement must not print as 0.00 L
       type: r.type === 'shopify_sale' ? 'Shopify'
           : r.type === 'remove' ? 'Manual'
-          : r.type === 'muse_production' ? 'MUSE prod.'
-          : r.type === 'sm_std_production' ? 'SM Std prod.'
-          : r.type === 'sm_major_production' ? 'SM Major prod.'
           : r.type,
       transactions: parseInt(r.transactions)
     }));
@@ -4778,6 +4947,15 @@ router.get('/aliases', async (req, res) => {
 // "Order to cover" on the modal: the horizons the manager asks in.
 const COVER_HORIZONS = [30, 60, 90, 120];
 
+// Demand Planning plans SA's oils: an oil is listed only while it has an
+// active SA registration — the same membership as SA Fragrances (R6, fix
+// round 2). Machines, spares and raw materials are SA's by definition.
+// IS DISTINCT FROM, not <>: `NULL <> 'OILS'` is NULL, and a product with no
+// category would drop out of the list silently (fix round 3, F5 — the NULL
+// trap described at EXCLUDE_CORRECTIONS).
+const SA_MEMBER = (p) => `(${p}.category IS DISTINCT FROM 'OILS' OR EXISTS (SELECT 1 FROM fragrance_registrations r
+    WHERE r.product_id = ${p}.id AND r.company = 'SA' AND r.active))`;
+
 // The whole Demand Planning calculation. A function rather than the route body
 // so the automatic minimum (getAutoMinimums, below) reads the safety stock from
 // the very same arithmetic the screen shows — two copies of it would drift.
@@ -4792,7 +4970,12 @@ async function buildReplenishment() {
           p.id,
           p."productCode",
           p.name,
-          p."currentStock",
+          -- SA's balance (S2): oil in the main store or a MUSE stock is not
+          -- SA's. Beside it, for information only — they enter no calculation
+          -- (R6, decision D1): what the main store and MUSE hold.
+          p."currentStock" - COALESCE(h.held, 0) AS "currentStock",
+          COALESCE(h.main, 0) AS main_store,
+          COALESCE(h.held, 0) - GREATEST(COALESCE(h.main, 0), 0) AS muse_held,
           p.unit,
           p.supplier,
           p.lead_time AS product_lead_time_override,
@@ -4802,7 +4985,8 @@ async function buildReplenishment() {
         FROM products p
         LEFT JOIN suppliers s ON (p.supplier_id IS NOT NULL AND s.id = p.supplier_id)
                                OR (p.supplier_id IS NULL AND LOWER(TRIM(p.supplier)) = LOWER(TRIM(s.name)))
-        WHERE p.status = 'active'
+        LEFT JOIN sector_held h ON h.product_id = p.id
+        WHERE p.status = 'active' AND ${SA_MEMBER('p')}
         ORDER BY p.name
       `),
       // Sales broken down by product AND day — use Australian timezone for correct date grouping
@@ -4887,7 +5071,7 @@ async function buildReplenishment() {
         FROM prior p
         JOIN products pr ON pr."productCode" = p.product_code
         WHERE p.product_code NOT IN (SELECT product_code FROM newest)
-          AND p.f > 0 AND pr.category = 'OILS' AND pr.status = 'active'
+          AND p.f > 0 AND pr.category = 'OILS' AND pr.status = 'active' AND ${SA_MEMBER('pr')}
         ORDER BY p.f DESC
       `),
       // Pending purchase orders: quantity still on the way per product
@@ -4904,6 +5088,10 @@ async function buildReplenishment() {
                estimated_delivery_date - (NOW() AT TIME ZONE 'Australia/Sydney')::date AS eta_days
         FROM purchase_orders
         WHERE status IN ('pending', 'partial')
+          -- SA's on order only (P6): a PO for MUSE The Atelier or MUSE is that
+          -- company's, and Demand Planning is SA's alone (owner, 25 Oct). A
+          -- manual order has no destination and stays SA's, as before.
+          AND (destination_stock IS NULL OR destination_stock = 'SA')
       `),
       // What technicians actually drew on contracted oils — the forecast as it
       // really happened. See the B2B stream below.
@@ -4950,6 +5138,7 @@ async function buildReplenishment() {
                  AND NOT ${TECHNICIAN_REFILL} AND NOT ${REVERSED_SALE}), 0) AS one_off
         FROM transactions
         WHERE type IN ('remove', 'shopify_sale')
+          AND NOT ${MUSE_HAND_USE} -- MUSE's own use: not SA's here either
           AND (created_at::timestamptz AT TIME ZONE 'Australia/Sydney')::date >= (NOW() AT TIME ZONE 'Australia/Sydney')::date - INTERVAL '30 days'
         GROUP BY product_id
       `)
@@ -5022,6 +5211,7 @@ async function buildReplenishment() {
     const autoMinMl = new Map();
     const data = productsResult.rows.map(p => {
       const realStock  = parseFloat(p.currentStock) || 0;
+      const mainStore  = parseFloat(p.main_store) || 0;
       const leadTime   = Math.max(1, parseInt(p.lead_time) || 30); // never 0 or negative
       const leadTimeSource = p.product_lead_time_override != null
         ? 'product_override'
@@ -5299,6 +5489,7 @@ async function buildReplenishment() {
       const R = isML ? 1000 : 1;
       const r3 = v => Math.round(v * 1000) / 1000; // round to 3dp
       const r1 = v => Math.round(v * 10) / 10;     // round to 1dp
+      const rSeen = v => v === 0 ? 0 : (r1(v) || Math.round(v * 100) / 100 || r3(v) || Math.sign(v) * 0.001);
       const r0 = v => Math.round(v);               // round to integer
 
       return {
@@ -5306,7 +5497,17 @@ async function buildReplenishment() {
         productCode:         p.productCode,
         name:                p.name,
         unit:                isML ? 'L' : (p.unit || 'units'),
-        realStock:           r1(realStock / R),
+        realStock:           r1(realStock / R),   // SA's balance
+        // Information only, in no figure above or below (R6, D1): what the
+        // main store and the MUSE stocks hold. Oil received into the main
+        // store is no longer on order and not yet SA's, so this line is where
+        // Demand Planning says it is in the building.
+        // Never a figure that rounds to 0 beside oil that is there (fix round 1,
+        // S7): 1 decimal, more only when that would read 0, then 0.001.
+        mainStore:           rSeen(mainStore / R),
+        museTotal:           rSeen((parseFloat(p.muse_held) || 0) / R),
+        mainStoreWarning:    mainStore > 0
+          ? `${rSeen(mainStore / R)} ${isML ? 'L' : (p.unit || 'units')} in the main store — split it before ordering.` : null,
         incomingStock:       r1(incomingStock / R),
         // Each open order: still to arrive (display unit, unrounded), delivery
         // date, days away. Not "incomingOrders": /api/products uses that name
@@ -6231,6 +6432,11 @@ router.use((err, req, res, next) => {
 
 // Run replenishment migration once at startup (idempotent — safe to run every deploy)
 async function runStartupMigrations() {
+  // First and NOT caught: the products page, Demand Planning and every MUSE
+  // sale's oil debit read or write the sector tables, so a server without them
+  // must fail to start (the previous deploy keeps running) rather than run
+  // half-working and skip MUSE debits (code review, 23 Oct).
+  await migrateSectors();
   try {
     await pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS lead_time INTEGER DEFAULT NULL`);
     await pool.query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS estimated_delivery_date DATE DEFAULT NULL`);

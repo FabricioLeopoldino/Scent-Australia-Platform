@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { SYSTEM_NAMES } from '../../../shared/business-names.js'
+import { SECTORS } from '../../../shared/sectors.js'
 import { Search, Download, History as HistoryIcon, ScrollText, AlertTriangle } from 'lucide-react'
 import axios from 'axios'
 import { useToast } from '../SMModule.jsx'
@@ -30,7 +31,7 @@ const CONFIG = {
   history: {
     title: 'History', sub: `All stock movements across SA · ${SYSTEM_NAMES.SM} · MUSE`,
     icon: HistoryIcon, endpoint: 'history', searchPlaceholder: 'Search product or code…',
-    columns: ['Date', 'System', 'By', 'Type', 'Product', 'Qty', 'Balance after', 'Notes'],
+    columns: ['Date', 'System', 'By', 'Type', 'Product', 'Qty', 'Stock', 'Value (ex GST)', 'Balance after', 'Notes'],
     systems: ['ALL', 'SA', SYSTEM_NAMES.SM, 'MUSE'],
   },
   activity: {
@@ -112,6 +113,10 @@ export default function HistoryActivity({ kind = 'history' }) {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [search, setSearch] = useState('')
+  // Fragrance stock (PRD_STAGE_1_FRAGRANCE_LIBRARY.md §2.5): one stock, or every
+  // MUSE stock ('MUSE_ALL' → company=MUSE). The CSV export reuses params(), so
+  // it is filtered the same way.
+  const [stock, setStock] = useState('')
   const [exporting, setExporting] = useState(false)
   const { addToast } = useToast()
 
@@ -121,8 +126,10 @@ export default function HistoryActivity({ kind = 'history' }) {
     if (from) p.from = from
     if (to) p.to = to
     if (search) p.search = search
+    if (kind === 'history' && stock === 'MUSE_ALL') p.company = 'MUSE'
+    else if (kind === 'history' && stock) p.stock = stock
     return p
-  }, [system, from, to, search])
+  }, [system, from, to, search, stock, kind])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -188,6 +195,14 @@ export default function HistoryActivity({ kind = 'history' }) {
             <button key={s} onClick={() => setSystem(s)} style={chip(system === s)}>{s === 'ALL' ? 'All Systems' : s}</button>
           ))}
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginLeft: 'auto' }}>
+            {kind === 'history' && (
+              <select value={stock} onChange={e => setStock(e.target.value)} style={{ ...inp, background: '#1e2035', cursor: 'pointer' }} title="Fragrance stock">
+                <option value="">All stocks</option>
+                {SECTORS.slice(0, 2).map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+                <option value="MUSE_ALL">MUSE — all</option>
+                {SECTORS.slice(2).map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+              </select>
+            )}
             <input type="date" value={from} onChange={e => setFrom(e.target.value)} style={inp} title="From" />
             <span style={{ color: 'rgba(232,234,242,0.4)', fontSize: 12 }}>→</span>
             <input type="date" value={to} onChange={e => setTo(e.target.value)} style={inp} title="To" />
@@ -206,6 +221,11 @@ export default function HistoryActivity({ kind = 'history' }) {
       ) : (
         <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, overflow: 'visible', position: 'relative' }}>
           <GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
+          {/* The table scrolls inside its box. Without this, at 1366 wide its ten
+              columns pushed the whole page past the screen edge and the Export
+              button off it (Stage 1 check, 26 Oct). `contain` stops the table's
+              width from widening the page around it. */}
+          <div style={{ overflowX: 'auto', contain: 'inline-size' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
@@ -236,7 +256,9 @@ export default function HistoryActivity({ kind = 'history' }) {
                   <td style={{ padding: '9px 14px', fontSize: 12, color: 'rgba(232,234,242,0.75)', whiteSpace: 'nowrap' }}>{r.performed_by}</td>
                   {kind === 'history' ? (
                     <>
-                      <td style={{ padding: '9px 14px', fontSize: 12, color: 'rgba(232,234,242,0.7)' }}>{r.type}</td>
+                      {/* A transfer has no ledger row; the server types it `sector_transfer`.
+                          Shown as "transfer", in the same plain style as add / remove (FV2). */}
+                      <td style={{ padding: '9px 14px', fontSize: 12, color: 'rgba(232,234,242,0.7)' }}>{String(r.type || '').replace(/^sector_/, '')}</td>
                       <td style={{ padding: '9px 14px', fontSize: 13, color: '#e8eaf2' }}>
                         {r.product_name || '—'}
                         {r.product_code && <span style={{ fontSize: 11, color: 'rgba(232,234,242,0.35)', fontFamily: 'monospace', marginLeft: 6 }}>{r.product_code}</span>}
@@ -254,6 +276,23 @@ export default function HistoryActivity({ kind = 'history' }) {
                         {r.quantity != null
                           ? `${r.direction === 'out' ? '−' : r.direction === 'in' ? '+' : ''}${Math.abs(Number(r.quantity)).toLocaleString()}`
                           : '—'} <span style={{ fontSize: 10, color: 'rgba(232,234,242,0.4)' }}>{r.unit || ''}</span>
+                      </td>
+                      {/* Which fragrance stock, and the value ex GST at the PO cost
+                          (PRD_STAGE_1_FRAGRANCE_LIBRARY.md §2.5, S8). An oil row with no
+                          stock movement reads "SA" — it landed there (S2, fix round 3) —
+                          and old MUSE production "SA (for MUSE)"; non-oils "—". A
+                          receipt's split is one row: each part on a line of its own. */}
+                      {/* Wrapping, with a cap: unwrapped, "SA (for MUSE The Archive)"
+                          pushed the page past the screen edge (visual check, 25 Oct). */}
+                      <td style={{ padding: '9px 14px', fontSize: 11.5, color: '#38bdf8', minWidth: 150, maxWidth: 170, lineHeight: 1.4, whiteSpace: 'pre-line' }}>
+                        {r.sector ? String(r.sector).split(/ · | \+ /).join('\n') : '—'}
+                      </td>
+                      <td style={{ padding: '9px 14px', fontSize: 11.5, maxWidth: 90, lineHeight: 1.4, color: r.price_note ? '#fbbf24' : 'rgba(232,234,242,0.75)' }}>
+                        {/* The server words it, once, for the screen and the CSV alike
+                            (fix round 3, F3): a receipt with no cost "No price on the PO",
+                            any other unpriced movement "Unpriced". No note and no value —
+                            an SA row with no stock movement, a non-oil — reads "—". */}
+                        {r.value != null && !r.unpriced ? `$${Number(r.value).toFixed(2)}` : r.price_note || '—'}
                       </td>
                       <td style={{ padding: '9px 14px', fontSize: 12, color: 'rgba(232,234,242,0.6)', whiteSpace: 'nowrap' }}>{r.balance_after != null ? Number(r.balance_after).toLocaleString() : '—'}</td>
                       <td style={{ padding: '9px 14px', fontSize: 12, color: 'rgba(232,234,242,0.45)', maxWidth: 220 }}>
@@ -278,6 +317,7 @@ export default function HistoryActivity({ kind = 'history' }) {
               ))}
             </tbody>
           </table>
+          </div>
           <div style={{ padding: '10px 14px', borderTop: '1px solid rgba(255,255,255,0.06)', fontSize: 12, color: 'rgba(232,234,242,0.35)' }}>
             {rows.length.toLocaleString()} record{rows.length !== 1 ? 's' : ''}{rows.length >= 10000 ? ' (capped — narrow the filters)' : ''}
           </div>

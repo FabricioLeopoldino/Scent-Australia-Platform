@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { displayStock } from '../utils/unitConversion';
 import { GlowingEffect } from '../components/GlowingEffect';
+import { sectorLabel } from '../../../shared/sectors.js';
 
 const TYPE_LABELS = {
   add:             { label: 'Add Stock',       color: '#22c55e' },
@@ -34,6 +35,8 @@ const TYPE_LABELS = {
   shopify_po_accepted:          { label: 'Shopify PO Accepted',  color: '#f59e0b' },
   shopify_po_quantity_synced:   { label: 'Shopify PO Changed',   color: '#fbbf24' },
   product_reorder_watch_changed:{ label: 'Reorder Watch',        color: '#60a5fa' },
+  // A stock rule refused an attempt (P6: a receipt outside its PO's company); nothing moved.
+  stock_refused:                { label: 'Refused',              color: '#f87171' },
 };
 
 const CATEGORY_LABELS = {
@@ -335,6 +338,11 @@ export default function ActivityLog({ user }) {
                         ? ` — ${(totalMl / 1000).toLocaleString('en-AU', { maximumFractionDigits: 2 })} L total`
                         : '';
                       notesDisplay = `${actionLabels[d.action] || d.action}${totalStr}${oilList ? ` · ${oilList}` : ''}${d.notes ? ` · ${d.notes}` : ''}`;
+                    } else if (log.action === 'stock_refused') {
+                      const q = (v) => displayStock(v || 0, d.unit);
+                      notesDisplay = d.type === 'receipt'
+                        ? `Receive ${d.reference} into ${sectorLabel(d.stock)}: ${q(d.quantity)} — the PO is for ${d.destination} · nothing moved`
+                        : `${d.type === 'add' ? 'Add to' : d.type === 'transfer' ? 'Transfer out of' : 'Remove from'} ${sectorLabel(d.stock)}: ${q(d.quantity)} · nothing moved`;
                     } else if (log.action === 'formula_ready_received') {
                       const ml = d.quantityMl || 0;
                       const total = d.newTotalMl || 0;

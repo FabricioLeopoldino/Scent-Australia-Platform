@@ -5,6 +5,7 @@ import ChangePassword from './ChangePassword.jsx';
 import ModulePicker from './ModulePicker.jsx';
 import UserManagement from './UserManagement.jsx';
 import SAModule from '../sa/SAModule.jsx';
+import LibraryModule from '../sa/LibraryModule.jsx';
 import SMModule from '../sm/SMModule.jsx';
 import {
   getStoredUser,
@@ -15,7 +16,7 @@ import {
 } from './api.js';
 
 // Shell flow (PRD Appendix B): Login → forced password change → Module Picker
-// → module routes (/sa/*, /sm/*). URL-driven via wouter; module guards per B5.
+// → module routes (/sa/*, /library/*, /sm/*). URL-driven via wouter; module guards per B5.
 export default function App() {
   const [user, setUser] = useState(getStoredUser);
   const [, navigate] = useLocation();
@@ -44,10 +45,9 @@ export default function App() {
     // MUSE (D7) and OPS (D11) are views over the SM module: same routes/backend,
     // the Layout renders view-specific navigation based on the active module.
     if (moduleKey === 'SA') navigate('/sa');
-    // D15 + follow-up (2026-07-30): Fragrance Library tile — same SA module,
-    // now its own dedicated, oils-locked route (libraryMode) instead of a
-    // filtered view of the generic Products page.
-    else if (moduleKey === 'FRAGLIB') navigate('/sa/fragrance-library');
+    // Fragrance Library tile — its own area since Stage 1 (PRD_STAGE_1_FRAGRANCE_LIBRARY.md
+    // §2.1): /library, its own menu over the SA API. SA's menu keeps SA Fragrances.
+    else if (moduleKey === 'FRAGLIB') navigate('/library');
     else if (moduleKey === 'MUSE') navigate('/sm/muse');
     else if (moduleKey === 'OPS') navigate('/sm'); // production dashboard
     else if (moduleKey === 'REPORTS') navigate('/sm/history'); // centralized cross-system report (admin/root)
@@ -83,6 +83,13 @@ export default function App() {
           : <RedirectToPicker onDone={backToPicker} />}
       </Route>
 
+      {/* Same access as its tile (ModulePicker: viewOf SA). */}
+      <Route path="/library/*?">
+        {hasModule('SA')
+          ? <LibraryWrapper user={user} onSwitchModule={backToPicker} onLogout={handleLogout} />
+          : <RedirectToPicker onDone={backToPicker} />}
+      </Route>
+
       <Route path="/sm/*?">
         {hasModule('SM') || hasModule('MUSE')
           ? <SMWrapper user={user} onLogout={handleLogout} />
@@ -108,10 +115,19 @@ function SAWrapper({ user, onSwitchModule, onLogout }) {
   return <SAModule user={user} onSwitchModule={onSwitchModule} onLogout={onLogout} />;
 }
 
+function LibraryWrapper({ user, onSwitchModule, onLogout }) {
+  // Same reason as SAWrapper: a reload straight onto /library/transfers must
+  // still send /api to /api/sa (FRAGLIB resolves there, shell/api.js).
+  setActiveModule('FRAGLIB');
+  return <LibraryModule user={user} onSwitchModule={onSwitchModule} onLogout={onLogout} />;
+}
+
 function SMWrapper({ user, onLogout }) {
   // Keep interceptors module-aware after deep reloads; preserve the MUSE (D7)
-  // and OPS (D11) view choices when already set — both are views over SM.
-  if (!['MUSE', 'OPS', 'REPORTS'].includes(getActiveModule())) setActiveModule('SM');
+  // and REPORTS view choices when already set — both are views over SM. OPS is
+  // not preserved while its tile is hidden (21 Oct 2026): a browser that last
+  // picked it lands on the SM view instead of a menu nobody can choose.
+  if (!['MUSE', 'REPORTS'].includes(getActiveModule())) setActiveModule('SM');
   return <SMModule user={user} onLogout={onLogout} />;
 }
 

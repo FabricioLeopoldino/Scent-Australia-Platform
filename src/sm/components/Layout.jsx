@@ -40,7 +40,7 @@ const NAV_SECTIONS = [
   { header: 'SHARED INVENTORY', views: ['ops'], items: [
     { path: '/stock', label: 'Stock Management', icon: Archive, roles: ['root','admin','user'] },
   ]},
-  { header: 'SCENTED MERCHANDISE', views: ['sm'], items: [
+  { header: 'THE ATELIER', views: ['sm'], items: [
     { path: '/customers', label: 'Clients', icon: Users, roles: ['root','admin','user'] },
     { path: '/standard/catalog', label: 'Standard Catalog', icon: Tag, roles: ['root','admin','user'] },
     { path: '/major-clients', label: 'Major Clients', icon: Briefcase, roles: ['root','admin','user'] },
@@ -48,7 +48,7 @@ const NAV_SECTIONS = [
     { path: '/fragrances', label: 'Fragrance Library', icon: FlaskConical, roles: ['root','admin','user'] },
     { path: '/sm-stock', label: 'Stock', icon: Package, roles: ['root','admin','user'] },
   ]},
-  { header: 'MUSE', views: ['muse'], items: [
+  { header: 'THE LIBRARY', views: ['muse'], items: [
     { path: '/muse', label: 'Dashboard', icon: Star, roles: ['root','admin','user'] },
     { path: '/muse/products', label: 'Catalog', icon: Star, roles: ['root','admin','user'] },
     { path: '/fragrances', label: 'Fragrances', icon: FlaskConical, roles: ['root','admin','user'] },
@@ -119,7 +119,7 @@ export default function Layout({ children }) {
               <img src="/logos/muse-logo-parchment.svg" alt="MU:SE" className="theme-dark-only" style={{ height: 22, display: 'block' }} />
               <img src="/logos/muse-logo-wine.svg" alt="MU:SE" className="theme-light-only" style={{ height: 22, display: 'block' }} />
               <div style={{ fontSize: 8.5, fontWeight: 600, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-                Own Brand
+                The Library
               </div>
             </div>
           )}
@@ -131,7 +131,7 @@ export default function Layout({ children }) {
                   {SYSTEM_NAMES.SM}
                 </div>
                 <div style={{ fontSize: 8.5, fontWeight: 600, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-muted)', marginTop: 3 }}>
-                  B2B Clients &amp; Catalog
+                  MUSE · White Label · Custom
                 </div>
               </div>
             </div>

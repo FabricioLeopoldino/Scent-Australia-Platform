@@ -3,6 +3,7 @@ import { saPool, smPool, platformPool } from '../db.js';
 import { requireRole } from './auth.js';
 import { DIRECTION_SQL, BUSINESS_SQL, SA_SYSTEM_SQL, systemMatches, typesVisibleIn } from './movement-direction.js';
 import { SYSTEM_NAMES } from '../../shared/business-names.js';
+import { SECTORS, SECTOR_KEYS, COMPANIES, OUTSIDE } from '../../shared/sectors.js';
 
 // ── Timestamps ───────────────────────────────────────────────────────────
 // WHY THIS EXISTS (2026-09-15). `created_at` is `timestamp WITHOUT time zone`
@@ -57,12 +58,76 @@ function txFilters(base, { from, to, type, search }, params) {
   return q;
 }
 
+// Fragrance stock by company (PRD_STAGE_1_FRAGRANCE_LIBRARY.md §2.5): which
+// stock a movement came from or went to, and what it was worth at the Shopify
+// cost, ex GST.
+const sectorLabelSql = (col) =>
+  `(CASE ${[...SECTORS.map((s) => [s.key, s.label]), ...Object.entries(OUTSIDE)]
+    .map(([k, v]) => `WHEN ${col} = '${k}' THEN '${v}'`).join(' ')} ELSE ${col} END)`;
+const SECTOR_OF_MOVE = (m) => `(CASE
+    WHEN ${m}.used_for IS NOT NULL THEN ${sectorLabelSql(`${m}.from_sector`)} || ' (for ' || ${sectorLabelSql(`${m}.used_for`)} || ')'
+    WHEN ${m}.from_sector IN ('SUPPLIER','COUNT','USED') THEN ${sectorLabelSql(`${m}.to_sector`)}
+    WHEN ${m}.to_sector IN ('SUPPLIER','COUNT','USED') THEN ${sectorLabelSql(`${m}.from_sector`)}
+    ELSE ${sectorLabelSql(`${m}.from_sector`)} || ' → ' || ${sectorLabelSql(`${m}.to_sector`)} END)`;
+// One ledger row can carry several movements — a receipt split between stocks,
+// a use drawn from two — so each part says how much, as the owner reads a
+// receipt: "50 L SA · 25 L MUSE The Atelier · 25 L MUSE The Library".
+const qtySql = (q, unit) => `(CASE WHEN ${unit} = 'mL' THEN round(${q} / 1000, 3)::float8 || ' L'
+    ELSE round(${q}, 3)::float8 || ' ' || COALESCE(${unit}, 'units') END)`;
+// MUSE / client production and its reversals from before Stage 1 have no stock
+// movement: the oil came off SA's shelf, for MUSE (fix round 1, V6).
+const MUSE_USE_TYPES = ['muse_production', 'sm_std_production', 'sm_major_production',
+  'muse_reversal', 'sm_std_reversal', 'sm_major_reversal'];
+const MUSE_USE_TYPES_SQL = `ARRAY[${MUSE_USE_TYPES.map((t) => `'${t}'`).join(',')}]::text[]`;
+const NO_MOVEMENT = `NOT EXISTS (SELECT 1 FROM sector_movements m WHERE m.transaction_id = t.id)`;
+// value: NULL when the oil has no Shopify price yet — the screen says so, in
+// words: a receipt "No price on the PO", any other movement "Unpriced" (S6).
+// The old MUSE rows carry no cost either: "Unpriced", on the screen and in the CSV alike (R4).
+const OLD_MUSE_USE = `(sec.sector IS NULL AND t.type = ANY(${MUSE_USE_TYPES_SQL}))`;
+// Any other oil row with no movement landed in SA by construction (S2) — a
+// Shopify SA sale, a removal, a stocktake — so its Stock reads "SA", on the
+// screen and in the CSV alike (fix round 3, FV2). Non-oil rows stay blank.
+const SECTOR_COLS = `CASE WHEN ${OLD_MUSE_USE} THEN 'SA (for MUSE)'
+              WHEN sec.sector IS NULL AND t.category = 'OILS' THEN 'SA' ELSE sec.sector END AS sector,
+         sec.value, CASE WHEN ${OLD_MUSE_USE} THEN true ELSE sec.unpriced END AS unpriced,
+         CASE WHEN ${OLD_MUSE_USE} THEN 'Unpriced' ELSE sec.price_note END AS price_note, sec.kind`;
+const priceNoteSql = (unpriced, receipt) =>
+  `(CASE WHEN ${unpriced} THEN CASE WHEN ${receipt} THEN 'No price on the PO' ELSE 'Unpriced' END END)`;
+const SECTOR_JOIN = `LEFT JOIN LATERAL (
+    SELECT string_agg(${qtySql('m.quantity', 't.unit')} || ' ' || ${SECTOR_OF_MOVE('m')}, ' · ' ORDER BY m.id) AS sector,
+           SUM(m.quantity * m.cost_per_unit) AS value,
+           bool_or(m.cost_per_unit IS NULL) AS unpriced,
+           ${priceNoteSql('bool_or(m.cost_per_unit IS NULL)', "bool_or(m.kind = 'receipt')")} AS price_note,
+           -- what the row is (receipt, use, count, production…), so a screen need not read the note
+           CASE WHEN bool_or(m.kind = 'receipt') THEN 'receipt' ELSE MIN(m.kind) END AS kind
+      FROM sector_movements m WHERE m.transaction_id = t.id) sec ON true`;
+
 const SA_TX = `
   SELECT t.id::text AS id, ${UTC_ISO('t.created_at')}, COALESCE(u.name, 'System') AS performed_by,
          t.type, t.category, t.product_name, t.product_code,
          t.quantity, t.unit, t.balance_after, t.notes, ${SA_SYSTEM_SQL()} AS system,
-         ${DIRECTION_SQL()} AS direction
+         ${DIRECTION_SQL()} AS direction, ${SECTOR_COLS}
   FROM transactions t LEFT JOIN users u ON t.user_id = u.id
+  ${SECTOR_JOIN}
+  WHERE 1=1`;
+
+// Transfers move oil between stocks without changing the total, so they write
+// no ledger row — they are history rows of their own. Shaped as `t` so the
+// same date / type / search filters apply.
+const SA_SECTOR_MOVES = `
+  SELECT t.id, ${UTC_ISO('t.created_at')}, t.performed_by, t.type, t.category, t.product_name, t.product_code,
+         t.quantity, t.unit, NULL::numeric AS balance_after, t.notes, 'SA' AS system, NULL AS direction,
+         t.sector, t.value, t.unpriced, t.price_note, t.kind
+  FROM (SELECT 'sector-' || m.id AS id, m.created_at, COALESCE(u.name, 'System') AS performed_by,
+               'sector_' || m.kind AS type, m.kind, p.category, p.name AS product_name, p."productCode" AS product_code,
+               m.quantity, p.unit, m.from_sector, m.to_sector, m.used_for,
+               concat_ws(' — ', 'Ref ' || m.reference, m.notes) AS notes,
+               ${SECTOR_OF_MOVE('m')} AS sector, m.quantity * m.cost_per_unit AS value,
+               m.cost_per_unit IS NULL AS unpriced,
+               ${priceNoteSql('m.cost_per_unit IS NULL', "m.kind = 'receipt'")} AS price_note
+          FROM sector_movements m JOIN products p ON p.id = m.product_id
+          LEFT JOIN users u ON u.id = m.user_id
+         WHERE m.transaction_id IS NULL) t
   WHERE 1=1`;
 
 const SM_TX = `
@@ -76,8 +141,30 @@ const SM_TX = `
   LEFT JOIN products p ON t.product_id = p.id
   WHERE 1=1`;
 
-async function fetchHistory({ system, from, to, type, search, limit }) {
+// ?stock=<key> or ?company=SA|MUSE (PRD Stage 1 §2.5): the fragrance oil
+// movements that touched that stock, or any stock of that company — from it,
+// into it, or given for it (used_for). An oil ledger row with no stock
+// movement is SA's by construction (S2: a sale, a removal, a technician, a
+// stocktake, a return lands in SA), so SA filters include it; MUSE filters
+// stay movement-based, except old MUSE production with no movement, which is
+// MUSE's use of SA's oil and shows under company=MUSE too (V6).
+function stockKeys({ stock, company }) {
+  const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
+  if (stock) {
+    if (!SECTOR_KEYS.includes(stock)) throw bad(`stock is one of ${SECTOR_KEYS.join(', ')}`);
+    return [stock];
+  }
+  if (company) {
+    if (!COMPANIES.includes(company)) throw bad('company is SA or MUSE');
+    return SECTORS.filter((s) => s.company === company).map((s) => s.key);
+  }
+  return null;
+}
+const touches = (m, p) => `(${m}.from_sector = ANY(${p}::text[]) OR ${m}.to_sector = ANY(${p}::text[]) OR ${m}.used_for = ANY(${p}::text[]))`;
+
+async function fetchHistory({ system, from, to, type, search, limit, stock, company }) {
   const lim = cap(limit, 2000, 10000);
+  const keys = stockKeys({ stock, company });
   // sa is read for MUSE and Scented too: the oil they consume is recorded
   // there, and skipping it is what made the MUSE filter show no fragrance.
   const wantSA = !system || system === 'ALL' || system === 'SA'
@@ -95,9 +182,26 @@ async function fetchHistory({ system, from, to, type, search, limit }) {
       p.push(typesVisibleIn(system));
       q += ` AND t.type = ANY($${p.length}::text[])`;
     }
+    if (keys) {
+      p.push(keys);
+      q += ` AND t.category = 'OILS' AND (EXISTS (SELECT 1 FROM sector_movements m WHERE m.transaction_id = t.id AND ${touches('m', `$${p.length}`)})
+             ${keys.includes('SA') ? `OR ${NO_MOVEMENT}` : ''}
+             ${company === 'MUSE' ? `OR (t.type = ANY(${MUSE_USE_TYPES_SQL}) AND ${NO_MOVEMENT})` : ''})`;
+    }
     jobs.push(saPool.query(q + ` ORDER BY t.created_at DESC LIMIT ${lim}`, p).then(r => r.rows));
   }
-  if (wantSM) { const p = []; jobs.push(smPool.query(txFilters(SM_TX, { from, to, type, search }, p) + ` ORDER BY t.created_at DESC LIMIT ${lim}`, p).then(r => r.rows)); }
+  // Transfers between stocks: fragrance oil, shown under All and SA, and under
+  // a stock or company filter that they touch.
+  // ponytail: the MUSE system filter does not list them; the stock / company
+  // filter is the way to a MUSE unit's own transfer list.
+  if (!system || system === 'ALL' || system === 'SA') {
+    const p = [];
+    let q = txFilters(SA_SECTOR_MOVES, { from, to, type, search }, p);
+    if (keys) { p.push(keys); q += ` AND ${touches('t', `$${p.length}`)}`; }
+    jobs.push(saPool.query(q + ` ORDER BY t.created_at DESC LIMIT ${lim}`, p).then(r => r.rows));
+  }
+  // sm's own ledger is finished goods, not fragrance stock: not under a stock filter.
+  if (wantSM && !keys) { const p = []; jobs.push(smPool.query(txFilters(SM_TX, { from, to, type, search }, p) + ` ORDER BY t.created_at DESC LIMIT ${lim}`, p).then(r => r.rows)); }
   let rows = (await Promise.all(jobs)).flat();
   // 'SM' keeps both Scented + MUSE; a composite 'SA · MUSE' satisfies either half.
   if (system && system !== 'ALL' && system !== 'SM') rows = rows.filter(r => systemMatches(r.system, system));
@@ -445,17 +549,27 @@ router.get('/statement/products', requireRole('root', 'admin'), async (req, res)
 // ── Routes ──────────────────────────────────────────────────────────────
 router.get('/history', requireRole('root', 'admin'), async (req, res) => {
   try { res.json(await fetchHistory(req.query)); }
-  catch (e) { console.error('[platform/history]', e.message); res.status(500).json({ error: 'Failed to load history' }); }
+  catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    console.error('[platform/history]', e.message); res.status(500).json({ error: 'Failed to load history' });
+  }
 });
 
 router.get('/history/export', requireRole('root', 'admin'), async (req, res) => {
   try {
     const rows = await fetchHistory({ ...req.query, limit: 10000 });
     sendCsv(res, 'history',
-      ['Date (Sydney)', 'System', 'Performed By', 'Type', 'Category', 'Product', 'Code', 'Quantity', 'Unit', 'Balance After', 'Notes'],
-      ['created_at', 'system', 'performed_by', 'type', 'category', 'product_name', 'product_code', 'quantity', 'unit', 'balance_after', 'notes'],
-      rows, 'created_at');
-  } catch (e) { console.error('[platform/history/export]', e.message); res.status(500).json({ error: 'Failed to export' }); }
+      ['Date (Sydney)', 'System', 'Performed By', 'Type', 'Category', 'Product', 'Code', 'Quantity', 'Unit', 'Stock', 'Value ex GST (AUD)', 'Balance After', 'Notes'],
+      ['created_at', 'system', 'performed_by', 'type', 'category', 'product_name', 'product_code', 'quantity', 'unit', 'sector', 'value_text', 'balance_after', 'notes'],
+      // Value: blank when no stock movement; when one has no cost, say so
+      // rather than leave it blank (owner, 23 Oct): a receipt "No price on the
+      // PO", anything else "Unpriced" (fix round 1, S6 — price_note).
+      rows.map((r) => ({ ...r, value_text: r.price_note || (r.value != null ? Number(r.value).toFixed(2) : '') })),
+      'created_at');
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    console.error('[platform/history/export]', e.message); res.status(500).json({ error: 'Failed to export' });
+  }
 });
 
 router.get('/activity', requireRole('root', 'admin'), async (req, res) => {
