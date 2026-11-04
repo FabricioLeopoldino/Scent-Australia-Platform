@@ -47,7 +47,10 @@ export const ADD_REASONS = [
 // the oil is gone and has to be replaced. A sample is consumption too. The test
 // is not "did somebody mean to use it" but "did the shelf really lose it" — and
 // in a correction the shelf lost nothing, the number did.
-export const NON_DEMAND_REMOVE_REASONS = ['correction'];
+//
+// `receipt_correction` (H4 R4) passes the same test: it takes back oil that a
+// receipt recorded but that never arrived. The shelf never had it.
+export const NON_DEMAND_REMOVE_REASONS = ['correction', 'receipt_correction'];
 
 // Hand-made removals that are real but not a pattern: kept OUT of the daily
 // rate and shown beside it instead. '' is a removal with no reason at all.
@@ -74,6 +77,9 @@ export function isValidReason(type, reason, opts) {
   return reasonsFor(type, opts).some((r) => r.id === reason);
 }
 
+// Reasons a person never picks: the platform writes them (H4 R4).
+export const WRITTEN_BY_THE_PLATFORM = { receipt_correction: 'Receipt corrected' };
+
 export function reasonLabel(type, reason) {
-  return reasonsFor(type).find((r) => r.id === reason)?.label || reason || '';
+  return reasonsFor(type).find((r) => r.id === reason)?.label || WRITTEN_BY_THE_PLATFORM[reason] || reason || '';
 }

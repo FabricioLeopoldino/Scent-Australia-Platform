@@ -38,6 +38,11 @@ const TYPE_LABELS = {
   product_reorder_watch_changed:{ label: 'Reorder Watch',        color: '#60a5fa' },
   // A stock rule refused an attempt (PRD_H2 A12; P6: a receipt outside its PO's company); nothing moved.
   stock_refused:                { label: 'Refused',              color: '#f87171' },
+  // H4 (PRD_H4_PURCHASE_ORDERS.md): accepted by itself (R7), a receipt taken
+  // back (R4), a line closed short instead of cancelled (R5).
+  po_auto_accepted:             { label: 'PO Accepted (automatic)', color: '#f59e0b' },
+  po_receipt_corrected:         { label: 'Receipt Corrected',    color: '#fbbf24' },
+  po_closed_short:              { label: 'PO Closed Short',      color: '#94a3b8' },
 };
 
 const CATEGORY_LABELS = {
@@ -272,8 +277,19 @@ export default function ActivityLog({ user }) {
                       quantityDisplay = { sign: '+', value: qty, color: '#f59e0b' };
                     } else if (log.action === 'po_cancelled') {
                       const qty = d.unit === 'mL' ? `${(d.quantity / 1000).toFixed(2)} L` : `${d.quantity} ${d.unit || 'units'}`;
-                      notesDisplay = `${d.orderNumber} · ${qty} cancelled`;
+                      notesDisplay = `${d.orderNumber} · ${qty} cancelled${d.reason ? ` · ${d.reason}` : ''}`;
                       quantityDisplay = { sign: '−', value: qty, color: '#f87171' };
+                    } else if (log.action === 'po_closed_short') {
+                      notesDisplay = `${d.orderNumber} · closed short at ${displayStock(d.received || 0, d.unit)} of ${displayStock(d.quantity || 0, d.unit)}${d.reason ? ` · ${d.reason}` : ''}`;
+                    } else if (log.action === 'po_receipt_corrected') {
+                      const from = (d.lines || []).map((l) => `${sectorLabel(l.from)} ${displayStock(l.quantity, d.unit)}`).join(', ');
+                      notesDisplay = `${d.orderNumber} · ${displayStock(d.quantity, d.unit)} taken back${from ? ` from ${from}` : ''}`
+                        + ` · ${d.mode === 'close_short' ? 'line closed short' : 'still due'} · ${d.reason}`;
+                      quantityDisplay = { sign: '−', value: displayStock(d.quantity, d.unit), color: '#fbbf24' };
+                    } else if (log.action === 'po_auto_accepted') {
+                      const lines = Array.isArray(d.lines) ? d.lines : [];
+                      notesDisplay = lines.map((l) => `${l.number} ${l.name || l.productCode} ${displayStock(l.quantity, l.unit)}`).join(', ')
+                        + (d.openedBy ? ` · read when ${d.openedBy} opened the page` : '');
                     } else if (log.action === 'po_received') {
                       const rcv = d.unit === 'mL' ? `${(d.quantityReceived / 1000).toFixed(2)} L` : `${d.quantityReceived} ${d.unit || 'units'}`;
                       const tot = d.unit === 'mL' ? `${(d.totalQuantity / 1000).toFixed(2)} L` : `${d.totalQuantity} ${d.unit || 'units'}`;
@@ -285,14 +301,18 @@ export default function ActivityLog({ user }) {
                       // codes — which is unreadable for the person whose history
                       // this is. Names are stored from 24 September; older rows
                       // only have codes, so fall back rather than show nothing.
+                      // Since H4 a line carries quantity + unit (a spare part is
+                      // not in mL); older rows carry ml.
                       const lines = Array.isArray(d.lines) ? d.lines : [];
-                      const total = lines.reduce((n, l) => n + (Number(l.ml) || 0), 0);
-                      const what = lines
-                        .map((l) => `${l.name || l.productCode} ${(l.ml / 1000).toLocaleString()} L`)
-                        .join(', ');
+                      const amount = (l) => (l.ml != null ? displayStock(l.ml, 'mL') : displayStock(l.quantity, l.unit));
+                      const what = lines.map((l) => `${l.name || l.productCode} ${amount(l)}`).join(', ');
                       notesDisplay = `${d.supplier || 'no supplier'} · ${what || 'no lines'}`
-                        + (d.skippedUnmatched ? ` · ${d.skippedUnmatched} line(s) not recognised` : '');
-                      quantityDisplay = { sign: '+', value: `${(total / 1000).toLocaleString()} L`, color: '#f59e0b' };
+                        + (d.skippedUnmatched ? ` · ${d.skippedUnmatched} line(s) not recognised` : '')
+                        + (d.held?.length ? ` · held back: ${d.held.map((h) => h.name || h.sku).join(', ')}` : '');
+                      if (lines.every((l) => l.ml != null || l.unit === 'mL')) {
+                        const total = lines.reduce((n, l) => n + (Number(l.ml ?? l.quantity) || 0), 0);
+                        quantityDisplay = { sign: '+', value: displayStock(total, 'mL'), color: '#f59e0b' };
+                      }
                     } else if (log.action === 'shopify_po_quantity_synced') {
                       const from = `${(Number(d.from) / 1000).toLocaleString()} L`;
                       const to = `${(Number(d.to) / 1000).toLocaleString()} L`;
@@ -346,6 +366,8 @@ export default function ActivityLog({ user }) {
                       const what = d.type === 'transfer' ? 'Transfer out of' : d.type === 'add' ? 'Add to' : 'Remove from';
                       notesDisplay = d.type === 'receipt'
                         ? `Receive ${d.reference} into ${sectorLabel(d.stock)}: ${q(d.quantity)} — the PO is for ${d.destination} · nothing moved`
+                        : d.type === 'receipt_correction'
+                        ? `Correct ${d.reference}: take ${q(d.quantity)} out of ${sectorLabel(d.stock)}, it held ${q(d.held)} · nothing moved`
                         : `${what} ${sectorLabel(d.stock)}: ${q(d.quantity)}, it held ${q(d.held)}`
                           + `${d.reason ? ` · ${reasonLabel(d.type, d.reason)}` : ''} · nothing moved`;
                     } else if (log.action === 'formula_ready_received') {

@@ -770,6 +770,14 @@ export default function ReplenishmentDashboard({ user }) {
 
   useEffect(() => {
     fetchData();
+    // An order raised in Shopify is accepted by itself when this page reads it
+    // (H4 R7), so it is on order here without anybody opening Purchase Orders.
+    // In parallel, so the page is not held up by Shopify; reloaded only if a
+    // line was accepted.
+    fetch('/api/purchase-orders/sync', { method: 'POST' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => { if (s?.autoAccepted > 0) fetchData(); })
+      .catch(() => {});
     const saved = localStorage.getItem('replenishment_imported_by');
     if (saved) setImportedBy(saved);
   }, []);

@@ -1,7 +1,6 @@
-import { Router, Route, Switch, Link, useLocation } from 'wouter';
+import { Router, Route, Switch, Link, Redirect, useLocation } from 'wouter';
 import { ToastProvider } from './components/Toast';
 import ProductManagement from './pages/ProductManagement';
-import ShopifyPurchaseOrders from './pages/ShopifyPurchaseOrders';
 import LibraryTransfers from './pages/LibraryTransfers';
 import { ShellActions } from './SAModule';
 
@@ -38,10 +37,7 @@ function LibraryContent({ user, onSwitchModule, onLogout }) {
 
           <ul className="nav-links" style={{ flex: 1, justifyContent: 'center' }}>
             <li><Link href="/" className={isActive('/') ? 'nav-active' : ''}>All stock</Link></li>
-            {/* The Shopify PO read is closed to technicians (server and SA menu alike). */}
-            {user.role !== 'technician' && (
-              <li><Link href="/purchase-orders" className={isActive('/purchase-orders') ? 'nav-active' : ''}>Purchase orders</Link></li>
-            )}
+            {/* Purchase orders are their own tile since H4. */}
             <li><Link href="/transfers" className={isActive('/transfers') ? 'nav-active' : ''}>Transfers</Link></li>
           </ul>
 
@@ -53,7 +49,8 @@ function LibraryContent({ user, onSwitchModule, onLogout }) {
       <div style={{ padding: '24px 2rem', position: 'relative' }}>
         <Switch>
           <Route path="/"><ProductManagement key="library" user={user} libraryMode /></Route>
-          <Route path="/purchase-orders">{user.role !== 'technician' ? <ShopifyPurchaseOrders user={user} lines="fragrance" /> : null}</Route>
+          {/* The old address: "~" leaves this menu's /library base. */}
+          <Route path="/purchase-orders"><Redirect to="~/purchase-orders" /></Route>
           <Route path="/transfers"><LibraryTransfers user={user} /></Route>
         </Switch>
       </div>

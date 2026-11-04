@@ -682,6 +682,10 @@ async function runH4() {
     r.status === 200 && r.json?.status === 'received' && near(r.json?.received, 90 * L), JSON.stringify(r.json));
   row = await dpRow(H);
   record('H4 case 4: nothing on order', near(row?.incomingStock, 0, 0.06), `incoming=${row?.incomingStock}`);
+  // The oil never arrived, so the shelf lost nothing: taking it back is not
+  // consumption (shared/stock-reasons.js), or Demand Planning would buy for it.
+  const dH = await demandL(H);
+  record('H4: a receipt correction is not demand', dH.rows.length === 0 && dH.total === 0, JSON.stringify(dH.rows));
   r = await receive(s1, { quantityReceived: 1 * L });
   record('H4: a closed-short line receives nothing more', r.status === 400 && /closed short/.test(r.json?.error || ''), r.json?.error);
   r = await correct(s1, { quantity: 91 * L, reason: 'x', mode: 'still_due' });

@@ -4,7 +4,6 @@ import Dashboard from './pages/Dashboard';
 import SkuMapping from './pages/SkuMapping';
 import TransactionHistory from './pages/TransactionHistory';
 import ProductManagement from './pages/ProductManagement';
-import ShopifyPurchaseOrders from './pages/ShopifyPurchaseOrders';
 import ProductReturns from './pages/ProductReturns';
 import BOMViewer from './pages/BOMViewer';
 import DiffuserMachineBOM from './pages/DiffuserMachineBOM';
@@ -65,11 +64,7 @@ function SAContent({ user, onSwitchModule, onLogout }) {
                 Library itself — every stock — is its own area, from its own tile. */}
             <li><Link href="/fragrances" className={isActive('/fragrances') ? 'nav-active' : ''}>SA Fragrances</Link></li>
             <li><Link href="/returns" className={isActive('/returns') ? 'nav-active' : ''}>Returns</Link></li>
-            {/* Delivery 1 of the Shopify PO integration: read-only, for checking
-                against the store before anything is allowed to act on it. */}
-            {user.role !== 'technician' && (
-              <li><Link href="/shopify-po" className={isActive('/shopify-po') ? 'nav-active' : ''}>Shopify POs</Link></li>
-            )}
+            {/* Shopify POs moved to the Purchase Orders tile (H4). */}
             {user.role !== 'technician' && (<>
               {user.role !== 'user' && (
                 <li><Link href="/replenishment" className={isActive('/replenishment') ? 'nav-active' : ''}>Demand Planning</Link></li>
@@ -117,9 +112,9 @@ function SAContent({ user, onSwitchModule, onLogout }) {
           {/* The page's old address (it was "Fragrance Library" until Stage 1):
               a bookmark lands on SA Fragrances, not on a blank page. */}
           <Route path="/fragrance-library"><Redirect to="/fragrances" /></Route>
-          {/* Machines, spare parts and raw materials only: the fragrance lines
-              are received and split in the Fragrance Library (Stage 1 §2.3). */}
-          <Route path="/shopify-po"><ShopifyPurchaseOrders user={user} lines="other" /></Route>
+          {/* Every purchase order is in its own area since H4: an old bookmark
+              lands there. "~" leaves this menu's /sa base. */}
+          <Route path="/shopify-po"><Redirect to="~/purchase-orders" /></Route>
           <Route path="/returns"><ProductReturns user={user} /></Route>
           {/* The Fragrance Map was removed (owner, 25 Oct 2026: unused and heavy).
               It only drew the bin locations every oil already carries. Old links

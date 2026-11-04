@@ -23,7 +23,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import pkg from 'pg';
-import { NON_DEMAND_REMOVE_REASONS, UNPATTERNED_REMOVE_REASONS, REMOVE_REASONS } from '../shared/stock-reasons.js';
+import { NON_DEMAND_REMOVE_REASONS, UNPATTERNED_REMOVE_REASONS, REMOVE_REASONS, WRITTEN_BY_THE_PLATFORM } from '../shared/stock-reasons.js';
 const { Pool } = pkg;
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -49,8 +49,13 @@ try {
     check(!NON_DEMAND_REMOVE_REASONS.includes(r),
       `${r} still counts as demand — the oil is genuinely gone`);
   }
-  check(NON_DEMAND_REMOVE_REASONS.every((r) => REMOVE_REASONS.some((x) => x.id === r)),
-    'every excluded reason is a real reason the form can produce',
+  // A typo here would exclude nothing and pass silently. Since H4 one reason
+  // is written by the platform itself (a receipt correction), so it must be
+  // one the server really writes.
+  const poServer = src('server/sa/purchase-orders.js');
+  check(NON_DEMAND_REMOVE_REASONS.every((r) => REMOVE_REASONS.some((x) => x.id === r)
+      || (r in WRITTEN_BY_THE_PLATFORM && poServer.includes(`'${r}'`))),
+    'every excluded reason is one the form can produce or one the platform writes',
     NON_DEMAND_REMOVE_REASONS.join(', '));
 
   console.log('\n2. Every demand query carries it — none can be added without');

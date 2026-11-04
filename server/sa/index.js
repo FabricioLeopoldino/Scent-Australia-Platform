@@ -1457,7 +1457,9 @@ router.get('/audit', async (req, res) => {
     // exist as a type — so filtering the Activity Log by "Tech Batch (Scanner)"
     // silently returned 0 rows while real entries sat in audit_log. Restores
     // parity with the live SA system; keep this list in sync with it.
-    const AUDIT_LOG_TYPES = ['product_created', 'product_deleted', 'sku_published', 'sku_added', 'po_created', 'po_cancelled', 'po_received', 'formula_created', 'formula_updated', 'formula_deleted', 'formula_ready_received', 'formula_ready_adjusted', 'product_deactivated', 'product_activated', 'scented_group_created', 'scented_group_deleted', 'tech_transfer', 'tech_remove', 'tech_return', 'tech_batch', 'shopify_po_accepted', 'shopify_po_quantity_synced', 'product_reorder_watch_changed', 'stock_refused'];
+    const AUDIT_LOG_TYPES = ['product_created', 'product_deleted', 'sku_published', 'sku_added', 'po_created', 'po_cancelled', 'po_received', 'formula_created', 'formula_updated', 'formula_deleted', 'formula_ready_received', 'formula_ready_adjusted', 'product_deactivated', 'product_activated', 'scented_group_created', 'scented_group_deleted', 'tech_transfer', 'tech_remove', 'tech_return', 'tech_batch', 'shopify_po_accepted', 'shopify_po_quantity_synced', 'product_reorder_watch_changed', 'stock_refused',
+      // H4 (PRD_H4_PURCHASE_ORDERS.md R4, R5, R7).
+      'po_auto_accepted', 'po_receipt_corrected', 'po_closed_short'];
     const isAuditLogType = AUDIT_LOG_TYPES.includes(type);
 
     // ── Stock transactions ─────────────────────────────────────────────────
