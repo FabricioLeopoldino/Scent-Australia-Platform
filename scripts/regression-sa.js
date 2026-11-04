@@ -163,16 +163,14 @@ async function testPurchaseOrder() {
   const before = parseFloat(
     (await db.query(`SELECT "currentStock" FROM products WHERE id = 'OIL_1'`)).rows[0].currentStock
   );
-  const create = await api('POST', '/api/sa/products/OIL_1/incoming', {
-    orderNumber: 'TESTREG-PO-1',
-    quantity: 100,
-    supplier: 'Firmenich',
-    estimatedDeliveryDate: '2026-08-01',
-    notes: '[regression] po',
-  });
-  record('po: create', create.status === 200 || create.status === 201);
+  // No route raises an order any more: every order starts in Shopify (H4 D3).
+  const create = await api('POST', '/api/sa/products/OIL_1/incoming', { orderNumber: 'TESTREG-PO-1', quantity: 100 });
+  record('po: a manual order is refused (410, raise it in Shopify)', create.status === 410);
 
-  const poRow = await db.query(`SELECT id FROM purchase_orders WHERE order_number = 'TESTREG-PO-1' ORDER BY id DESC LIMIT 1`);
+  // The row an accepted Shopify line stores, so the receipt itself is still tested.
+  const poRow = await db.query(
+    `INSERT INTO purchase_orders (product_id, order_number, quantity, supplier, notes, added_by)
+     VALUES ('OIL_1', 'TESTREG-PO-1', 100, 'Firmenich', '[regression] po', 'regression') RETURNING id`);
   const poId = poRow.rows[0]?.id;
   const recv = await api('POST', `/api/sa/purchase-orders/${poId}/receive`, { quantityReceived: 100, notes: '[regression] receive' });
   const after = parseFloat(

@@ -132,12 +132,12 @@ const adjustIn = (who, pid, body) => api(who, 'POST', '/api/sa/sectors/adjust', 
 const refusalsOf = (pid) => db.query(`SELECT details FROM audit_log WHERE action = 'stock_refused' AND entity_id = $1 ORDER BY id`, [pid])
   .then((r) => r.rows.map((x) => (typeof x.details === 'string' ? JSON.parse(x.details) : x.details)));
 const register = (pid, company, extra = {}) => api('root', 'POST', '/api/sa/fragrance-registrations', { productId: pid, company, ...extra });
+// The row an accepted line stores. No route raises an order any more (H4 D3),
+// and accepting needs Shopify, which is blanked here.
 async function addPo(pid, orderNumber, litres, cost = null) {
-  await api('root', 'POST', `/api/sa/products/${pid}/incoming`, { orderNumber, quantity: litres * L, notes: '[regression]' });
-  const po = (await db.query(`SELECT id FROM purchase_orders WHERE product_id = $1 AND order_number = $2`, [pid, orderNumber])).rows[0];
-  // What an accepted Shopify line stores (accept itself needs Shopify, blanked here).
-  if (cost != null) await db.query(`UPDATE purchase_orders SET cost_per_unit = $1 WHERE id = $2`, [cost, po.id]);
-  return po.id;
+  return (await db.query(
+    `INSERT INTO purchase_orders (product_id, order_number, quantity, notes, added_by, cost_per_unit)
+     VALUES ($1, $2, $3, '[regression]', 'regression', $4) RETURNING id`, [pid, orderNumber, litres * L, cost])).rows[0].id;
 }
 const receive = (poId, body) => api('root', 'POST', `/api/sa/purchase-orders/${poId}/receive`, { notes: '[regression]', ...body });
 
@@ -641,9 +641,107 @@ async function run() {
   r = await api('user', 'POST', `/api/sa/shopify/publish/${A}`, { costPerLitre: 42.4 });
   record('P7: a user cannot publish', r.status === 403, `status=${r.status}`);
 
-  // ── Shopify POs: the filter is validated before Shopify is asked.
-  r = await api('root', 'GET', '/api/sa/shopify-purchase-orders?lines=bogus');
-  record('Shopify POs: lines is fragrance or other', r.status === 400);
+  // ── Purchase Orders (H4): the list still shows what the platform holds when
+  // Shopify cannot be read, and nothing is raised outside Shopify (D3).
+  r = await api('root', 'GET', '/api/sa/purchase-orders/overview');
+  record('H4: the overview answers with Shopify unread, and lists the platform\'s own orders',
+    r.status === 200 && r.json?.ok === false && (r.json.orders || []).some((o) => o.number === 'TESTREG-SEC-PO2'), `status=${r.status} ok=${r.json?.ok}`);
+  r = await api('root', 'POST', `/api/sa/products/${A}/incoming`, { orderNumber: 'TESTREG-SEC-MANUAL', quantity: L });
+  record('H4 D3: a manual order is refused — raise it in Shopify', r.status === 410 && /raised in Shopify/.test(r.json?.error || ''), `status=${r.status}`);
+  r = await api('technician', 'GET', '/api/sa/purchase-orders/overview');
+  record('H4: technicians do not see purchase orders', r.status === 403, `status=${r.status}`);
+  await runH4();
+}
+
+// ── H4 (PRD_H4_PURCHASE_ORDERS.md §4): correct a receipt (R4), cancel a line (R5).
+const correct = (poId, body) => api('root', 'POST', `/api/sa/purchase-orders/${poId}/correct`, body);
+async function runH4() {
+  const H = await createOil('H');
+  await register(H, 'MUSE', { usedBy: ['MUSE_LIBRARY'] });
+
+  // Cases 3 and 4: an SA line, 100 L received, 10 L that never came.
+  const s1 = await addPo(H, 'TESTREG-SEC-H4-SA', 100, 0.05);
+  await db.query(`UPDATE purchase_orders SET destination_stock = 'SA' WHERE id = $1`, [s1]);
+  let r = await receive(s1, { quantityReceived: 100 * L });
+  const rcptTx = (await db.query(`SELECT purchase_order_id FROM transactions WHERE id = $1`, [await lastTx(H)])).rows[0];
+  record('H4 R2: a receipt names its PO line', r.status === 200 && rcptTx?.purchase_order_id === s1, JSON.stringify(rcptTx));
+  r = await correct(s1, { quantity: 5 * L, reason: 'short delivery', mode: 'still_due' });
+  record('H4 case 3: correct 5 L, still due → part received, 95 L', r.status === 200 && r.json?.status === 'partial' && near(r.json?.received, 95 * L), JSON.stringify(r.json));
+  await check('H4 case 3: SA −5 L', H, { SA: 95 });
+  const tx = (await db.query(`SELECT type, reason, purchase_order_id, notes FROM transactions WHERE id = $1`, [await lastTx(H)])).rows[0];
+  record('H4 case 3: one ledger row — a remove for receipt_correction, naming the line and the reason',
+    tx?.type === 'remove' && tx?.reason === 'receipt_correction' && tx?.purchase_order_id === s1
+    && /Receipt corrected — TESTREG-SEC-H4-SA — short delivery/.test(tx?.notes || ''), JSON.stringify(tx));
+  const mv = await movementsOfTx(await lastTx(H));
+  record('H4 case 3: the reversing movement is off SA, back to the supplier',
+    mv.length === 1 && mv[0].from_sector === 'SA' && mv[0].to_sector === 'SUPPLIER' && mv[0].kind === 'reversal', JSON.stringify(mv));
+  let row = await dpRow(H);
+  record('H4 case 3: Demand Planning sees the 5 L on order again', near(row?.incomingStock, 5, 0.06), `incoming=${row?.incomingStock}`);
+  r = await correct(s1, { quantity: 5 * L, reason: 'supplier will not send it', mode: 'close_short' });
+  record('H4 case 4: 5 L more, close short → received (90 of 100), closed short',
+    r.status === 200 && r.json?.status === 'received' && near(r.json?.received, 90 * L), JSON.stringify(r.json));
+  row = await dpRow(H);
+  record('H4 case 4: nothing on order', near(row?.incomingStock, 0, 0.06), `incoming=${row?.incomingStock}`);
+  r = await receive(s1, { quantityReceived: 1 * L });
+  record('H4: a closed-short line receives nothing more', r.status === 400 && /closed short/.test(r.json?.error || ''), r.json?.error);
+  r = await correct(s1, { quantity: 91 * L, reason: 'x', mode: 'still_due' });
+  record('H4: a correction cannot take back more than was received', r.status === 400, r.json?.error);
+  r = await correct(s1, { quantity: 1 * L, reason: ' ', mode: 'still_due' });
+  record('H4: a correction needs a reason', r.status === 400, r.json?.error);
+  r = await api('user', 'POST', `/api/sa/purchase-orders/${s1}/correct`, { quantity: L, reason: 'x', mode: 'still_due' });
+  record('H4: a user cannot correct a receipt', r.status === 403, `status=${r.status}`);
+
+  // Case 5: a MUSE receipt the stock has since used most of.
+  const m1 = await addPo(H, 'TESTREG-SEC-H4-MUSE', 10, 0.05);
+  await db.query(`UPDATE purchase_orders SET destination_stock = 'MUSE' WHERE id = $1`, [m1]);
+  await receive(m1, { quantityReceived: 10 * L, lines: [{ to: 'MUSE_LIBRARY', quantity: 10 * L }] });
+  await adjustIn('root', H, { stock: 'MUSE_LIBRARY', type: 'remove', quantity: 8 * L, reason: 'production', reference: 'TESTREG-SEC-H4-ORDER' });
+  await check('H4 case 5: The Library received 10 L and used 8 L', H, { SA: 90, MUSE_LIBRARY: 2 });
+  r = await correct(m1, { quantity: 5 * L, reason: 'short', mode: 'still_due' });
+  record('H4 case 5: refused — The Library holds 2 L', r.status === 400 && /holds 2 L/.test(r.json?.error || ''), r.json?.error);
+  const refused = (await refusalsOf(H)).find((x) => x.type === 'receipt_correction');
+  record('H4 case 5: the refusal is recorded in Activity', refused?.stock === 'MUSE_LIBRARY' && refused?.reference === 'TESTREG-SEC-H4-MUSE', JSON.stringify(refused));
+  r = await correct(m1, { quantity: 2 * L, reason: 'short', mode: 'still_due' });
+  record('H4 case 5: 2 L can come back, out of The Library', r.status === 200 && r.json?.status === 'partial', JSON.stringify(r.json));
+  await check('H4 case 5: The Library at zero, SA untouched', H, { SA: 90, MUSE_LIBRARY: 0 });
+
+  // A receipt split between two stocks: the correction says how much from each.
+  const m2 = await addPo(H, 'TESTREG-SEC-H4-SPLIT', 10, null);
+  await db.query(`UPDATE purchase_orders SET destination_stock = 'MUSE' WHERE id = $1`, [m2]);
+  await receive(m2, { quantityReceived: 10 * L, lines: [{ to: 'MUSE_LIBRARY', quantity: 6 * L }, { to: 'MUSE', quantity: 4 * L }] });
+  r = await correct(m2, { quantity: 3 * L, reason: 'short', mode: 'still_due' });
+  record('H4: a receipt split in two stocks asks how much comes off each',
+    r.status === 400 && r.json?.code === 'NEEDS_LINES' && near(r.json?.net?.MUSE_LIBRARY, 6 * L) && near(r.json?.net?.MUSE, 4 * L), JSON.stringify(r.json));
+  r = await correct(m2, { quantity: 3 * L, reason: 'short', mode: 'still_due', lines: [{ from: 'MUSE_LIBRARY', quantity: 1 * L }, { from: 'MUSE', quantity: 2 * L }] });
+  record('H4: … and takes it from each, as told', r.status === 200, JSON.stringify(r.json));
+  await check('H4: the split correction', H, { SA: 90, MUSE_LIBRARY: 5, MUSE: 2 });
+  const hist = (await api('root', 'GET', `/api/sa/purchase-orders/history?ids=${m2}`)).json?.[m2] || [];
+  record('H4: the line history lists the receipt and the correction, with their stocks',
+    hist.length === 2 && hist[0].kind === 'receipt' && hist[0].lines.length === 2 && hist[1].kind === 'correction' && near(hist[1].quantity, 3 * L),
+    JSON.stringify(hist));
+
+  // R5: a cancelled line keeps its row and its reason; one with receipts closes short.
+  const c1 = await addPo(H, 'TESTREG-SEC-H4-CANCEL', 50, null);
+  r = await api('root', 'POST', `/api/sa/purchase-orders/${c1}/cancel`, { reason: '' });
+  record('H4 R5: cancelling needs a reason', r.status === 400, `status=${r.status}`);
+  r = await api('root', 'POST', `/api/sa/purchase-orders/${c1}/cancel`, { reason: 'ordered twice' });
+  const c1row = (await db.query(`SELECT status, cancel_reason, cancelled_by FROM purchase_orders WHERE id = $1`, [c1])).rows[0];
+  record('H4 R5: nothing received → cancelled, the row kept with its reason and who',
+    r.status === 200 && r.json?.status === 'cancelled' && c1row?.status === 'cancelled' && c1row?.cancel_reason === 'ordered twice'
+    && c1row?.cancelled_by === '__regression_sec', JSON.stringify(c1row));
+  r = await receive(c1, { quantityReceived: 1 * L });
+  record('H4 R5: a cancelled line receives nothing', r.status === 400 && /cancelled/.test(r.json?.error || ''), r.json?.error);
+  r = await api('root', 'POST', `/api/sa/purchase-orders/${m2}/cancel`, { reason: 'the rest is not coming' });
+  record('H4 R5: a line with receipts is closed short instead', r.status === 200 && r.json?.status === 'closed_short', JSON.stringify(r.json));
+  r = await api('root', 'DELETE', `/api/sa/purchase-orders/${c1}`);
+  record('H4 R5: nothing deletes a line any more (410)',
+    r.status === 410 && (await db.query(`SELECT 1 FROM purchase_orders WHERE id = $1`, [c1])).rowCount === 1, `status=${r.status}`);
+
+  const orders = (await api('root', 'GET', '/api/sa/purchase-orders/overview')).json?.orders || [];
+  const st = (n) => orders.find((o) => o.number === n)?.status;
+  record('H4: the list — closed short and cancelled close, a part-received line is "part"',
+    st('TESTREG-SEC-H4-SA') === 'closed' && st('TESTREG-SEC-H4-SPLIT') === 'closed' && st('TESTREG-SEC-H4-CANCEL') === 'cancelled'
+    && st('TESTREG-SEC-H4-MUSE') === 'part', ['SA', 'SPLIT', 'CANCEL', 'MUSE'].map((k) => `${k}=${st(`TESTREG-SEC-H4-${k}`)}`).join(' '));
 }
 
 async function main() {

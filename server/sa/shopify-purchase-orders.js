@@ -134,13 +134,32 @@ function resolveLine(line, productsBySku) {
   const product = productsBySku.get(sku);
   if (!product) return { sku, reason: `no active product carries the code ${sku}` };
 
-  const prefix = Object.keys(VARIANT_ML).find((p) => sku.startsWith(`${p}_`));
-  if (!prefix) return { sku, product, reason: `${sku} is not a known bottle size` };
-
   const qty = Number(line.totalQuantity);
-  if (!Number.isFinite(qty) || qty <= 0) return { sku, product, reason: `quantity reads "${line.totalQuantity}"` };
+  const prefix = Object.keys(VARIANT_ML).find((p) => sku.startsWith(`${p}_`));
+  if (prefix || product.category === 'OILS') {
+    if (!prefix) return { sku, product, reason: `${sku} is not a known bottle size` };
+    if (!Number.isFinite(qty) || qty <= 0) return { sku, product, reason: `quantity reads "${line.totalQuantity}"` };
+    return { sku, product, qty: qty * VARIANT_ML[prefix], perUnit: VARIANT_ML[prefix], bottles: qty, bottleMl: VARIANT_ML[prefix] };
+  }
 
-  return { sku, product, ml: qty * VARIANT_ML[prefix], bottles: qty, bottleMl: VARIANT_ML[prefix] };
+  // Machines, spare parts, raw materials (H4 D1): by the rule a sale of the
+  // same code uses, so one SKU means one quantity everywhere. A raw material
+  // kept in mL or g has no safe default — 400 of a "20L PAIL" could be 400
+  // litres or 400 pails — so it waits for its multiplier rather than guessing.
+  if (!Number.isFinite(qty) || qty <= 0) return { sku, product, reason: `quantity reads "${line.totalQuantity}"` };
+  const per = unitsPerShopifyUnit(product, sku);
+  if (!per) return { sku, product, reason: `how much one ${sku} is, in ${product.unit}, is not set: add its multiplier on the product` };
+  return { sku, product, qty: qty * per, perUnit: per };
+}
+
+// The sale's rule (server/sa/index.js, Shopify fulfilment): a machine or a
+// scented product is one each; a product counted in units takes the SKU's
+// multiplier, else its units per box, else 1; anything else only its multiplier.
+function unitsPerShopifyUnit(product, sku) {
+  if (['SCENT_MACHINES', 'MACHINES_SPARES', 'SA_SCENTED_PRODUCTS'].includes(product.category)) return 1;
+  const m = Number((product.skuMultipliers || {})[sku]);
+  if (product.unit === 'units') return m > 0 ? Math.trunc(m) : (parseInt(product.unitPerBox, 10) || 1);
+  return m > 0 ? m : null;
 }
 
 /**
@@ -152,10 +171,11 @@ function resolveLine(line, productsBySku) {
 async function readIncomingPurchaseOrders(products) {
   // Keyed on the SKU VALUE, the same way a sale is matched, so the two can never
   // disagree about what a code means.
+  // A multiplier's key is a code too, as for a sale.
   const bySku = new Map();
   for (const p of products) {
     if (p.status === 'inactive') continue;
-    for (const value of Object.values(p.shopifySkus || {})) {
+    for (const value of [...Object.values(p.shopifySkus || {}), ...Object.keys(p.skuMultipliers || {})]) {
       if (value) bySku.set(String(value).trim(), p);
     }
   }
@@ -187,7 +207,12 @@ async function readIncomingPurchaseOrders(products) {
         productName: r.product?.name || null,
         currentStock: r.product ? Number(r.product.currentStock) : null,
         unit: r.product?.unit || null,
-        incomingMl: r.ml ?? null,
+        category: r.product?.category || null,
+        isOil: r.bottleMl != null,
+        // In the product's own unit: mL for an oil, units (or its multiplier's unit) otherwise.
+        incomingQty: r.qty ?? null,
+        perUnit: r.perUnit ?? null,
+        incomingMl: r.bottleMl != null ? r.qty : null,
         bottles: r.bottles ?? null,
         bottleMl: r.bottleMl ?? null,
       };
@@ -248,10 +273,11 @@ async function readIncomingPurchaseOrders(products) {
 }
 
 /**
- * What a purchase-order line costs per mL, ex GST: Shopify's "cost per item"
- * is per bottle. Shopify sends 0, not empty, for a line nobody priced — that
+ * What a purchase-order line costs per product unit, ex GST — per mL for an oil
+ * (Shopify's "cost per item" is per bottle), per unit otherwise: pass the
+ * line's `perUnit`. Shopify sends 0, not empty, for a line nobody priced — that
  * is "No price on the PO" (null), never $0 (PRD_STAGE_1_FRAGRANCE_LIBRARY.md S8).
  */
-const costPerMl = (unitCost, bottleMl) => (unitCost > 0 && bottleMl > 0 ? unitCost / bottleMl : null);
+const costPerMl = (unitCost, perUnit) => (unitCost > 0 && perUnit > 0 ? unitCost / perUnit : null);
 
-export { readIncomingPurchaseOrders, costPerMl, VARIANT_ML, API_VERSION, SINCE };
+export { readIncomingPurchaseOrders, resolveLine, costPerMl, VARIANT_ML, API_VERSION, SINCE };

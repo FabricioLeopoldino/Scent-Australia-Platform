@@ -49,13 +49,14 @@ try {
   // Every Shopify call in this file must be a GraphQL read. A mutation would be
   // a write to someone else's system, which this integration never does.
   check(!/mutation/i.test(reader), 'and sends no Shopify mutation');
-  const server = src('server/sa/index.js');
-  const route = server.slice(server.indexOf("'/shopify-purchase-orders'"));
-  check(/^[^\n]*router\.get/.test(server.slice(server.lastIndexOf('router.', server.indexOf("'/shopify-purchase-orders'")))),
+  // Since H4 the read lives in the Purchase Orders module (PRD_H4_PURCHASE_ORDERS.md).
+  const server = src('server/sa/purchase-orders.js');
+  const route = server.slice(server.indexOf("'/purchase-orders/overview'"));
+  check(/^[^\n]*router\.get/.test(server.slice(server.lastIndexOf('router.', server.indexOf("'/purchase-orders/overview'")))),
     'the endpoint is a GET');
   // To the end of the handler, not a fixed number of characters: a window broke
   // the moment the handler grew, failing a check whose subject had not changed.
-  check(/ok: false/.test(route.slice(0, route.indexOf('\nrouter.'))),
+  check(/ok: !!read/.test(route.slice(0, route.indexOf('\nrouter.'))),
     'and fails closed — it reports that it could not read, never a stale list');
 
   console.log('\n2. The guards are in the code, not in someone’s memory');

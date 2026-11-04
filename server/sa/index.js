@@ -13,7 +13,7 @@ import express from 'express';
 import { calcSmartDemand } from '../../shared/demand-calculator.js';
 import { bomVariantFor } from '../../shared/refurb-machines.js';
 import { NON_DEMAND_REMOVE_REASONS, UNPATTERNED_REMOVE_REASONS } from '../../shared/stock-reasons.js';
-import { readIncomingPurchaseOrders, costPerMl, VARIANT_ML } from './shopify-purchase-orders.js';
+import { router as purchaseOrdersRouter, migratePurchaseOrders } from './purchase-orders.js';
 import { refreshOrderActors, TECH_REFILL_DAYS } from './shopify-order-actors.js';
 import { readShopifyImage } from './shopify-image.js';
 import { publishOil, addMissingOilSizes } from './shopify-products.js';
@@ -21,7 +21,7 @@ import { OIL_PATTERN } from '../../shared/shopify-product-pattern.js';
 import { shelfOutlook, orderToCover, SAFETY_STOCK_FACTOR } from '../../shared/shelf-outlook.js';
 import { router as sectorsRouter, migrateSectors, heldByProduct, sectorBalances, recordMovement, balancesAfterCommit,
   registrationsByProduct, registerOil, requireRegistered, errorBody, qtyText, recordRefusal, adjustStock } from './sectors.js';
-import { SECTOR_KEYS, COMPANIES, companyOf, sectorLabel, destinationByStock } from '../../shared/sectors.js';
+import { SECTOR_KEYS, COMPANIES, sectorLabel, destinationByStock } from '../../shared/sectors.js';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import multer from 'multer';
@@ -58,6 +58,9 @@ const __dirname = dirname(__filename);
 const router = express.Router();
 // Fragrance Library sectors (PRD_LIBRARY_SECTORS.md) — /sectors/* routes.
 router.use(sectorsRouter);
+// Purchase Orders (H4, PRD_H4_PURCHASE_ORDERS.md) — the list, accepting,
+// correcting and cancelling; receiving stays below.
+router.use(purchaseOrdersRouter);
 
 // ========================================================================
 // IN-MEMORY WEBHOOK LOCK
@@ -3154,66 +3157,8 @@ export async function saWebhookHandler(req, res) {
   }
 }
 
-// ========================================================================
-// PURCHASE ORDERS - Add Incoming Order
-// ========================================================================
-router.post('/products/:id/incoming', async (req, res) => {
-  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can create purchase orders' });
-  try {
-    const { id } = req.params;
-    const { orderNumber, quantity, supplier, notes, addedBy, userId, estimatedDeliveryDate } = req.body;
-
-    if (!orderNumber || !quantity) {
-      return res.status(400).json({ error: 'Order number and quantity are required' });
-    }
-
-    const productResult = await pool.query('SELECT * FROM products WHERE id = $1', [id]);
-    if (productResult.rows.length === 0) return res.status(404).json({ error: 'Product not found' });
-    const product = productResult.rows[0];
-
-    await pool.query(
-      `INSERT INTO purchase_orders (product_id, order_number, quantity, supplier, notes, added_by, created_by, estimated_delivery_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [id, orderNumber, parseFloat(quantity), supplier || product.supplier || null, notes || null, addedBy || 'manual', userId || null, estimatedDeliveryDate || null]
-    );
-
-    const posResult = await pool.query(
-      `SELECT id, order_number, quantity, quantity_received, supplier, status, notes, added_at, added_by, estimated_delivery_date, destination_stock
-       FROM purchase_orders WHERE product_id = $1 AND status IN ('pending','partial') ORDER BY added_at ASC`,
-      [id]
-    );
-    const incomingOrders = posResult.rows.map(po => ({
-      id: po.id, orderNumber: po.order_number, quantity: parseFloat(po.quantity),
-      quantityReceived: parseFloat(po.quantity_received) || 0,
-      supplier: po.supplier || '', status: po.status, notes: po.notes || '',
-      addedAt: po.added_at, addedBy: po.added_by || '',
-      estimatedDeliveryDate: po.estimated_delivery_date || null,
-      stock: po.destination_stock || null,
-    }));
-
-    // Audit log — po_created
-    try {
-      await pool.query(
-        `INSERT INTO audit_log (user_id, action, entity_type, entity_id, entity_name, details)
-         VALUES ($1, 'po_created', 'product', $2, $3, $4)`,
-        [req.user.id, id, product.name, JSON.stringify({
-          orderNumber,
-          quantity: parseFloat(quantity),
-          unit: product.unit,
-          estimatedDeliveryDate: estimatedDeliveryDate || null,
-          productCode: product.productCode || product.tag,
-          category: product.category
-        })]
-      );
-    } catch (auditErr) { console.warn('⚠️ audit_log (po_created) failed:', auditErr.message); }
-
-    console.log(`📋 PO added: ${product.name} — ${orderNumber} (${quantity} ${product.unit})`);
-    res.json({ success: true, incomingOrders, message: 'Incoming order added successfully' });
-  } catch (error) {
-    console.error('Add incoming order error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// A purchase order is no longer typed here: it is raised in Shopify (H4 D3,
+// owner 5 Nov). The route answers 410 from server/sa/purchase-orders.js.
 
 // GET /api/purchase-orders — all pending/partial POs with product info (used by Dashboard)
 router.get('/purchase-orders', async (req, res) => {
@@ -3236,63 +3181,8 @@ router.get('/purchase-orders', async (req, res) => {
   }
 });
 
-router.delete('/purchase-orders/:poId', async (req, res) => {
-  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can cancel/discard purchase orders' });
-  try {
-    const id = parseInt(req.params.poId);
-    if (isNaN(id)) return res.status(400).json({ error: 'Invalid ID' });
-    const cancelledByUserId = req.query.userId ? parseInt(req.query.userId) : null;
-
-    // Fetch PO + product info before deleting
-    const poResult = await pool.query(
-      `SELECT po.product_id, po.order_number, po.quantity,
-              p.name AS product_name, p."productCode" AS product_code, p.category, p.unit AS product_unit
-       FROM purchase_orders po
-       JOIN products p ON p.id = po.product_id
-       WHERE po.id = $1`,
-      [id]
-    );
-    if (poResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Purchase order not found' });
-    }
-    const po = poResult.rows[0];
-
-    // Delete from purchase_orders table
-    await pool.query('DELETE FROM purchase_orders WHERE id = $1', [id]);
-
-    // Also remove matching entry from JSONB incoming_orders so runStartupMigrations
-    // doesn't re-insert it on the next server restart
-    await pool.query(`
-      UPDATE products
-      SET incoming_orders = (
-        SELECT COALESCE(jsonb_agg(item), '[]'::jsonb)
-        FROM jsonb_array_elements(COALESCE(incoming_orders, '[]'::jsonb)) item
-        WHERE item->>'orderNumber' != $1
-      )
-      WHERE id = $2
-    `, [po.order_number, po.product_id]);
-
-    // Audit log — po_cancelled
-    try {
-      await pool.query(
-        `INSERT INTO audit_log (user_id, action, entity_type, entity_id, entity_name, details)
-         VALUES ($1, 'po_cancelled', 'product', $2, $3, $4)`,
-        [req.user.id, po.product_id, po.product_name, JSON.stringify({
-          orderNumber: po.order_number,
-          quantity: parseFloat(po.quantity),
-          unit: po.product_unit,
-          productCode: po.product_code,
-          category: po.category
-        })]
-      );
-    } catch (auditErr) { console.warn('⚠️ audit_log (po_cancelled) failed:', auditErr.message); }
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Delete PO error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// A line is cancelled with its reason, never deleted (H4 R5): POST
+// /purchase-orders/:poId/cancel in server/sa/purchase-orders.js.
 
 // ========================================================================
 // RECEIVE INCOMING ORDER - Mark as Received and Update Stock
@@ -3324,6 +3214,12 @@ router.post('/purchase-orders/:poId/receive', async (req, res) => {
     const poResult = await client.query('SELECT * FROM purchase_orders WHERE id = $1 FOR UPDATE', [req.params.poId]);
     if (poResult.rows.length === 0) throw new Error('Purchase order not found');
     const po = poResult.rows[0];
+    // A cancelled line keeps its row (H4 R5), and a closed-short one its
+    // quantity: what is left on them is not coming, so nothing is received.
+    if (!['pending', 'partial'].includes(po.status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `${po.order_number} is ${po.closed_short ? 'closed short' : po.status}: nothing more is received on it.` });
+    }
 
     // Validate cannot receive more than remaining balance
     const alreadyReceived = parseFloat(po.quantity_received) || 0;
@@ -3398,16 +3294,17 @@ router.post('/purchase-orders/:poId/receive', async (req, res) => {
       [newQtyReceived, newStatus, receivedBy || null, po.id]
     );
 
-    // Create transaction
+    // Create transaction. It names its PO line, so the line's history never
+    // depends on reading this note (H4 R2).
     const tx = await client.query(
       `INSERT INTO transactions
-       (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes, user_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+       (product_id, product_code, product_name, category, type, quantity, unit, balance_after, notes, user_id, purchase_order_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
       [
         product.id, product.productCode || product.tag, product.name, product.category,
         'add', receivedQty, product.unit || 'units', newStock,
         `PO Received: ${po.order_number} - ${notes || 'Incoming order received'}${receivedBy ? ` (by ${receivedBy})` : ''}`,
-        userId || null
+        userId || null, po.id
       ]
     );
 
@@ -3782,244 +3679,8 @@ router.delete('/formulas/:id', async (req, res) => {
   }
 });
 
-// ========================================================================
-// PO BULK IMPORT — Template download + Excel upload + preview + confirm
-// ========================================================================
-
-// ── GET /api/po/template — Download blank Excel template for Payal
-router.get('/po/template', async (req, res) => {
-  try {
-    const { utils, write } = await import('xlsx');
-    const wb = utils.book_new();
-
-    // Header row + two example rows so Payal understands the format
-    const ws = utils.aoa_to_sheet([
-      ['product_code', 'tag', 'name', 'po_number', 'quantity_ml', 'eta', 'notes'],
-      ['FRAG_0045', 'SA-0045', 'Dream (example — delete this row)', 'PO-2026-001', '5L', '15/05/2026', 'Can use L (litres) or mL e.g. 5L = 5000mL'],
-      ['FRAG_0083', 'SA-0083', 'Zen Garden (example — delete this row)', 'PO-2026-002', '10000', '20/05/2026', ''],
-    ]);
-
-    // Column widths
-    ws['!cols'] = [
-      { wch: 16 }, // product_code
-      { wch: 14 }, // tag
-      { wch: 32 }, // name
-      { wch: 16 }, // po_number
-      { wch: 14 }, // quantity_ml
-      { wch: 14 }, // eta
-      { wch: 28 }, // notes
-    ];
-
-    utils.book_append_sheet(wb, ws, 'PO Import');
-    const buffer = write(wb, { type: 'buffer', bookType: 'xlsx' });
-
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename="PO_Import_Template.xlsx"');
-    res.send(buffer);
-  } catch (err) {
-    console.error('Template generation error:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// ── POST /api/po/import/preview — Parse uploaded Excel, match products, return preview (no DB writes)
-router.post('/po/import/preview', upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-
-    const { read, utils } = await import('xlsx');
-    const fileData = await fs.readFile(req.file.path);
-    const workbook = read(fileData, { type: 'buffer', cellDates: true });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = utils.sheet_to_json(sheet, { defval: '', cellDates: true });
-
-    // Clean up temp file if saved to disk
-    if (req.file.path) {
-      try { await fs.unlink(req.file.path); } catch (_) {}
-    }
-
-    if (!rows.length) return res.status(400).json({ error: 'Spreadsheet is empty' });
-
-    // Load all products once for matching
-    const productsResult = await pool.query(
-      `SELECT id, name, "productCode", tag, supplier, unit, category FROM products ORDER BY name`
-    );
-    const allProducts = productsResult.rows;
-
-    // Build lookup maps
-    const byCode = {};
-    const byTag  = {};
-    for (const p of allProducts) {
-      if (p.productCode) byCode[p.productCode.trim().toLowerCase()] = p;
-      if (p.tag)         byTag[p.tag.trim().toLowerCase()]           = p;
-    }
-
-    // Load existing PO numbers to detect duplicates
-    const existingPOs = await pool.query(
-      `SELECT product_id, order_number FROM purchase_orders WHERE status IN ('pending','partial')`
-    );
-    const existingSet = new Set(existingPOs.rows.map(r => `${r.product_id}::${r.order_number.trim().toLowerCase()}`));
-
-    const preview = rows.map((row, idx) => {
-      const rawCode  = String(row['product_code'] || row['Product_Code'] || row['ProductCode'] || '').trim();
-      const rawTag   = String(row['tag']          || row['Tag']          || '').trim();
-      const rawName  = String(row['name']         || row['Name']         || '').trim();
-      const poNumber = String(row['po_number']    || row['PO_Number']    || row['PO Number']  || '').trim();
-      const qtyRaw   = String(row['quantity_ml']  || row['Quantity_ml']  || row['Quantity (ml)'] || row['quantity_l'] || '').trim();
-      const notes    = String(row['notes']        || row['Notes']        || '').trim();
-
-      // ETA: Excel stores dates as JS Date objects (cellDates:true) or as serial numbers.
-      // Convert to DD/MM/YYYY for display; the confirm route will re-parse to YYYY-MM-DD for DB.
-      const etaCell = row['eta'] || row['ETA'] || '';
-      let etaRaw = '';
-      if (etaCell instanceof Date && !isNaN(etaCell)) {
-        const d = etaCell;
-        etaRaw = `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
-      } else if (typeof etaCell === 'number' && etaCell > 0) {
-        // Fallback: Excel serial number (shouldn't happen with cellDates:true, but just in case)
-        const d = new Date(Math.round((etaCell - 25569) * 86400 * 1000));
-        etaRaw = `${String(d.getUTCDate()).padStart(2,'0')}/${String(d.getUTCMonth()+1).padStart(2,'0')}/${d.getUTCFullYear()}`;
-      } else {
-        etaRaw = String(etaCell).trim();
-      }
-
-      // Validation
-      const errors = [];
-      if (!rawCode && !rawTag) errors.push('product_code or tag required');
-      if (!poNumber)           errors.push('po_number required');
-      // Accept "5L" / "5l" / "5 L" — convert to mL automatically
-      const qtyIsLitres = /^\d[\d.,]*\s*[lL]$/.test(qtyRaw);
-      const qtyNumeric  = parseFloat(qtyRaw.replace(/[lL]/gi, '').replace(',', '.').trim());
-      const qty         = qtyIsLitres ? qtyNumeric * 1000 : qtyNumeric;
-      if (!qtyRaw || isNaN(qty) || qty <= 0) errors.push('quantity_ml must be a positive number (e.g. 5000 or 5L)');
-
-      // Product matching: try productCode first, then tag
-      let matched = null;
-      if (rawCode) matched = byCode[rawCode.toLowerCase()];
-      if (!matched && rawTag) matched = byTag[rawTag.toLowerCase()];
-
-      // Name mismatch warning (non-blocking)
-      const nameMismatch = matched && rawName && matched.name.toLowerCase() !== rawName.toLowerCase();
-
-      // Duplicate check
-      const isDuplicate = matched && poNumber
-        ? existingSet.has(`${matched.id}::${poNumber.toLowerCase()}`)
-        : false;
-
-      // Status
-      let status = 'matched';
-      if (errors.length > 0)  status = 'error';
-      else if (!matched)       status = 'not_found';
-      else if (isDuplicate)    status = 'duplicate';
-      else if (nameMismatch)   status = 'name_mismatch'; // matched but name differs — still importable
-
-      return {
-        rowIndex: idx,
-        rawCode,
-        rawTag,
-        rawName,
-        poNumber,
-        quantityMl: isNaN(qty) ? null : qty,
-        quantityConverted: qtyIsLitres,
-        etaRaw,
-        notes,
-        matched: matched ? { id: matched.id, name: matched.name, productCode: matched.productCode, tag: matched.tag, unit: matched.unit, supplier: matched.supplier, category: matched.category } : null,
-        nameMismatch,
-        isDuplicate,
-        errors,
-        status,
-        // importable = ready to go
-        importable: status === 'matched' || status === 'name_mismatch',
-      };
-    });
-
-    res.json({ preview, total: rows.length });
-  } catch (err) {
-    console.error('PO import preview error:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// ── POST /api/po/import/confirm — Create POs for confirmed rows
-router.post('/po/import/confirm', async (req, res) => {
-  if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can import purchase orders' });
-  try {
-    const { rows, userId, importedBy } = req.body;
-    if (!Array.isArray(rows) || rows.length === 0) {
-      return res.status(400).json({ error: 'No rows to import' });
-    }
-
-    // Re-check duplicates at confirm time (race condition protection)
-    const existingPOs = await pool.query(
-      `SELECT product_id, order_number FROM purchase_orders WHERE status IN ('pending','partial')`
-    );
-    const existingSet = new Set(existingPOs.rows.map(r => `${r.product_id}::${r.order_number.trim().toLowerCase()}`));
-
-    let created = 0, skipped = 0;
-    const skippedReasons = [];
-
-    for (const row of rows) {
-      const { productId, poNumber, quantityMl, etaRaw, notes, productName, productUnit, productCategory, productCode } = row;
-
-      // Final duplicate guard
-      if (existingSet.has(`${productId}::${poNumber.trim().toLowerCase()}`)) {
-        skipped++;
-        skippedReasons.push(`${poNumber} (duplicate)`);
-        continue;
-      }
-
-      // Parse ETA — accept DD/MM/YYYY or YYYY-MM-DD
-      let eta = null;
-      if (etaRaw) {
-        const dmY = etaRaw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-        if (dmY) {
-          eta = `${dmY[3]}-${dmY[2].padStart(2,'0')}-${dmY[1].padStart(2,'0')}`;
-        } else if (/^\d{4}-\d{2}-\d{2}$/.test(etaRaw)) {
-          eta = etaRaw;
-        }
-        // Reject implausible dates (before 2020 or more than 5 years in future)
-        if (eta) {
-          const etaYear = parseInt(eta.slice(0, 4));
-          if (etaYear < 2020 || etaYear > new Date().getFullYear() + 5) {
-            eta = null;
-          }
-        }
-      }
-
-      await pool.query(
-        `INSERT INTO purchase_orders (product_id, order_number, quantity, supplier, notes, added_by, created_by, estimated_delivery_date)
-         SELECT id, $2, $3, supplier, $4, $5, $6, $7 FROM products WHERE id = $1`,
-        [productId, poNumber, parseFloat(quantityMl), notes || null, importedBy || 'import', userId || null, eta]
-      );
-
-      // Audit log
-      try {
-        await pool.query(
-          `INSERT INTO audit_log (user_id, action, entity_type, entity_id, entity_name, details)
-           VALUES ($1, 'po_created', 'product', $2, $3, $4)`,
-          [req.user.id, productId, productName, JSON.stringify({
-            orderNumber: poNumber,
-            quantity: parseFloat(quantityMl),
-            unit: productUnit,
-            estimatedDeliveryDate: eta,
-            productCode,
-            category: productCategory,
-            source: 'bulk_import',
-          })]
-        );
-      } catch (auditErr) { console.warn('audit_log po_created (import) failed:', auditErr.message); }
-
-      existingSet.add(`${productId}::${poNumber.trim().toLowerCase()}`); // prevent dupes within same batch
-      created++;
-    }
-
-    console.log(`📦 PO Bulk Import: ${created} created, ${skipped} skipped`);
-    res.json({ success: true, created, skipped, skippedReasons });
-  } catch (err) {
-    console.error('PO import confirm error:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// The Excel PO import is gone: every order is raised in Shopify (H4 D3, owner
+// 5 Nov). Its routes answer 410 from server/sa/purchase-orders.js.
 
 // ========================================================================
 // REPLENISHMENT DASHBOARD
@@ -4440,300 +4101,8 @@ router.patch('/products/:id/status', async (req, res) => {
   }
 });
 
-// ── GET /api/shopify-purchase-orders — what Shopify says is on order.
-//
-// Delivery 1 of the PO integration, and deliberately the whole of it: this
-// READS. It writes nothing, to the platform or to Shopify. It exists so the
-// owner and the manager can watch it against the real store for a few days
-// before anything is allowed to act on it.
-//
-// Fails closed and says so. `unstable` can change shape without notice, and a
-// screen that shows an old list as if it were current is worse than one that
-// says it could not reach Shopify.
-router.get('/shopify-purchase-orders', async (req, res) => {
-  // The menu hides this from technicians; a menu is not a permission. Supplier
-  // names, unit costs and stock positions are on this page.
-  if (req.user.role === 'technician') return res.status(403).json({ error: 'Not available for technicians' });
-  // ?lines=fragrance | other — the Fragrance Library shows the fragrance lines,
-  // SA's page the machines, spare parts and raw materials (PRD Stage 1 §2.3).
-  // Without it, everything, as before.
-  const want = req.query.lines;
-  if (want && !['fragrance', 'other'].includes(want)) return res.status(400).json({ error: 'lines is fragrance or other' });
-  try {
-    const products = (await pool.query(
-      `SELECT id, "productCode", name, "currentStock", unit, "shopifySkus", status, category
-         FROM products WHERE status = 'active'`)).rows
-      .map((r) => ({ ...r, shopifySkus: parseJSONB(r.shopifySkus) }));
-
-    const read = await readIncomingPurchaseOrders(products);
-    const { liveLineIds } = read;
-    // A fragrance line is an oil's — or, when no product carries its code yet,
-    // one coded as an oil bottle (SA_1L_…), so it can be registered from the
-    // Fragrance Library. A line with no code at all stays on SA's page.
-    const categoryOf = new Map(products.map((p) => [p.productCode, p.category]));
-    const isFragrance = (l) => l.productCode
-      ? categoryOf.get(l.productCode) === 'OILS'
-      : Object.keys(VARIANT_ML).some((p) => (l.sku || '').startsWith(`${p}_`));
-    const orders = !want ? read.orders : read.orders
-      .map((o) => {
-        const lines = o.lines.filter((l) => isFragrance(l) === (want === 'fragrance'));
-        return { ...o, lines, unmatchedCount: lines.filter((l) => !l.matched).length };
-      })
-      .filter((o) => o.lines.length);
-
-    // What has already been linked. Read per line, not per order: a purchase
-    // order can be accepted while one of its lines is still unrecognised, and
-    // that line has to stay offered once its code is fixed in Shopify.
-    const accepted = (await pool.query(
-      `SELECT po.id, po.order_number, po.shopify_po_gid, po.shopify_line_id, po.status, po.shopify_missing_since,
-              po.quantity::float q, po.quantity_received::float rec,
-              pr."productCode" AS product_code, pr.name AS product_name
-         FROM purchase_orders po
-         LEFT JOIN products pr ON pr.id = po.product_id
-        WHERE po.shopify_line_id IS NOT NULL`)).rows;
-    const byLine = new Map(accepted.map((r) => [r.shopify_line_id, r]));
-    // An oil must be registered in the company the PO is for before it can be
-    // accepted (P6): flagged on the line here, so it is seen before the click.
-    const regs = await registrationsByProduct();
-    for (const o of orders) {
-      const company = companyOf(o.destinationStock);
-      for (const l of o.lines) {
-        const row = byLine.get(l.lineId);
-        l.registerCompany = company;
-        l.registered = !l.matched || !company || regs.get(l.productId)?.[company]?.active === true;
-        l.accepted = !!row;
-        l.receivedMl = row ? row.rec : null;
-        l.poStatus = row ? row.status : null;
-        l.acceptedPoId = row ? row.id : null;
-        l.acceptedMl = row ? row.q : null;
-        // Edited in Shopify after it was accepted here. Without this the
-        // platform keeps expecting the old amount for ever and says nothing —
-        // the owner edited a purchase order twenty minutes after raising it, so
-        // this is ordinary behaviour, not an edge case.
-        l.changedInShopify = !!row && l.matched && Math.abs(row.q - l.incomingMl) > 0.001;
-      }
-      o.acceptedLines = o.lines.filter((l) => l.accepted).length;
-      o.acceptableLines = o.destinationStock ? o.lines.filter((l) => l.matched && !l.accepted && l.registered).length : 0;
-      o.unregisteredLines = o.lines.filter((l) => l.matched && !l.accepted && !l.registered).length;
-    }
-
-    // Accepted, then deleted in Shopify. Without this the platform would go on
-    // counting that oil as on its way for ever, and nobody would see it: the
-    // purchase order is gone from the store, so it is gone from the list above
-    // too. Absence is the only signal Shopify gives, so it is the one used.
-    // A read that writes, deliberately and idempotently: it records a fact it
-    // has just established and nothing else. Without it the fact stays on this
-    // page, and the person about to click "received" on a fragrance never learns
-    // the order was cancelled. Cleared again if the order comes back.
-    const orphanIds = accepted
-      .filter((r) => ['pending', 'partial'].includes(r.status) && !liveLineIds.has(r.shopify_line_id))
-      .map((r) => r.id);
-    const presentIds = accepted
-      .filter((r) => liveLineIds.has(r.shopify_line_id) && r.shopify_missing_since)
-      .map((r) => r.id);
-    if (orphanIds.length) {
-      await pool.query(
-        `UPDATE purchase_orders SET shopify_missing_since = COALESCE(shopify_missing_since, NOW())
-          WHERE id = ANY($1::int[])`, [orphanIds]);
-    }
-    if (presentIds.length) {
-      await pool.query(
-        `UPDATE purchase_orders SET shopify_missing_since = NULL WHERE id = ANY($1::int[])`,
-        [presentIds]);
-    }
-
-    // Only a matched line can be accepted, and a match is an oil bottle size,
-    // so every accepted line is a fragrance one: none on SA's page.
-    const orphans = want === 'other' ? [] : accepted
-      .filter((r) => ['pending', 'partial'].includes(r.status) && !liveLineIds.has(r.shopify_line_id))
-      .map((r) => ({
-        id: r.id,
-        number: r.order_number,
-        productCode: r.product_code,
-        productName: r.product_name,
-        outstandingMl: r.q - r.rec,
-        status: r.status,
-      }));
-
-    res.json({
-      ok: true,
-      readAt: new Date().toISOString(),
-      orders,
-      orphans,
-      counts: {
-        orders: orders.length,
-        lines: orders.reduce((n, o) => n + o.lines.length, 0),
-        unmatched: orders.reduce((n, o) => n + o.unmatchedCount, 0),
-      },
-    });
-  } catch (e) {
-    console.error('Shopify PO read failed:', e.message);
-    res.json({ ok: false, error: e.message, orders: [], counts: null });
-  }
-});
-
-// ── POST /api/shopify-purchase-orders/accept — link a Shopify PO to the platform.
-//
-// Delivery 2. The acceptance writes ordinary purchase_orders rows, so from this
-// point on the order behaves exactly like one raised here: it shows beside its
-// fragrance, and it is received through the flow the warehouse already uses.
-// Nothing is written back to Shopify, ever.
-//
-// The quantities are re-read from Shopify inside this request. The screen's
-// numbers are never trusted: a browser tab left open for an hour would otherwise
-// be able to accept a quantity that no longer exists.
-router.post('/shopify-purchase-orders/accept', async (req, res) => {
-  if (!['admin', 'root'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'Only admin or root can accept a purchase order' });
-  }
-  // The database client is taken AFTER Shopify has answered. Holding one across
-  // several network calls to somebody else's server starves a pool of ten: a
-  // slow or hung Shopify would take unrelated SA requests down with it.
-  let client;
-  try {
-    const { shopifyId } = req.body || {};
-    if (!shopifyId) return res.status(400).json({ error: 'shopifyId is required' });
-
-    const products = (await pool.query(
-      `SELECT id, "productCode", name, "currentStock", unit, "shopifySkus", status
-         FROM products WHERE status = 'active'`)).rows
-      .map((r) => ({ ...r, shopifySkus: parseJSONB(r.shopifySkus) }));
-
-    const fresh = (await readIncomingPurchaseOrders(products)).orders.find((o) => o.shopifyId === shopifyId);
-    if (!fresh) {
-      // It was deleted, cancelled, or fell outside what is watched between the
-      // screen loading and the click. A deleted PO vanishes from Shopify's API
-      // entirely — verified 2026-09-21 — so absence is the only signal there is.
-      return res.status(409).json({ error: 'That purchase order is no longer in Shopify. Refresh the page.' });
-    }
-
-    // The destination names the company (P6). An unknown one — a fourth
-    // location, a rename — is never guessed: nothing on it is accepted.
-    if (!fresh.destinationStock) return res.status(400).json({ error: fresh.destinationError });
-    const company = companyOf(fresh.destinationStock);
-
-    const byCode = new Map(products.map((p) => [p.productCode, p]));
-    const matchedLines = fresh.lines.filter((l) => l.matched && byCode.has(l.productCode));
-    if (matchedLines.length === 0) {
-      return res.status(400).json({ error: 'No line on this purchase order matches a product yet' });
-    }
-    // An oil not registered in that company is left out and named, so it is
-    // registered BEFORE the oil arrives (owner, 29 Oct), not found at the receipt.
-    const regs = await registrationsByProduct();
-    const isRegistered = (l) => regs.get(byCode.get(l.productCode).id)?.[company]?.active === true;
-    const usable = matchedLines.filter(isRegistered);
-    const notRegistered = matchedLines.filter((l) => !isRegistered(l))
-      .map((l) => ({ productId: byCode.get(l.productCode).id, productCode: l.productCode, name: l.productName, company }));
-    if (usable.length === 0) {
-      return res.status(400).json({
-        error: `Not accepted: ${notRegistered.map((n) => n.name).join(', ')} ${notRegistered.length > 1 ? 'are' : 'is'} not registered in ${company} Fragrances. Register ${notRegistered.length > 1 ? 'them' : 'it'} first, then accept again.`,
-        code: 'NOT_REGISTERED', notRegistered,
-      });
-    }
-
-    client = await pool.connect();
-    await client.query('BEGIN');
-    const created = [];
-    for (const line of usable) {
-      const product = byCode.get(line.productCode);
-      const ins = await client.query(
-        `INSERT INTO purchase_orders
-           (product_id, order_number, quantity, supplier, notes, added_by, created_by,
-            shopify_po_gid, shopify_line_id, cost_per_unit, destination_stock)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-         ON CONFLICT (shopify_line_id) WHERE shopify_line_id IS NOT NULL DO NOTHING
-         RETURNING id`,
-        // added_by is the label the screens show; created_by is the user id.
-        // The existing PO insert keeps them apart and so must this one.
-        // cost_per_unit: per mL, ex GST; a Shopify cost of 0 is NULL, "No
-        // price on the PO", never $0 (costPerMl, S8).
-        // destination_stock: whose oil it is (P6) — what the receipt may go
-        // into, and whether it is SA's on order.
-        [product.id, fresh.number, line.incomingMl, fresh.supplier || null,
-         `From Shopify ${fresh.number} — ${line.bottles} × ${line.bottleMl} mL`,
-         req.user.name || 'shopify', req.user.id, shopifyId, line.lineId,
-         costPerMl(line.unitCost, line.bottleMl), fresh.destinationStock]
-      );
-      // The name as well as the code: the activity screen is read by people, and
-      // "FRAG_0045" tells them nothing that "Dream" does not tell them better.
-      if (ins.rows.length) {
-        created.push({ productCode: line.productCode, name: line.productName, ml: line.incomingMl });
-      }
-    }
-    await client.query(
-      `INSERT INTO audit_log (user_id, action, entity_type, entity_id, entity_name, details)
-       VALUES ($1, 'shopify_po_accepted', 'purchase_order', NULL, $2, $3)`,
-      [req.user.id, fresh.number,
-       JSON.stringify({ shopifyId, supplier: fresh.supplier, lines: created,
-                        destination: fresh.destination, destinationStock: fresh.destinationStock,
-                        skippedUnmatched: fresh.unmatchedCount, skippedNotRegistered: notRegistered })]
-    );
-    await client.query('COMMIT');
-
-    res.json({
-      ok: true, number: fresh.number,
-      accepted: created.length,
-      alreadyAccepted: usable.length - created.length,
-      unmatched: fresh.unmatchedCount,
-      notRegistered,
-    });
-  } catch (e) {
-    if (client) await client.query('ROLLBACK').catch(() => {});
-    console.error('Shopify PO accept failed:', e.message);
-    res.status(500).json({ error: 'Internal server error' });
-  } finally {
-    if (client) client.release();
-  }
-});
-
-// ── PATCH /api/shopify-purchase-orders/line/:poId — take the quantity Shopify
-// now says, for a line that was edited after it was accepted here.
-//
-// Its own small act rather than a re-accept: re-accepting would mean removing a
-// row that may already be part-received, losing the record of what arrived.
-router.patch('/shopify-purchase-orders/line/:poId', async (req, res) => {
-  if (!['admin', 'root'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'Only admin or root can change an accepted quantity' });
-  }
-  try {
-    const row = (await pool.query(
-      `SELECT id, shopify_line_id, quantity::float q, quantity_received::float rec, order_number, product_id
-         FROM purchase_orders WHERE id = $1 AND shopify_line_id IS NOT NULL`, [req.params.poId])).rows[0];
-    if (!row) return res.status(404).json({ error: 'Not an accepted Shopify purchase order' });
-
-    const products = (await pool.query(
-      `SELECT id, "productCode", name, "currentStock", unit, "shopifySkus", status
-         FROM products WHERE status = 'active'`)).rows
-      .map((r) => ({ ...r, shopifySkus: parseJSONB(r.shopifySkus) }));
-    const { orders } = await readIncomingPurchaseOrders(products);
-    const line = orders.flatMap((o) => o.lines).find((l) => l.lineId === row.shopify_line_id);
-    if (!line) return res.status(409).json({ error: 'That line is no longer in Shopify. Remove it instead.' });
-    if (!line.matched) return res.status(400).json({ error: line.reason });
-
-    // Never below what has already physically arrived — that stock is on the
-    // shelf and recorded, and a purchase order cannot un-receive it.
-    if (line.incomingMl < row.rec - 0.001) {
-      return res.status(400).json({
-        error: `Shopify now says ${line.incomingMl / 1000} L, but ${row.rec / 1000} L has already been received. Fix it in Shopify or receive the rest.`,
-      });
-    }
-
-    const status = line.incomingMl <= row.rec + 0.001 ? 'received' : (row.rec > 0 ? 'partial' : 'pending');
-    await pool.query(
-      `UPDATE purchase_orders SET quantity = $1, status = $2, updated_at = NOW() WHERE id = $3`,
-      [line.incomingMl, status, row.id]);
-    await pool.query(
-      `INSERT INTO audit_log (user_id, action, entity_type, entity_id, entity_name, details)
-       VALUES ($1, 'shopify_po_quantity_synced', 'purchase_order', $2, $3, $4)`,
-      [req.user.id, row.id, row.order_number,
-       JSON.stringify({ from: row.q, to: line.incomingMl, alreadyReceived: row.rec })]);
-
-    res.json({ ok: true, from: row.q, to: line.incomingMl, status });
-  } catch (e) {
-    console.error('Shopify PO quantity sync failed:', e.message);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// The Shopify purchase orders — read, accepted, synced — live in
+// server/sa/purchase-orders.js since H4 (PRD_H4_PURCHASE_ORDERS.md).
 
 // ── PATCH /api/products/:id/reorder-watch — show or hide a machine on the
 // Dashboard's reorder watch. The choice is shared: it is product data, so it is
@@ -6424,6 +5793,8 @@ async function runStartupMigrations() {
   // must fail to start (the previous deploy keeps running) rather than run
   // half-working and skip MUSE debits (code review, 23 Oct).
   await migrateSectors();
+  // Also first and not caught: the receipt writes transactions.purchase_order_id.
+  await migratePurchaseOrders();
   try {
     await pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS lead_time INTEGER DEFAULT NULL`);
     await pool.query(`ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS estimated_delivery_date DATE DEFAULT NULL`);

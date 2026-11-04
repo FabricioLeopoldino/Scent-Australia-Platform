@@ -71,6 +71,9 @@ try {
     await pool.query(
       `INSERT INTO products (id, tag, "productCode", name, category, unit, "currentStock", status)
        VALUES ($1,$1,$1,$2,'OILS','mL',50000,'active')`, [code, `${code} probe`]);
+    // Demand Planning lists SA's oils only since Stage 1 (S6). The registration
+    // goes with the probe when it is deleted (ON DELETE CASCADE).
+    await pool.query(`INSERT INTO fragrance_registrations (product_id, company) VALUES ($1, 'SA') ON CONFLICT DO NOTHING`, [code]);
   }
   // Same figure, same product, same everything — only WHICH FILE they are in
   // differs. Anything that separates them downstream is the snapshot rule.
