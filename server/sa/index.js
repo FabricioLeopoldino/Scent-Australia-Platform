@@ -4387,10 +4387,11 @@ async function buildReplenishment() {
         -- dashboard afterwards.
         SELECT DISTINCT ON (product_code)
           product_code, forecast_120_days, import_date,
-          -- import_date is stored naive-UTC, so subtracting it from Date.now()
-          -- in JS on a Sydney machine is off by ten hours and lands a day out
-          -- either side of midnight.
-          ((NOW() AT TIME ZONE 'Australia/Sydney')::date - import_date::date) AS age_days
+          -- Both dates in Sydney. import_date is a timestamptz, and a bare
+          -- ::date takes it in the session's zone (GMT on Neon): an upload
+          -- before 11 am Sydney read a day older (found 5 Nov 2026,
+          -- regression-forecast-freshness: served 8 days for 7).
+          ((NOW() AT TIME ZONE 'Australia/Sydney')::date - (import_date AT TIME ZONE 'Australia/Sydney')::date) AS age_days
         FROM forecasts
         WHERE import_date = (SELECT MAX(import_date) FROM forecasts)
         -- id DESC breaks the tie: one file can legitimately carry the same code
@@ -4407,8 +4408,8 @@ async function buildReplenishment() {
       // can land a day off the age computed here. Two numbers that disagree on
       // the same card read as a broken screen.
       pool.query(`SELECT import_date, imported_by,
-                         import_date::date::text AS import_date_syd,
-                         ((NOW() AT TIME ZONE 'Australia/Sydney')::date - import_date::date) AS age_days
+                         (import_date AT TIME ZONE 'Australia/Sydney')::date::text AS import_date_syd,
+                         ((NOW() AT TIME ZONE 'Australia/Sydney')::date - (import_date AT TIME ZONE 'Australia/Sydney')::date) AS age_days
                   FROM forecasts ORDER BY import_date DESC LIMIT 1`),
       pool.query(`SELECT id, name, lead_time, notes FROM suppliers ORDER BY name`),
       // What the latest upload dropped: active oils that carried a forecast in
