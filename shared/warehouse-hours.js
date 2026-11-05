@@ -12,6 +12,11 @@
 // Do not widen this without a real business reason.
 
 export const WAREHOUSE_TZ = 'Australia/Melbourne';
+
+// Today's date (YYYY-MM-DD) where the business is, not in UTC. toISOString()
+// gives the UTC date, which is still YESTERDAY before 10–11 am here (Render runs
+// in UTC too). Melbourne and Sydney share the zone. 5 Nov 2026 time-zone audit.
+export const warehouseDate = (d = new Date()) => d.toLocaleDateString('en-CA', { timeZone: WAREHOUSE_TZ });
 const START_MINUTE = 6 * 60 + 30; // 06:30
 const END_MINUTE = 17 * 60;       // 17:00 (exclusive)
 

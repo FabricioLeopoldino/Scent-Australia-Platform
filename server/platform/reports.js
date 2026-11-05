@@ -4,6 +4,7 @@ import { requireRole } from './auth.js';
 import { DIRECTION_SQL, BUSINESS_SQL, SA_SYSTEM_SQL, systemMatches, typesVisibleIn } from './movement-direction.js';
 import { SYSTEM_NAMES } from '../../shared/business-names.js';
 import { SECTORS, SECTOR_KEYS, COMPANIES, OUTSIDE } from '../../shared/sectors.js';
+import { warehouseDate } from '../../shared/warehouse-hours.js';
 
 // ── Timestamps ───────────────────────────────────────────────────────────
 // WHY THIS EXISTS (2026-09-15). `created_at` is `timestamp WITHOUT time zone`
@@ -283,7 +284,7 @@ function sendCsv(res, name, header, cols, rows, dateCol) {
   const lines = [header.join(',')];
   for (const r of rows) lines.push(cols.map(c => csvCell(c === dateCol ? syd(r[c]) : r[c])).join(','));
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="${name}-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${name}-${warehouseDate()}.csv"`);
   // The leading BOM is what makes Excel read this as UTF-8. The charset in the
   // header above does not reach it: a downloaded .csv is opened from disk, and
   // Excel on Windows then assumes the system code page. Every em-dash in the

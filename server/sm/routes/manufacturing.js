@@ -508,7 +508,7 @@ router.post('/manufacturing/:id/complete', auth, async (req, res) => {
         const actualPct = (actualFragMl / totalFormulaMl) * 100
         await tq(
           `INSERT INTO fragrance_strength_log (fragrance_id, fragrance_name, production_order_id, standard_pct, actual_pct_used, was_adjusted, adjustment_reason, batch_reference, date_used, created_by)
-           VALUES ($1,$2,$3,$4,$5,true,$6,$7,CURRENT_DATE,$8)`,
+           VALUES ($1,$2,$3,$4,$5,true,$6,$7,(NOW() AT TIME ZONE 'Australia/Sydney')::date,$8)`,
           [fl.fragrance_id, fl.fragrance_name, parseInt(req.params.id), standardPct,
            Number(actualPct.toFixed(2)), ll.extra_fragrance_reason || `Added ${extraMl} ml extra`,
            order.rows[0].order_number, req.user.id]

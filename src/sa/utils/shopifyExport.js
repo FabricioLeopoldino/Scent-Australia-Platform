@@ -1,4 +1,5 @@
 import { SA_SKU_VARIANTS, SA_SKU_KEYS } from '../../../shared/sa-sku-variants.js';
+import { warehouseDate } from '../../../shared/warehouse-hours.js';
 /**
  * Export products to Shopify CSV format for inventory sync
  * Format matches Shopify's inventory_bin_new_on_hand_template.csv
@@ -109,7 +110,7 @@ export function exportToShopifyCSV(products) {
   const link = document.createElement('a');
   const url = URL.createObjectURL(blob);
   
-  const timestamp = new Date().toISOString().split('T')[0];
+  const timestamp = warehouseDate();
   link.setAttribute('href', url);
   link.setAttribute('download', `Shopify_Inventory_${timestamp}.csv`);
   link.style.visibility = 'hidden';

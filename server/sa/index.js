@@ -33,7 +33,7 @@ import { dirname, join } from 'path';
 // resolve to schema sa with zero SQL changes. UTC type parser lives in db.js.
 import { saPool as pool, withTransaction } from '../db.js';
 import { SA_SKU_VARIANTS, SA_SKU_KEYS } from '../../shared/sa-sku-variants.js';
-import { withinWarehouseHours } from '../../shared/warehouse-hours.js';
+import { withinWarehouseHours, warehouseDate } from '../../shared/warehouse-hours.js';
 
 // The five sale SKUs as Shopify sees them. Volumes come from the shared module
 // (single source of truth, QA #16); suffix/price are commercial data and live
@@ -3983,13 +3983,13 @@ router.get('/forecast/last', async (req, res) => {
     const ws = utils.json_to_sheet(rows.rows.map(r => ({
       product_code: r.product_code,
       forecast_120_days: parseFloat(r.forecast_120_days),
-      import_date: new Date(r.import_date).toISOString().split('T')[0],
+      import_date: warehouseDate(new Date(r.import_date)),
       imported_by: r.imported_by
     })));
     const wb = utils.book_new();
     utils.book_append_sheet(wb, ws, 'Forecast');
     const buffer = write(wb, { type: 'buffer', bookType: 'xlsx' });
-    const dateStr = new Date(import_date).toISOString().split('T')[0];
+    const dateStr = warehouseDate(new Date(import_date));
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="forecast_backup_${dateStr}.xlsx"`);

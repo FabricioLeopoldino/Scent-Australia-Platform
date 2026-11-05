@@ -167,8 +167,8 @@ router.get('/transactions', auth, async (req, res) => {
     const params = []
     if (product_id) { params.push(product_id); q += ` AND t.product_id = $${params.length}` }
     if (type) { params.push(type); q += ` AND t.type = $${params.length}` }
-    if (from) { params.push(from); q += ` AND t.created_at >= $${params.length}` }
-    if (to) { params.push(to); q += ` AND t.created_at <= $${params.length}` }
+    if (from) { params.push(from); q += ` AND t.created_at >= ($${params.length}::timestamp AT TIME ZONE 'Australia/Sydney' AT TIME ZONE 'UTC')` }
+    if (to) { params.push(to); q += ` AND t.created_at <= ($${params.length}::timestamp AT TIME ZONE 'Australia/Sydney' AT TIME ZONE 'UTC')` }
     q += ` ORDER BY t.created_at DESC LIMIT ${parseInt(limit) || 5000}`
     res.json((await query(q, params)).rows)
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
