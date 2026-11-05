@@ -13,6 +13,7 @@ import ActivityLog from './pages/ActivityLog';
 import ScentedProducts from './pages/ScentedProducts';
 // TechStock retired 31/08/2026 — page kept at ./pages/TechStock for restoring.
 import ThemeToggle from './components/ThemeToggle';
+import BomTabs, { isBomPath } from './components/BomTabs';
 
 // SA Scent Stock Manager module shell — nav/routes/role-gating identical to
 // the production SA App.jsx. Differences (platform integration only):
@@ -69,7 +70,8 @@ function SAContent({ user, onSwitchModule, onLogout }) {
               {user.role !== 'user' && (
                 <li><Link href="/replenishment" className={isActive('/replenishment') ? 'nav-active' : ''}>Demand Planning</Link></li>
               )}
-              <li><Link href="/formulas" className={isActive('/formulas') ? 'nav-active' : ''}>Formulas</Link></li>
+              {/* H3: one BOM entry — SA Product BOM, Diffuser BOM and Formulas are its tabs. */}
+              <li><Link href="/bom" className={isBomPath(location) ? 'nav-active' : ''}>BOM</Link></li>
               {/* Scented nav hidden by owner 2026-07-24 ("not usable for now"). Route + page kept below; re-add this line to restore. */}
               {['admin', 'root'].includes(user.role) && (
                 <li><Link href="/sku-mapping" className={isActive('/sku-mapping') ? 'nav-active' : ''}>SKU Mapping</Link></li>
@@ -129,7 +131,7 @@ function SAContent({ user, onSwitchModule, onLogout }) {
             </div>
           </Route>
           <Route path="/replenishment">{!['user', 'technician'].includes(user?.role) ? <ReplenishmentDashboard user={user} /> : null}</Route>
-          <Route path="/formulas"><Formulas user={user} /></Route>
+          <Route path="/formulas"><BomTabs /><Formulas user={user} /></Route>
           <Route path="/scented-products"><ScentedProducts user={user} /></Route>
           {/* Tech Stock retired by the owner, 31/08/2026. Not a fault in the
               screen: keeping a second stock ledger did not survive contact with
@@ -152,8 +154,8 @@ function SAContent({ user, onSwitchModule, onLogout }) {
               </p>
             </div>
           </Route>
-          <Route path="/bom"><BOMViewer user={user} /></Route>
-          <Route path="/diffuser-bom"><DiffuserMachineBOM user={user} /></Route>
+          <Route path="/bom"><BomTabs /><BOMViewer user={user} /></Route>
+          <Route path="/diffuser-bom"><BomTabs /><DiffuserMachineBOM user={user} /></Route>
           <Route path="/sku-mapping">{['admin', 'root'].includes(user?.role) ? <SkuMapping user={user} /> : null}</Route>
           <Route path="/history"><TransactionHistory user={user} /></Route>
           <Route path="/activity">{['admin', 'root'].includes(user?.role) ? <ActivityLog user={user} /> : null}</Route>

@@ -202,6 +202,11 @@ export default function DiffuserMachineBOM({ user }) {
         <div>
           <h2 className="page-title">DIFFUSER MACHINE BOM</h2>
           <p>Bill of Materials for each diffuser machine type</p>
+          {/* Owner decision O2 (28 Oct): the SA Product BOM is the truth. No sale or
+              stock path reads diffuser_bom; refurbished machines deduct REFURB_* there. */}
+          <p style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 4 }}>
+            Reference only: a sale deducts a refurbished machine's parts from the SA Product BOM (REFURB_*), not from this list.
+          </p>
         </div>
         {isAdmin && (
           <button

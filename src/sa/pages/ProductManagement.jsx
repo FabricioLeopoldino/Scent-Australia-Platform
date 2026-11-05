@@ -549,9 +549,8 @@ export default function ProductManagement({ user, libraryMode = false, company =
 
         {/* Right-side group: BOM (irrelevant to raw oils, hidden in libraryMode) + Add */}
         <div style={{ display: 'flex', gap: 12, marginLeft: 'auto', alignItems: 'center' }}>
+          {/* H3: one button to the BOM section; the Diffuser BOM and Formulas are its tabs. */}
           {!libraryMode && <LiquidMetalButton label="🧩 BOM" width={108} onClick={() => window.location.href = '/sa/bom'} />}
-          {/* It was a button on the Diffusers page; both go to the BOM section in H3. */}
-          {stockMode && <LiquidMetalButton label="🧩 Diffuser BOM" width={150} onClick={() => window.location.href = '/sa/diffuser-bom'} />}
           {['admin', 'root'].includes(user.role) && (
             <button
               className="btn btn-primary"
