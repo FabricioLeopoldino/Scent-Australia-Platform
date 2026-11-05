@@ -36,6 +36,13 @@ const { Pool } = pkg;
 
 // Read straight from sa to know the TRUE count, independent of the report. The
 // report's own answer cannot prove it is complete.
+// These boot their own server, and a server runs its startup migrations: on the
+// live database that would apply unreleased migrations early. Test copy only,
+// as regression-sa.js (added 5 Nov 2026: dotenv above reads the LIVE url).
+if (!(process.env.PLATFORM_DATABASE_URL || '').includes('ep-old-water-') && process.env.REGRESSION_ALLOW_PRODUCTION !== '1') {
+  console.error('Refusing: PLATFORM_DATABASE_URL is not the sectors-dev branch (ep-old-water-). Set REGRESSION_ALLOW_PRODUCTION=1 to override.');
+  process.exit(1);
+}
 const pool = new Pool({
   connectionString: process.env.PLATFORM_DATABASE_URL.replace('-pooler.', '.'),
   ssl: { rejectUnauthorized: true }, options: '-c search_path=sa,public',
@@ -94,6 +101,13 @@ try {
   // sm.transactions.id are independent sequences that DO overlap (89 shared
   // values on 8 Sep). The screen already keys its rows this way.
   const keyOf = (r) => `${r.system}#${r.id}`;
+  // A capped list (newest first) covers only rows newer than its oldest row.
+  // Strictly newer: rows sharing the boundary timestamp may fall either side.
+  const inWindow = (rows, limit) => {
+    if (rows.length < limit) return () => true;
+    const oldest = Math.min(...rows.map((r) => new Date(r.created_at).getTime()));
+    return (r) => new Date(r.created_at).getTime() > oldest;
+  };
 
   console.log('\n2. Filtering MUSE now returns fragrance movements');
   const muse = await history({ system: 'MUSE', limit: 2000 });
@@ -111,9 +125,12 @@ try {
   console.log('\n3. It did NOT disappear from SA — the oil really left SA\'s shelf');
   const sa = await history({ system: 'SA', limit: 5000 });
   const saOilIds = new Set(sa.filter((r) => r.type === 'muse_production').map(keyOf));
-  check(museOil.length > 0 && museOil.every((r) => saOilIds.has(keyOf(r))),
+  // The SA list is capped, so it reaches back only so far; compare inside that
+  // period. Without this the test failed as the data grew (5 Nov 2026), not the code.
+  const museInSa = museOil.filter(inWindow(sa, 5000));
+  check(museInSa.length > 0 && museInSa.every((r) => saOilIds.has(keyOf(r))),
     'the same movements are still listed under SA',
-    `${saOilIds.size} under SA vs ${museOil.length} under MUSE`);
+    `${museInSa.filter((r) => saOilIds.has(keyOf(r))).length} of ${museInSa.length} MUSE rows inside the SA window`);
 
   console.log('\n4. An ordinary SA movement is still NOT dragged into MUSE');
   // Asserting on the TYPE alone would be wrong, and this check caught me doing
@@ -162,8 +179,10 @@ try {
   const ids = all.map(keyOf);
   check(new Set(ids).size === ids.length, 'no row is returned twice', `${ids.length} rows`);
   const allKeys = new Set(ids);
-  check(museOil.length > 0 && museOil.every((r) => allKeys.has(keyOf(r))),
-    'the MUSE oil rows are in ALL too');
+  const museInAll = museOil.filter(inWindow(all, 8000));
+  check(museInAll.length > 0 && museInAll.every((r) => allKeys.has(keyOf(r))),
+    'the MUSE oil rows are in ALL too',
+    `${museInAll.length} inside the ALL window`);
 
   if (failed) {
     console.log('\n--- server log ---');
