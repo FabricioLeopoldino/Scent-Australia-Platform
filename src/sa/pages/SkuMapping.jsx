@@ -75,7 +75,9 @@ export default function SkuMapping({ user }) {
 
   const handleAddMissingVariants = async (product) => {
     if (product.category === 'OILS') {
-      const missingSkus = Object.values(product.productObj.shopifySkus || {}).filter((s) => s && !shopifyStatuses[s]);
+      // Missing from the MAIN product (P7), as the server counts them: a size that
+      // only sits on an old one-per-size listing is still to be added.
+      const missingSkus = Object.values(product.productObj.shopifySkus || {}).filter((s) => s && !shopifyStatuses[s]?.main);
       setPublishFor({ product: product.productObj, mode: 'add', missingSkus });
       return;
     }
@@ -198,10 +200,14 @@ export default function SkuMapping({ user }) {
 
   const mappings = generateMappings();
 
-  // Check if any variant of a product is already in Shopify (to avoid duplicate publish)
-  const hasAnyVariantInShopify = (productObj) => {
+  // Does the oil already have its MAIN product (P7)? The old one-per-size listings
+  // do not count: those are exactly the oils Publish is for (it then reminds to
+  // archive them). Same rule as the server's publishOil / addMissingOilSizes.
+  // Code review, 5 Nov 2026: this used to ask "any listing at all", which hid
+  // Publish for every oil still on old listings.
+  const hasMainInShopify = (productObj) => {
     if (!productObj?.shopifySkus || typeof productObj.shopifySkus !== 'object') return false;
-    return Object.values(productObj.shopifySkus).some(sku => sku && shopifyStatuses[sku]);
+    return Object.values(productObj.shopifySkus).some(sku => sku && shopifyStatuses[sku]?.main);
   };
 
   const getShopifyStatusLabel = (sku) => {
@@ -345,21 +351,21 @@ export default function SkuMapping({ user }) {
                 <tbody>
                   {filteredMappings.map(mapping => {
                     const statusBadge = getShopifyStatusBadge(mapping.shopifySku);
-                    const anyInShopify = hasAnyVariantInShopify(mapping.productObj);
-                    // Count missing variants for this product
+                    const hasMain = hasMainInShopify(mapping.productObj);
+                    // Sizes not yet on the MAIN product (old listings do not count)
                     const missingCount = mapping.productObj?.shopifySkus
-                      ? Object.values(mapping.productObj.shopifySkus).filter(s => s && !shopifyStatuses[s]).length
+                      ? Object.values(mapping.productObj.shopifySkus).filter(s => s && !shopifyStatuses[s]?.main).length
                       : 0;
-                    // Publish: no variants in Shopify at all
+                    // Publish: the oil has no main product yet (it may still have old listings)
                     const canPublish = shopifyEnabled
                       && mapping.isFirstVariant
                       && mapping.category === 'OILS'
-                      && !anyInShopify;
-                    // Add Missing: some variants exist but some are missing
+                      && !hasMain;
+                    // Add Missing: the main product exists and lacks some sizes
                     const canAddMissing = shopifyEnabled
                       && mapping.isFirstVariant
                       && mapping.category === 'OILS'
-                      && anyInShopify
+                      && hasMain
                       && missingCount > 0;
                     return (
                       <tr key={mapping.id}>

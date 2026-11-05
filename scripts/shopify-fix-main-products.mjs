@@ -102,13 +102,16 @@ if (!APPLY) { console.log('\nNothing written. Run with --apply to make these cha
 let ok = 0; const failed = [];
 for (const x of plan) {
   try {
-    for (const o of x.off) {
-      const r = await gql(`mutation($id: ID!, $input: [PublicationInput!]!) { publishableUnpublish(id: $id, input: $input) { userErrors { message } } }`, { id: x.id, input: [{ publicationId: o.id }] });
-      if (r.publishableUnpublish.userErrors.length) throw new Error(r.publishableUnpublish.userErrors.map((e) => e.message).join('; '));
-    }
+    // Point of Sale FIRST, the other channels off only after it worked. The other
+    // order left a product on NO channel whenever the publish failed — for
+    // example while the app still lacks write_publications (code review, 5 Nov).
     if (!x.onPos) {
       const r = await gql(`mutation($id: ID!, $input: [PublicationInput!]!) { publishablePublish(id: $id, input: $input) { userErrors { message } } }`, { id: x.id, input: [{ publicationId: pos.id }] });
       if (r.publishablePublish.userErrors.length) throw new Error(r.publishablePublish.userErrors.map((e) => e.message).join('; '));
+    }
+    for (const o of x.off) {
+      const r = await gql(`mutation($id: ID!, $input: [PublicationInput!]!) { publishableUnpublish(id: $id, input: $input) { userErrors { message } } }`, { id: x.id, input: [{ publicationId: o.id }] });
+      if (r.publishableUnpublish.userErrors.length) throw new Error(r.publishableUnpublish.userErrors.map((e) => e.message).join('; '));
     }
     if (x.desc) {
       const r = await gql(`mutation($product: ProductUpdateInput!) { productUpdate(product: $product) { userErrors { message } } }`, { product: { id: x.id, descriptionHtml: x.desc } });
