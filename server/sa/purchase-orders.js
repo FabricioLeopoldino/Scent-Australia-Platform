@@ -27,7 +27,9 @@ const json = (v) => {
 };
 const sydneyDate = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
 // The digits of a PO number, so "#PO283", "PO283" and "po283" are one order.
-export const poDigits = (s) => (String(s || '').match(/PO\s*-?\s*(\d+)/i) || [])[1] || null;
+// "PO" must start a word, so "SUPPO12" is not PO 12 (code review, 5 Nov; the
+// hand-typed numbers in the data are "PO283" and "po283", both still matched).
+export const poDigits = (s) => (String(s || '').match(/(?<![A-Za-z])PO\s*-?\s*(\d+)/i) || [])[1] || null;
 export const AUTO_BY = 'Automatic (Shopify)';
 
 export async function migratePurchaseOrders() {
@@ -199,7 +201,10 @@ export function buildOrders({ read, rows, regs, since }) {
       const r = byLine.get(l.lineId);
       if (r) {
         used.add(r.id);
-        return { ...base, ...rowFields(r), changedInShopify: l.matched && Math.abs(r.q - l.incomingQty) > 0.001 };
+        // Not on a line a person already cancelled or closed short: it would sit
+        // in "Needs attention" for good, and taking the figure would reopen it.
+        const settled = ['cancelled', 'closed_short'].includes(rowState(r));
+        return { ...base, ...rowFields(r), changedInShopify: !settled && l.matched && Math.abs(r.q - l.incomingQty) > 0.001 };
       }
       const hold = holdOf(o, l, ctx);
       return {
@@ -438,10 +443,16 @@ router.patch('/shopify-purchase-orders/line/:poId', async (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ error: 'Only admin or root can change an accepted quantity' });
   try {
     const row = (await pool.query(
-      `SELECT po.id, po.shopify_line_id, po.quantity::float q, po.quantity_received::float rec, po.order_number, p.unit
+      `SELECT po.id, po.shopify_line_id, po.quantity::float q, po.quantity_received::float rec, po.order_number, p.unit,
+              po.status, po.closed_short
          FROM purchase_orders po JOIN products p ON p.id = po.product_id
         WHERE po.id = $1 AND po.shopify_line_id IS NOT NULL`, [req.params.poId])).rows[0];
     if (!row) return res.status(404).json({ error: 'Not an accepted Shopify purchase order' });
+    // A person cancelled or closed this line here, with a reason. A later edit in
+    // Shopify must not quietly reopen it (code review, 5 Nov 2026).
+    if (row.status === 'cancelled' || row.closed_short) {
+      return res.status(409).json({ error: `This line was ${row.status === 'cancelled' ? 'cancelled' : 'closed short'} here. A change in Shopify does not reopen it.` });
+    }
     const { orders } = await readIncomingPurchaseOrders(await loadProducts());
     const line = orders.flatMap((o) => o.lines).find((l) => l.lineId === row.shopify_line_id);
     if (!line) return res.status(409).json({ error: 'That line is no longer in Shopify. Cancel it instead.' });
@@ -477,6 +488,13 @@ const likeEscape = (s) => String(s).replace(/[\\%_]/g, (c) => `\\${c}`);
  * on the same product. Each comes with where it went: its sector movements,
  * or, before Stage 1, all of an oil to SA.
  */
+// Known limit (code review, 5 Nov 2026): an older receipt is found by its note's
+// order number and product, so when one PO has the same product on two lines,
+// each line's history shows both lines' older receipts. In the data that is 3
+// orders typed by hand (30.04.26 OIL_139; 2.06.26 OILS_17 and OIL_37), fully
+// received before Stage 1, so everything went to SA. A correction stays capped by
+// the line's OWN quantity received and comes off SA: it cannot move stock wrongly.
+// Every receipt since H4 carries purchase_order_id and is exact.
 async function lineHistory(db, po) {
   const txs = (await db.query(`
     SELECT t.id, t.type, t.quantity::float AS qty, t.reason, t.notes, u.name AS by,
@@ -561,6 +579,12 @@ router.post('/purchase-orders/:poId/correct', async (req, res) => {
       take = Array.isArray(lines) && lines.length
         ? lines.map((l) => ({ from: l?.from, quantity: parseFloat(l?.quantity) })).filter((l) => l.quantity > 0)
         : stocks.length === 1 ? [{ from: stocks[0], quantity: qty }] : [];
+      // One entry per stock before any limit is checked: two entries for MUSE
+      // would each pass "≤ what MUSE received" and together take more (code review, 5 Nov).
+      take = Object.values(take.reduce((m, l) => {
+        (m[l.from] ||= { from: l.from, quantity: 0 }).quantity += l.quantity;
+        return m;
+      }, {}));
       if (!take.length) {
         throw bad(`This line was received into ${stocks.map(sectorLabel).join(' and ')}. Say how much comes off each.`, { code: 'NEEDS_LINES', net });
       }

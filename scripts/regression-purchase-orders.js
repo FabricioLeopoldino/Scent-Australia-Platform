@@ -161,7 +161,13 @@ console.log('\nEdited in Shopify after accepting');
   const po = order('#PO330', { date: '2026-11-10', lines: [oil('L1', 'SANTAL', 20)] });
   const o = find(build([po], [row('SANTAL', '#PO330', 10, { line: 'L1', gid: po.shopifyId })]), '#PO330');
   record('accepted as 10 L, now 20 L in Shopify: flagged, needs a person', lineOf(o, 'L1')?.changedInShopify === true && o?.attention === true);
+  // Code review, 5 Nov: a line a person settled here is not reopened by Shopify.
+  const c = find(build([po], [row('SANTAL', '#PO330', 10, { line: 'L1', gid: po.shopifyId, status: 'cancelled' })]), '#PO330');
+  record('the same edit on a CANCELLED line: not flagged, no attention', lineOf(c, 'L1')?.changedInShopify === false && c?.attention === false);
+  const s = find(build([po], [row('SANTAL', '#PO330', 10, { line: 'L1', gid: po.shopifyId, status: 'received', rec: 4, closedShort: true })]), '#PO330');
+  record('the same edit on a line CLOSED SHORT: not flagged', lineOf(s, 'L1')?.changedInShopify === false);
 }
+record('"PO" inside a word is not a PO number ("SUPPO12", "ESPO-7")', poDigits('SUPPO12') === null && poDigits('ESPO-7') === null);
 
 console.log('\nOne Shopify line → a quantity (D1, the sale\'s rule)');
 {

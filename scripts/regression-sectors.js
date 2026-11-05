@@ -729,6 +729,11 @@ async function runH4() {
   r = await correct(m2, { quantity: 3 * L, reason: 'short', mode: 'still_due', lines: [{ from: 'MUSE_LIBRARY', quantity: 1 * L }, { from: 'MUSE', quantity: 2 * L }] });
   record('H4: … and takes it from each, as told', r.status === 200, JSON.stringify(r.json));
   await check('H4: the split correction', H, { SA: 90, MUSE_LIBRARY: 5, MUSE: 2 });
+  // Code review, 5 Nov: the same stock twice. Each 2 L entry is ≤ the 2 L MUSE
+  // received, but together they are 4 L: refused, nothing moves.
+  r = await correct(m2, { quantity: 4 * L, reason: 'short', mode: 'still_due', lines: [{ from: 'MUSE', quantity: 2 * L }, { from: 'MUSE', quantity: 2 * L }] });
+  record('H4: one stock named twice is added up before the limit — refused', r.status === 400 && /MUSE/.test(r.json?.error || ''), JSON.stringify(r.json));
+  await check('H4: … and nothing moved', H, { SA: 90, MUSE_LIBRARY: 5, MUSE: 2 });
   const hist = (await api('root', 'GET', `/api/sa/purchase-orders/history?ids=${m2}`)).json?.[m2] || [];
   record('H4: the line history lists the receipt and the correction, with their stocks',
     hist.length === 2 && hist[0].kind === 'receipt' && hist[0].lines.length === 2 && hist[1].kind === 'correction' && near(hist[1].quantity, 3 * L),
@@ -745,6 +750,13 @@ async function runH4() {
     && c1row?.cancelled_by === '__regression_sec', JSON.stringify(c1row));
   r = await receive(c1, { quantityReceived: 1 * L });
   record('H4 R5: a cancelled line receives nothing', r.status === 400 && /cancelled/.test(r.json?.error || ''), r.json?.error);
+  // Code review, 5 Nov: "Take the new figure" must not reopen it. Made a Shopify
+  // line here so the route reaches its check; it refuses before reading Shopify.
+  await db.query(`UPDATE purchase_orders SET shopify_line_id = 'TESTREG-SEC-H4-LINE' WHERE id = $1`, [c1]);
+  r = await api('root', 'PATCH', `/api/sa/shopify-purchase-orders/line/${c1}`);
+  const c1after = (await db.query(`SELECT status FROM purchase_orders WHERE id = $1`, [c1])).rows[0];
+  record('H4 R5: a change in Shopify does not reopen a cancelled line',
+    r.status === 409 && c1after?.status === 'cancelled', `status=${r.status} row=${c1after?.status}`);
   r = await api('root', 'POST', `/api/sa/purchase-orders/${m2}/cancel`, { reason: 'the rest is not coming' });
   record('H4 R5: a line with receipts is closed short instead', r.status === 200 && r.json?.status === 'closed_short', JSON.stringify(r.json));
   r = await api('root', 'DELETE', `/api/sa/purchase-orders/${c1}`);
