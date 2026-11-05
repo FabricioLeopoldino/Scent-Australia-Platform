@@ -1146,7 +1146,12 @@ export default function ProductManagement({ user, libraryMode = false, company =
         </div>
 
         <div style={{ marginTop: '16px', fontSize: '14px', color: 'rgba(232,234,242,0.45)' }}>
-          Showing {filteredProducts.length} of {products.length} products
+          {/* "of" = this page's own products (its kind, its company, active or
+              inactive as shown), not every product loaded — the walk-through of
+              6 Nov read "28 of 781" on a page of 96. */}
+          Showing {filteredProducts.length} of {products.filter((p) => (libraryMode ? p.category === 'OILS' : p.category !== 'OILS')
+            && (!saView || isSaProduct(p))
+            && ((p.status || 'active') === (showInactive ? 'inactive' : 'active'))).length} products
         </div>
       </div>
 

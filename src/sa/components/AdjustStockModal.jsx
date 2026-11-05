@@ -138,6 +138,24 @@ export default function AdjustStockModal({ product, onClose, onDone, showToast }
             <input type="number" className="input" value={quantity} onChange={(e) => setQuantity(e.target.value)}
               placeholder={oil ? 'e.g. 10000 = 10 L' : `Enter quantity in ${unitWord}`} required min="1" step="any" />
             {oil && <MlHelper value={quantity} unit={product.unit} />}
+            {/* Right under the number that causes them (walk-through, 6 Nov): at the
+                bottom of the window they scrolled away and only a grey Confirm showed. */}
+            {belowZero && (
+              <div role="alert" style={{ color: '#f87171', fontSize: 12.5, fontWeight: 700, marginTop: 8 }}>
+                {label} holds {displayStock(held, product.unit)}. A removal can bring it to zero, not below.
+                If {label} used oil from SA's shelf, choose "Used in production" with the order number.
+              </div>
+            )}
+            {use && qty > held + 0.001 && (
+              <div style={{ color: '#fbbf24', fontSize: 12, marginTop: 8 }}>
+                {label} holds {displayStock(held, product.unit)}. The rest is taken from {stock === 'MUSE' ? 'SA' : 'MUSE (shared), then SA'}, recorded as used for {label}.
+              </div>
+            )}
+            {(!oil || stock === 'SA') && type === 'remove' && qty > bal('SA') + 0.001 && (
+              <div style={{ color: '#fbbf24', fontSize: 12, marginTop: 8 }}>
+                {oil ? 'SA' : 'It'} holds {displayStock(bal('SA'), product.unit)}. It will show as negative.
+              </div>
+            )}
           </div>
 
           <div className="form-group">
@@ -163,22 +181,6 @@ export default function AdjustStockModal({ product, onClose, onDone, showToast }
             <textarea className="input" rows="2" value={notes} onChange={(e) => setNotes(e.target.value)} required={reason === 'other'} />
           </div>
 
-          {belowZero && (
-            <div role="alert" style={{ color: '#f87171', fontSize: 12.5, fontWeight: 700, marginBottom: 10 }}>
-              {label} holds {displayStock(held, product.unit)}. A removal can bring it to zero, not below.
-              If {label} used oil from SA's shelf, choose "Used in production" with the order number.
-            </div>
-          )}
-          {use && qty > held + 0.001 && (
-            <div style={{ color: '#fbbf24', fontSize: 12, marginBottom: 10 }}>
-              {label} holds {displayStock(held, product.unit)}. The rest is taken from {stock === 'MUSE' ? 'SA' : 'MUSE (shared), then SA'}, recorded as used for {label}.
-            </div>
-          )}
-          {(!oil || stock === 'SA') && type === 'remove' && qty > bal('SA') + 0.001 && (
-            <div style={{ color: '#fbbf24', fontSize: 12, marginBottom: 10 }}>
-              {oil ? 'SA' : 'It'} holds {displayStock(bal('SA'), product.unit)}. It will show as negative.
-            </div>
-          )}
           {refused && (
             <div role="alert" style={{ padding: '10px 14px', borderRadius: 8, marginBottom: 12, fontSize: 13,
               background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.35)', color: '#f87171' }}>
