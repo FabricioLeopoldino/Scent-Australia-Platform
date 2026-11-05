@@ -3506,6 +3506,10 @@ router.get('/formulas', async (req, res) => {
 
 // ── Adjust ready formula stock (set absolute value) ──────────────────────
 router.put('/formulas/:id/ready-stock/adjust', async (req, res) => {
+  // Owner, 5 Nov 2026: setting a formula's ready stock outright is for the roles that
+  // see Formulas, not technicians (the menu hid it; the server never checked).
+  // Receive below stays open on purpose: Returns, which technicians use, adds through it.
+  if (req.user.role === 'technician') return res.status(403).json({ error: 'Not available for technicians' });
   const { quantityMl, userId } = req.body;
   const qty = parseFloat(quantityMl);
   if (isNaN(qty) || qty < 0) return res.status(400).json({ error: 'Invalid quantity' });

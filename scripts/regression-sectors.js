@@ -287,6 +287,16 @@ async function run() {
   record('refused: a technician moving oil', r.status === 403, `status=${r.status}`);
   r = await api('technician', 'POST', '/api/sa/fragrance-registrations', { productId: A, company: 'MUSE' });
   record('refused: a technician registering', r.status === 403, `status=${r.status}`);
+  // Formula ready stock (owner, 5 Nov): a technician may not SET it (Adjust), but
+  // Receive stays open because Returns adds through it. Quantity 0 is refused as
+  // invalid (400), past the role check, so nothing is written.
+  {
+    const fid = (await db.query(`SELECT id FROM sa.formulas ORDER BY id LIMIT 1`)).rows[0]?.id;
+    r = await api('technician', 'PUT', `/api/sa/formulas/${fid}/ready-stock/adjust`, { quantityMl: 0 });
+    record('refused: a technician setting a formula\'s ready stock', r.status === 403, `status=${r.status}`);
+    r = await api('technician', 'POST', `/api/sa/formulas/${fid}/ready-stock/receive`, { quantityMl: 0 });
+    record('a technician still reaches formula Receive (Returns uses it)', r.status === 400, `status=${r.status}`);
+  }
   r = await api('root', 'GET', '/api/sa/sectors/movements?limit=abc');
   record('movements: a limit that is not a number falls back to the default', r.status === 200 && Array.isArray(r.json));
   await check('after the refusals nothing moved', A, { SA: 129, MUSE: 1, MUSE_ATELIER: 25, MUSE_LIBRARY: 65 });
