@@ -9,13 +9,15 @@ import RegisterFragranceModal from './RegisterFragranceModal';
 // arrived (a typing error is refused, here and by the server, in the same
 // words); a part receipt is allowed — type less than is left on the order.
 // It opens with the whole delivery on SA's line, so one click receives it as
-// before Stage 1. Oil only: every other product keeps the old window.
+// before Stage 1. Anything that is not an oil (H4 D1: machines, spare parts,
+// raw materials) is SA's and is not split: the window asks only what arrived.
 // A Shopify PO names its company by its destination (P6, `destinationStock`):
 // then only that company's stocks are offered and the delivery starts on its
 // stock. If the server still refuses (another tab, an old screen), a pop-up
 // says what to check and how to put it right; the attempt is recorded.
 export default function ReceiveSplitModal({ poId, orderNumber, remaining, product, destinationStock = null, user, onClose, onDone, onRegistered, showToast }) {
   const isMl = product.unit === 'mL';
+  const isOil = !product.category || product.category === 'OILS';
   const unitWord = displayUnit(product.unit);
   const toUnit = (v) => (isMl ? Math.round(parseFloat(v) * 1000 * 1000) / 1000 : parseFloat(v));
   const fromUnit = (v) => (isMl ? v / 1000 : v);
@@ -40,7 +42,7 @@ export default function ReceiveSplitModal({ poId, orderNumber, remaining, produc
 
   const arrivedQty = parseFloat(arrived) || 0;
   const linesTotal = round3(Object.values(lines).reduce((s, v) => s + (parseFloat(v) || 0), 0));
-  const mismatch = Math.abs(linesTotal - arrivedQty) > 0.0005;
+  const mismatch = isOil && Math.abs(linesTotal - arrivedQty) > 0.0005;
   const overOrder = toUnit(arrivedQty || 0) > remaining + 0.001;
 
   const changeArrived = (v) => {
@@ -65,7 +67,7 @@ export default function ReceiveSplitModal({ poId, orderNumber, remaining, produc
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           quantityReceived: qty,
-          lines: stocks.filter((s) => parseFloat(lines[s.key]) > 0).map((s) => ({ to: s.key, quantity: toUnit(lines[s.key]) })),
+          ...(isOil && { lines: stocks.filter((s) => parseFloat(lines[s.key]) > 0).map((s) => ({ to: s.key, quantity: toUnit(lines[s.key]) })) }),
           notes: notes || (qty >= remaining - 0.001 ? 'Full quantity received' : `Partial quantity received: ${qty} of ${remaining}`),
           receivedBy: user?.username || user?.name || 'admin',
           userId: user?.id || null,
@@ -115,7 +117,7 @@ export default function ReceiveSplitModal({ poId, orderNumber, remaining, produc
               )}
             </div>
 
-            <div className="form-group">
+            {isOil && <div className="form-group">
               <label>Where it goes ({unitWord})</label>
               {dest && (
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
@@ -138,7 +140,7 @@ export default function ReceiveSplitModal({ poId, orderNumber, remaining, produc
                   ? `The lines add up to ${linesTotal} ${unitWord}; ${round3(arrivedQty)} ${unitWord} arrived.`
                   : `Lines: ${linesTotal} ${unitWord} of ${round3(arrivedQty)} ${unitWord} arrived.`}
               </small>
-            </div>
+            </div>}
 
             <div className="form-group">
               <label>Notes (optional)</label>

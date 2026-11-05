@@ -39,6 +39,13 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import pkg from 'pg';
+
+// Test copy only (5 Nov 2026). This suite boots its own server, and a server runs
+// its startup migrations; dotenv above reads the LIVE url. Same guard as regression-sa.js.
+if (!(process.env.PLATFORM_DATABASE_URL || '').includes('ep-old-water-') && process.env.REGRESSION_ALLOW_PRODUCTION !== '1') {
+  console.error('Refusing: PLATFORM_DATABASE_URL is not the sectors-dev branch (ep-old-water-). Set REGRESSION_ALLOW_PRODUCTION=1 to override.');
+  process.exit(1);
+}
 const { Pool } = pkg;
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');

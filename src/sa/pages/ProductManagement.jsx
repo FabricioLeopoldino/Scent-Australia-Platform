@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useSearch, useLocation } from 'wouter';
 import { useToast } from '../components/Toast';
 import ConfirmModal from '../components/ConfirmModal';
@@ -9,8 +9,9 @@ import BinLocationInput from '../components/BinLocationInput';
 import { GlowingEffect } from '../components/GlowingEffect';
 import MlHelper from '../components/MlHelper';
 import { LiquidMetalButton } from '../components/LiquidMetalButton';
-import ReceiveSplitModal from '../components/ReceiveSplitModal';
 import RegisterFragranceModal from '../components/RegisterFragranceModal';
+import AdjustStockModal from '../components/AdjustStockModal';
+import ProductSheet, { Swatch } from '../components/ProductSheet';
 import { SECTORS, destinationByStock } from '../../../shared/sectors.js';
 
 // libraryMode (D15 follow-up, 2026-07-30): renders this exact same page — same
@@ -28,6 +29,10 @@ import { SECTORS, destinationByStock } from '../../../shared/sectors.js';
 export default function ProductManagement({ user, libraryMode = false, company = null }) {
   const saView = libraryMode && company === 'SA';
   const fullLibrary = libraryMode && !company;
+  // Not libraryMode: SA's Stock Management (PRD_H2_STOCK_MANAGEMENT.md §2.2) —
+  // every non-oil product, which Products, Diffusers, Stock and Raw Materials
+  // used to show between them.
+  const stockMode = !libraryMode;
   const [, navigate] = useLocation();
   const showToast = useToast();
   const [confirmState, setConfirmState] = useState(null);
@@ -44,21 +49,14 @@ export default function ProductManagement({ user, libraryMode = false, company =
   // All stock only: which company the oil is registered with (S6).
   const [companyFilter, setCompanyFilter] = useState('ALL');
   const [registerFor, setRegisterFor] = useState(null);   // the oil open in the Register window
-  const [splitReceive, setSplitReceive] = useState(null); // { product, order } — an oil being received
+  const [adjustFor, setAdjustFor] = useState(null);       // the product open in the Adjust window (PRD_H2 §2.4)
+  const [sheetFor, setSheetFor] = useState(null);         // the product open in its sheet (PRD_H2 §2.3)
+  // Stock Management: the diffusers' colour, as round swatches (PRD_H2 §2.2).
+  const [colorFilter, setColorFilter] = useState('');
   const [registerInSa, setRegisterInSa] = useState(true); // Add Oil, All stock: register it in SA as well
   const [addForSku, setAddForSku] = useState(null);       // Add Oil opened from a PO line's unknown code
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
-
-  // Incoming Orders states
-  const [showIncomingModal, setShowIncomingModal] = useState(false);
-  const [incomingProduct, setIncomingProduct] = useState(null);
-  const [incomingFormData, setIncomingFormData] = useState({
-    orderNumber: '',
-    quantity: '',
-    estimatedDeliveryDate: '',
-    notes: ''
-  });
 
   // Sequence suggestion state
   const [seqSuggestion, setSeqSuggestion] = useState(null);
@@ -75,23 +73,6 @@ export default function ProductManagement({ user, libraryMode = false, company =
   const [allAliases, setAllAliases] = useState([]);
   const [aliasSearch, setAliasSearch] = useState('');
   const [allAliasesLoading, setAllAliasesLoading] = useState(false);
-
-  // Receive Orders states
-  const [showReceiveModal, setShowReceiveModal] = useState(false);
-  const [receivingOrder, setReceivingOrder] = useState(null);
-  const [receivingOption, setReceivingOption] = useState('full');
-  const [receiveFormData, setReceiveFormData] = useState({
-    quantityReceived: '',
-    notes: ''
-  });
-
-  // PO Bulk Import states
-  const poImportRef = useRef();
-  const [showImportModal, setShowImportModal]   = useState(false);
-  const [importPreviewing, setImportPreviewing] = useState(false);
-  const [importConfirming, setImportConfirming] = useState(false);
-  const [importPreview, setImportPreview]       = useState(null); // { preview: [], total }
-  const [importChecked, setImportChecked]       = useState({});   // rowIndex → bool
 
   const [formData, setFormData] = useState({
     name: '',
@@ -154,7 +135,7 @@ export default function ProductManagement({ user, libraryMode = false, company =
   // break again if someone removes the keys.
   useEffect(() => {
     filterProducts();
-  }, [products, categoryFilter, searchTerm, showIncomingOnly, showInactive, libraryMode, statusFilter, companyFilter]);
+  }, [products, categoryFilter, searchTerm, showIncomingOnly, showInactive, libraryMode, statusFilter, companyFilter, colorFilter]);
 
   // Compute next Tag/ProductCode suggestion when category changes (new product only)
   useEffect(() => {
@@ -225,6 +206,7 @@ export default function ProductManagement({ user, libraryMode = false, company =
     if (!libraryMode && categoryFilter !== 'ALL') {
       filtered = filtered.filter(p => p.category === categoryFilter);
     }
+    if (stockMode && colorFilter) filtered = filtered.filter((p) => p.color === colorFilter);
 
     if (searchTerm) {
       filtered = filtered.filter(p =>
@@ -335,134 +317,6 @@ export default function ProductManagement({ user, libraryMode = false, company =
     }
   };
 
-  const handleClearIncoming = async (poId) => {
-    if (!poId) { showToast('Cannot clear: order ID missing', 'error'); return; }
-    setConfirmState({ message: 'Clear this incoming order?', onConfirm: async () => {
-      setConfirmState(null);
-      try {
-        const res = await fetch(`/api/purchase-orders/${poId}?userId=${user?.id || ''}`, { method: 'DELETE' });
-        if (res.ok) {
-          showToast('Incoming order cleared!', 'success');
-          fetchProducts();
-        }
-      } catch (error) {
-        showToast('Error clearing incoming order: ' + error.message, 'error');
-      }
-    }});
-  };
-
-  const handleOpenIncomingModal = (product) => {
-    setIncomingProduct(product);
-    setIncomingFormData({
-      orderNumber: '',
-      quantity: '',
-      estimatedDeliveryDate: '',
-      notes: ''
-    });
-    setShowIncomingModal(true);
-  };
-
-  const handleAddIncoming = async (e) => {
-    e.preventDefault();
-
-    if (!incomingFormData.orderNumber || !incomingFormData.quantity) {
-      showToast('Please fill in PO Number and Quantity', 'warning');
-      return;
-    }
-
-    try {
-      const res = await fetch(`/api/products/${incomingProduct.id}/incoming`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          orderNumber: incomingFormData.orderNumber,
-          quantity: parseFloat(incomingFormData.quantity),
-          supplier: incomingProduct.supplier,
-          notes: incomingFormData.notes,
-          estimatedDeliveryDate: incomingFormData.estimatedDeliveryDate || null,
-          addedBy: user?.username || user?.name || 'admin',
-          userId: user?.id || null
-        })
-      });
-
-      if (res.ok) {
-        showToast('Incoming order added successfully!', 'success');
-        setShowIncomingModal(false);
-        setIncomingProduct(null);
-        setIncomingFormData({ orderNumber: '', quantity: '', estimatedDeliveryDate: '', notes: '' });
-        fetchProducts();
-      } else {
-        const error = await res.json();
-        showToast(error.error || 'Error adding incoming order', 'error');
-      }
-    } catch (error) {
-      showToast('Error adding incoming order: ' + error.message, 'error');
-    }
-  };
-
-  const handleOpenReceiveModal = (product, order) => {
-    if (!order.id) {
-      showToast('Legacy order — clear it and re-add to receive stock', 'error');
-      return;
-    }
-    // An oil is received and split between the stocks (Stage 1 §2.3) — the
-    // same window on All stock and SA Fragrances, opening with all of it on SA.
-    if (product.category === 'OILS') { setSplitReceive({ product, order }); return; }
-    setIncomingProduct(product);
-    setReceivingOrder(order);
-    setReceivingOption('full');
-    setReceiveFormData({
-      quantityReceived: order.quantity.toString(),
-      notes: ''
-    });
-    setShowReceiveModal(true);
-  };
-
-  const handleReceiveIncoming = async (e) => {
-    e.preventDefault();
-
-    const quantityToReceive = receivingOption === 'full'
-      ? receivingOrder.quantity
-      : parseFloat(receiveFormData.quantityReceived);
-
-    if (!quantityToReceive || quantityToReceive <= 0) {
-      showToast('Please enter a valid quantity', 'warning');
-      return;
-    }
-
-    try {
-      const res = await fetch(`/api/purchase-orders/${receivingOrder.id}/receive`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          quantityReceived: quantityToReceive,
-          notes: receiveFormData.notes || (receivingOption === 'full'
-            ? 'Full quantity received'
-            : `Partial quantity received: ${quantityToReceive} of ${receivingOrder.quantity}`),
-          receivedBy: user?.username || 'admin',
-          userId: user?.id || null
-        })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        const displayVal = incomingProduct.unit === 'mL' ? `${(data.newStock/1000).toFixed(3)} L` : `${data.newStock} ${incomingProduct.unit}`;
-        showToast(`Stock updated successfully! New stock: ${displayVal}`, 'success');
-        setShowReceiveModal(false);
-        setIncomingProduct(null);
-        setReceivingOrder(null);
-        setReceivingOption('full');
-        setReceiveFormData({ quantityReceived: '', notes: '' });
-        fetchProducts();
-      } else {
-        const error = await res.json();
-        showToast(error.error || 'Error receiving incoming order', 'error');
-      }
-    } catch (error) {
-      showToast('Error receiving incoming order: ' + error.message, 'error');
-    }
-  };
-
   const handleOpenAliasModal = async (product) => {
     setAliasProduct(product);
     setNewAlias('');
@@ -549,90 +403,6 @@ export default function ProductManagement({ user, libraryMode = false, company =
     }
   };
 
-  // ── PO Bulk Import handlers ──────────────────────────────────────────
-  const handleDownloadTemplate = async () => {
-    try {
-      // Platform port: the fetch interceptor injects the Bearer token — the
-      // manual header (old 'token' localStorage key) would override it with null.
-      const res = await fetch('/api/po/template');
-      if (!res.ok) throw new Error('Download failed');
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'PO_Template.xlsx';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      showToast('Error downloading template: ' + err.message, 'error');
-    }
-  };
-
-  const handleImportFileSelect = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    e.target.value = '';
-    setImportPreviewing(true);
-    setImportPreview(null);
-    setShowImportModal(true);
-    try {
-      const fd = new FormData();
-      fd.append('file', file);
-      const res = await fetch('/api/po/import/preview', { method: 'POST', body: fd });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Preview failed');
-      setImportPreview(data);
-      // Pre-check all importable rows
-      const checked = {};
-      data.preview.forEach(r => { if (r.importable) checked[r.rowIndex] = true; });
-      setImportChecked(checked);
-    } catch (err) {
-      showToast('Import preview failed: ' + err.message, 'error');
-      setShowImportModal(false);
-    } finally {
-      setImportPreviewing(false);
-    }
-  };
-
-  const handleConfirmImport = async () => {
-    if (!importPreview) return;
-    const toCreate = importPreview.preview
-      .filter(r => importChecked[r.rowIndex] && r.importable)
-      .map(r => ({
-        productId:       r.matched.id,
-        productName:     r.matched.name,
-        productUnit:     r.matched.unit,
-        productCategory: r.matched.category || '',
-        productCode:     r.matched.productCode,
-        poNumber:        r.poNumber,
-        quantityMl:      r.quantityMl,
-        etaRaw:          r.etaRaw,
-        notes:           r.notes,
-      }));
-    if (toCreate.length === 0) { showToast('No valid rows selected', 'warning'); return; }
-    setImportConfirming(true);
-    try {
-      const res = await fetch('/api/po/import/confirm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows: toCreate, userId: user?.id || null, importedBy: user?.name || user?.username || 'import' }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Import failed');
-      showToast(`✅ ${data.created} PO${data.created !== 1 ? 's' : ''} created${data.skipped ? `, ${data.skipped} skipped (duplicates)` : ''}`, 'success');
-      setShowImportModal(false);
-      setImportPreview(null);
-      setImportChecked({});
-      fetchProducts();
-    } catch (err) {
-      showToast('Import failed: ' + err.message, 'error');
-    } finally {
-      setImportConfirming(false);
-    }
-  };
-
   const handleEdit = (product) => {
     setAddForSku(null);
     setEditingProduct(product);
@@ -706,6 +476,29 @@ export default function ProductManagement({ user, libraryMode = false, company =
     return badges[category] || 'badge-gray';
   };
 
+  // The sheet's actions: today's operations for this place, each with the
+  // permission it had — admin and root act, everyone else reads (PRD_H2 A1).
+  // SA Fragrances has no Adjust: an oil is adjusted in the Fragrance Library (O1).
+  const sheetActions = (p) => {
+    if (!['admin', 'root'].includes(user.role)) return [];
+    const go = (fn) => () => { setSheetFor(null); fn(); };
+    const inactive = (p.status || 'active') === 'inactive';
+    return [
+      ...(saView ? [] : [{ key: 'adjust', label: 'Adjust stock', primary: true, onClick: go(() => setAdjustFor(p)) }]),
+      ...(fullLibrary ? [
+        { key: 'move', label: 'Move', title: 'Transfer this oil between the stocks', onClick: go(() => navigate(`/transfers?oil=${encodeURIComponent(p.id)}`)) },
+        { key: 'register', label: 'Register', title: 'Register this oil in SA or MUSE', onClick: go(() => setRegisterFor(p)) },
+      ] : []),
+      { key: 'edit', label: 'Edit', onClick: go(() => handleEdit(p)) },
+      { key: 'aliases', label: 'Aliases', title: 'Alternative names for this product', onClick: go(() => handleOpenAliasModal(p)) },
+      { key: 'status', label: inactive ? '↑ Reactivate' : '↓ Deactivate', onClick: go(() => handleToggleStatus(p)) },
+      { key: 'delete', label: 'Delete', danger: true, onClick: go(() => handleDelete(p.id)) },
+    ];
+  };
+  // The colours the listed products carry, for the swatches (only diffusers have one today).
+  const colours = stockMode ? [...new Set(products.filter((p) => p.category !== 'OILS' && p.color
+    && (p.status || 'active') === (showInactive ? 'inactive' : 'active')).map((p) => p.color))].sort() : [];
+
   if (loading) {
     return (
       <div className="container" style={{ paddingTop: '40px' }}>
@@ -719,13 +512,21 @@ export default function ProductManagement({ user, libraryMode = false, company =
   return (
     <div className="container" style={{ paddingTop: '40px' }}>
       <div className="page-header">
-        <h2 className="page-title">{saView ? 'SA Fragrances' : fullLibrary ? 'All stock' : 'Product Management'}</h2>
+        <h2 className="page-title">{saView ? 'SA Fragrances' : fullLibrary ? 'All stock' : 'Stock Management'}</h2>
         <p style={{ color: 'rgba(232,234,242,0.45)', marginTop: '8px' }}>
           {saView ? "SA's oils — SA's balance. The rest is in the Fragrance Library."
             : fullLibrary ? 'Every oil — main store, SA and MUSE'
-            : 'Manage all products across categories'}
+            : 'Diffusers, spare parts and raw materials. Click a name to open its sheet.'}
         </p>
       </div>
+
+      {/* An old Stock page bookmark (PRD_H2 §2.1): oils moved, say where. */}
+      {stockMode && new URLSearchParams(search).get('from') === 'stock' && (
+        <div style={{ padding: '10px 14px', borderRadius: 8, marginBottom: 16, fontSize: 13,
+          background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.3)', color: '#7dd3fc' }}>
+          Fragrance oils are adjusted in the Fragrance Library: open the oil in All stock and choose Adjust stock.
+        </div>
+      )}
 
       {/* Action Buttons */}
       <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -746,28 +547,9 @@ export default function ProductManagement({ user, libraryMode = false, company =
           🏷️ {showAllAliases ? 'Hide Aliases' : 'View All Aliases'}
         </button>
 
-        {['admin', 'root'].includes(user.role) && (
-          <>
-            <button
-              className="btn"
-              onClick={handleDownloadTemplate}
-              style={{ background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', border: '1px solid rgba(99,102,241,0.4)', display: 'flex', alignItems: 'center', gap: 6 }}
-            >
-              📥 Download PO Template
-            </button>
-            <button
-              className="btn"
-              onClick={() => poImportRef.current?.click()}
-              style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)', display: 'flex', alignItems: 'center', gap: 6 }}
-            >
-              📤 Import POs
-            </button>
-            <input ref={poImportRef} type="file" accept=".xlsx,.xls" onChange={handleImportFileSelect} style={{ display: 'none' }} />
-          </>
-        )}
-
         {/* Right-side group: BOM (irrelevant to raw oils, hidden in libraryMode) + Add */}
         <div style={{ display: 'flex', gap: 12, marginLeft: 'auto', alignItems: 'center' }}>
+          {/* H3: one button to the BOM section; the Diffuser BOM and Formulas are its tabs. */}
           {!libraryMode && <LiquidMetalButton label="🧩 BOM" width={108} onClick={() => window.location.href = '/sa/bom'} />}
           {['admin', 'root'].includes(user.role) && (
             <button
@@ -877,12 +659,13 @@ export default function ProductManagement({ user, libraryMode = false, company =
             {/* Category chips hidden in libraryMode — this page is oils-only by design,
                 nothing to switch between. "Oils" removed from the generic page's chips —
                 oils are excluded here unconditionally; manage them in the Fragrance Library. */}
+            {/* No "Scented" chip: the 354 retired Scented products stay out (O5)
+                and show only under Show Inactive. */}
             {!libraryMode && [
               { value: 'ALL', label: 'All' },
-              { value: 'SA_SCENTED_PRODUCTS', label: 'Scented' },
-              { value: 'SCENT_MACHINES', label: 'Diffuser Machines' },
-              { value: 'MACHINES_SPARES', label: 'Spares' },
-              { value: 'RAW_MATERIALS', label: 'Raw Materials' }
+              { value: 'SCENT_MACHINES', label: 'Diffusers' },
+              { value: 'MACHINES_SPARES', label: 'Spare parts' },
+              { value: 'RAW_MATERIALS', label: 'Raw materials' }
             ].map(cat => (
               <button
                 key={cat.value}
@@ -973,6 +756,29 @@ export default function ProductManagement({ user, libraryMode = false, company =
             ))}
           </div>
         </div>
+        {/* Colour swatches (PRD_H2 §2.2): round, named on hover and for screen
+            readers, a ring when chosen. Only where the listed products carry a
+            colour — today the diffusers. */}
+        {stockMode && colours.length > 0 && ['ALL', 'SCENT_MACHINES'].includes(categoryFilter) && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' }} role="group" aria-label="Filter by colour">
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Colour</span>
+            {colours.map((c) => (
+              <button key={c} type="button" onClick={() => setColorFilter((v) => (v === c ? '' : c))}
+                aria-pressed={colorFilter === c} title={c} aria-label={`Colour ${c}`}
+                style={{ width: 30, height: 30, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'pointer', background: 'transparent', transition: 'box-shadow 150ms',
+                  border: colorFilter === c ? '2px solid #3b82f6' : '1px solid var(--border)',
+                  boxShadow: colorFilter === c ? '0 0 0 3px rgba(59,130,246,0.25)' : 'none' }}>
+                <Swatch color={c} size={18} />
+              </button>
+            ))}
+            {colorFilter && (
+              <button type="button" className="btn btn-secondary" onClick={() => setColorFilter('')} style={{ fontSize: 12, padding: '4px 10px' }}>
+                Any colour
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Products Table */}
@@ -990,13 +796,15 @@ export default function ProductManagement({ user, libraryMode = false, company =
           <table className="table">
             <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: '#0e0e1a' }}>
               <tr>
-                <th>Tag</th>
+                {/* Stock Management: the owner's columns (PRD_H2 §2.2). The tag
+                    stays searchable and the bin location is on the sheet. */}
+                {stockMode ? <th>Colour</th> : <th>Tag</th>}
                 <th>Product Code</th>
                 <th>Name</th>
                 {/* Always "Oils" on All stock; the room goes to the Stock cell's lines. */}
                 {!fullLibrary && <th>Category</th>}
-                <th>Bin Location</th>
-                <th>{fullLibrary ? 'Total stock' : 'Stock'}</th>
+                {!stockMode && <th>Bin Location</th>}
+                <th>{fullLibrary ? 'Total stock' : stockMode ? 'Current Stock' : 'Stock'}</th>
                 {/* No minimum or status on All stock: the central store holds every
                     company's oil, so no single minimum fits it (owner, 27 Oct). SA's
                     minimum and status live on SA Fragrances. */}
@@ -1025,12 +833,20 @@ export default function ProductManagement({ user, libraryMode = false, company =
                       borderLeft: '4px solid rgba(148,163,184,0.4)'
                     } : {}}
                   >
-                    <td style={{ fontFamily: 'monospace', fontSize: '12px' }}>{product.tag}</td>
+                    {stockMode
+                      ? <td style={{ textAlign: 'center' }}>{product.color ? <Swatch color={product.color} /> : <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
+                      : <td style={{ fontFamily: 'monospace', fontSize: '12px' }}>{product.tag}</td>}
                     <td style={{ fontFamily: 'monospace', fontSize: '12px' }}>{product.productCode}</td>
                     <td style={{ fontWeight: '600' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        {product.name}
-                        {product.color && (
+                        {/* Opens the product sheet, for everyone (PRD_H2 §2.3). */}
+                        <button type="button" onClick={() => setSheetFor(product)} title="Open the product sheet"
+                          style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 600,
+                            color: 'inherit', cursor: 'pointer', textAlign: 'left', textDecoration: 'underline',
+                            textDecorationColor: 'rgba(148,163,184,0.35)', textUnderlineOffset: 3 }}>
+                          {product.name}
+                        </button>
+                        {product.color && !stockMode && (
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5,
                             fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)',
                             background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)',
@@ -1076,11 +892,16 @@ export default function ProductManagement({ user, libraryMode = false, company =
                         <span className={`badge ${getCategoryBadge(product.category)}`}>
                           {getCategoryLabel(product.category)}
                         </span>
+                        {stockMode && product.sub_category && (
+                          <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 3 }}>{product.sub_category}</div>
+                        )}
                       </td>
                     )}
-                    <td style={{ fontSize: '12px', color: 'rgba(232,234,242,0.45)' }}>
-                      {product.bin_location || '-'}
-                    </td>
+                    {!stockMode && (
+                      <td style={{ fontSize: '12px', color: 'rgba(232,234,242,0.45)' }}>
+                        {product.bin_location || '-'}
+                      </td>
+                    )}
                     <td>
                       <span style={{
                         fontWeight: isNegative ? '900' : 'normal',
@@ -1193,43 +1014,12 @@ export default function ProductManagement({ user, libraryMode = false, company =
                                     cancelled in Shopify
                                   </span>
                                 )}
-                                {['admin', 'root'].includes(user.role) && (
-                                  <>
-                                    {!order.shopifyMissingSince && (
-                                    <button
-                                      onClick={() => handleOpenReceiveModal(product, order)}
-                                      style={{
-                                        background: '#10b981',
-                                        color: 'white',
-                                        border: 'none',
-                                        borderRadius: '4px',
-                                        cursor: 'pointer',
-                                        fontSize: '11px',
-                                        padding: '3px 8px',
-                                        fontWeight: '600',
-                                        marginLeft: 'auto'
-                                      }}
-                                      title="Mark as received"
-                                    >
-                                      ✓ Received
-                                    </button>
-                                    )}
-                                    <button
-                                      onClick={() => handleClearIncoming(order.id)}
-                                      style={{
-                                        background: 'none',
-                                        border: 'none',
-                                        cursor: 'pointer',
-                                        fontSize: '15px',
-                                        color: '#ef4444',
-                                        lineHeight: 1,
-                                        padding: '0 2px'
-                                      }}
-                                      title="Clear incoming order"
-                                    >
-                                      ✕
-                                    </button>
-                                  </>
+                                {user.role !== 'technician' && (
+                                  <button type="button" onClick={() => navigate(`~/purchase-orders?q=${encodeURIComponent(order.orderNumber)}`)}
+                                    style={{ marginLeft: order.shopifyMissingSince ? 8 : 'auto', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 11, fontWeight: 700, color: '#60a5fa' }}
+                                    title="Receive, correct or cancel it in Purchase Orders">
+                                    Open in Purchase Orders
+                                  </button>
                                 )}
                               </div>
                               {/* Row 2: ETA */}
@@ -1268,6 +1058,19 @@ export default function ProductManagement({ user, libraryMode = false, company =
                           >
                             Edit
                           </button>
+                          {/* Stock Management: what the Stock and Raw Materials pages
+                              did. All stock: one stock of the oil (PRD_H2 §2.4, O1).
+                              Not SA Fragrances: an oil is adjusted in the Library. */}
+                          {!saView && (
+                            <button
+                              className="btn btn-primary"
+                              onClick={() => setAdjustFor(product)}
+                              style={{ fontSize: '12px', padding: '6px 12px' }}
+                              title={fullLibrary ? 'Add or remove oil in one stock: SA or a MUSE stock' : 'Add or remove stock, with the reason and who did it'}
+                            >
+                              Adjust
+                            </button>
+                          )}
                           {fullLibrary && (
                             <>
                               <button
@@ -1284,26 +1087,25 @@ export default function ProductManagement({ user, libraryMode = false, company =
                                 onClick={() => navigate(`/transfers?oil=${encodeURIComponent(product.id)}`)}
                                 style={{ fontSize: '12px', padding: '6px 12px',
                                   ...((product.sectors?.MAIN || 0) > 0 && { borderColor: '#38bdf8', color: '#38bdf8' }) }}
-                                title="Transfer, count or use this oil between the stocks"
+                                title="Transfer this oil between the stocks"
                               >
                                 Move
                               </button>
                             </>
                           )}
-                          <button
-                            className="btn"
-                            onClick={() => handleOpenIncomingModal(product)}
-                            style={{
-                              fontSize: '12px',
-                              padding: '6px 12px',
-                              background: '#f59e0b',
-                              color: 'white',
-                              border: 'none'
-                            }}
-                            title="Add Incoming Order / Purchase Order"
-                          >
-                            + Incoming
-                          </button>
+                          {/* Stock Management keeps its rows short: the rest of the
+                              actions are on the sheet (PRD_H2 §2.2), one click away. */}
+                          {stockMode ? (
+                            <button
+                              className="btn btn-secondary"
+                              onClick={() => setSheetFor(product)}
+                              style={{ fontSize: '12px', padding: '6px 12px' }}
+                              title="More: Edit, Aliases, Deactivate, Delete — on the product sheet"
+                              aria-label={`More actions for ${product.name}`}
+                            >
+                              ⋯
+                            </button>
+                          ) : (<>
                           <button
                             className="btn btn-secondary"
                             onClick={() => handleOpenAliasModal(product)}
@@ -1332,6 +1134,7 @@ export default function ProductManagement({ user, libraryMode = false, company =
                           >
                             Delete
                           </button>
+                          </>)}
                         </div>
                       </td>
                     )}
@@ -1343,7 +1146,12 @@ export default function ProductManagement({ user, libraryMode = false, company =
         </div>
 
         <div style={{ marginTop: '16px', fontSize: '14px', color: 'rgba(232,234,242,0.45)' }}>
-          Showing {filteredProducts.length} of {products.length} products
+          {/* "of" = this page's own products (its kind, its company, active or
+              inactive as shown), not every product loaded — the walk-through of
+              6 Nov read "28 of 781" on a page of 96. */}
+          Showing {filteredProducts.length} of {products.filter((p) => (libraryMode ? p.category === 'OILS' : p.category !== 'OILS')
+            && (!saView || isSaProduct(p))
+            && ((p.status || 'active') === (showInactive ? 'inactive' : 'active'))).length} products
         </div>
       </div>
 
@@ -1651,122 +1459,6 @@ export default function ProductManagement({ user, libraryMode = false, company =
         </div>
       )}
 
-      {/* Add Incoming Order Modal */}
-      {showIncomingModal && incomingProduct && (
-        <div className="modal-overlay" onClick={() => setShowIncomingModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Add Incoming Order - Purchase Order</h2>
-              <button className="modal-close" onClick={() => setShowIncomingModal(false)}>×</button>
-            </div>
-
-            <form onSubmit={handleAddIncoming}>
-              <div style={{ marginBottom: '20px', padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px' }}>
-                <div style={{ fontWeight: '600', marginBottom: '4px' }}>Product:</div>
-                <div style={{ fontSize: '14px', color: 'rgba(232,234,242,0.45)' }}>{incomingProduct.name}</div>
-                <div style={{ fontSize: '12px', color: 'rgba(232,234,242,0.3)', marginTop: '4px' }}>
-                  Tag: {incomingProduct.tag} | Code: {incomingProduct.productCode}
-                </div>
-                {incomingProduct.supplier && (
-                  <div style={{ fontSize: '12px', color: 'rgba(232,234,242,0.3)', marginTop: '4px' }}>
-                    Supplier: {incomingProduct.supplier}
-                  </div>
-                )}
-              </div>
-
-              <div className="form-group">
-                <label>PO Number / Order Number *</label>
-                <input
-                  type="text"
-                  className="input"
-                  value={incomingFormData.orderNumber}
-                  onChange={(e) => setIncomingFormData({...incomingFormData, orderNumber: e.target.value})}
-                  placeholder="e.g., #PO166"
-                  required
-                />
-                <small style={{ fontSize: '12px', color: 'rgba(232,234,242,0.45)', marginTop: '4px', display: 'block' }}>
-                  Same PO number as in Shopify Purchase Order
-                </small>
-              </div>
-
-              <div className="form-group">
-                <label>Quantity * {incomingProduct.unit === 'mL' ? '(mL)' : `(${incomingProduct.unit})`}</label>
-                <input
-                  type="number"
-                  className="input"
-                  value={incomingFormData.quantity}
-                  onChange={(e) => setIncomingFormData({...incomingFormData, quantity: e.target.value})}
-                  placeholder={incomingProduct.unit === 'mL' ? 'e.g. 10000 = 10 L' : 'e.g. 10'}
-                  min="0"
-                  step="any"
-                  required
-                />
-                <MlHelper value={incomingFormData.quantity} unit={incomingProduct.unit} />
-              </div>
-
-              <div className="form-group">
-                <label>Estimated Time of Arrival (ETA)</label>
-                <input
-                  type="date"
-                  className="input"
-                  value={incomingFormData.estimatedDeliveryDate}
-                  onChange={(e) => setIncomingFormData({...incomingFormData, estimatedDeliveryDate: e.target.value})}
-                />
-                <small style={{ fontSize: '12px', color: 'rgba(232,234,242,0.45)', marginTop: '4px', display: 'block' }}>
-                  Expected date for the stock to arrive (Estimated Time of Arrival)
-                </small>
-              </div>
-
-              <div className="form-group">
-                <label>Notes (Optional)</label>
-                <textarea
-                  className="input"
-                  value={incomingFormData.notes}
-                  onChange={(e) => setIncomingFormData({...incomingFormData, notes: e.target.value})}
-                  placeholder="e.g., Wilmar BioEthanol, special handling required"
-                  rows="3"
-                />
-              </div>
-
-              {/* Auto-recorded info */}
-              <div style={{
-                padding: '10px 14px',
-                background: 'rgba(99,102,241,0.08)',
-                border: '1px solid rgba(99,102,241,0.2)',
-                borderRadius: '8px',
-                marginBottom: '16px',
-                fontSize: '12px',
-                color: 'rgba(232,234,242,0.55)'
-              }}>
-                <span style={{ color: '#a5b4fc', fontWeight: '600' }}>Auto-recorded: </span>
-                Created by <strong style={{ color: 'rgba(232,234,242,0.8)' }}>{user?.username || user?.name || 'admin'}</strong> on {new Date().toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-              </div>
-
-              <div style={{
-                padding: '12px',
-                background: 'rgba(251,191,36,0.08)',
-                borderRadius: '8px',
-                marginBottom: '20px',
-                fontSize: '13px',
-                color: '#fbbf24'
-              }}>
-                <strong>💡 Reminder:</strong> POs raised in Shopify arrive through the "Shopify POs" screen — add one here only if it was not raised in Shopify.
-                When the goods arrive, receive them HERE with ✓ Received on the product. Never click "Receive inventory" in Shopify.
-              </div>
-
-              <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowIncomingModal(false)}>
-                  Cancel
-                </button>
-                <button type="submit" className="btn btn-primary">
-                  Add Incoming Order
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* Aliases Modal */}
       {showAliasModal && aliasProduct && (
         <div className="modal-overlay" onClick={() => setShowAliasModal(false)}>
@@ -1866,160 +1558,28 @@ export default function ProductManagement({ user, libraryMode = false, company =
         />
       )}
 
-      {splitReceive && (
-        <ReceiveSplitModal
-          poId={splitReceive.order.id}
-          orderNumber={splitReceive.order.orderNumber}
-          remaining={splitReceive.order.quantity - (splitReceive.order.quantityReceived || 0)}
-          product={splitReceive.product}
-          destinationStock={splitReceive.order.stock}
-          user={user}
+      {adjustFor && (
+        <AdjustStockModal
+          product={adjustFor}
           showToast={showToast}
-          onClose={() => setSplitReceive(null)}
-          onRegistered={patchRegistrations}
+          onClose={() => setAdjustFor(null)}
           onDone={(data) => {
-            const id = splitReceive.product.id;
-            if (data?.sectors) {
-              setProducts((prev) => prev.map((p) => p.id === id
-                ? { ...p, currentStock: data.newStock, sectors: data.sectors, saStock: data.sectors.SA } : p));
-            }
-            setSplitReceive(null);
+            // The row at once, from the server's reply; the full list reloads after.
+            setProducts((prev) => prev.map((p) => (p.id === adjustFor.id
+              ? { ...p, currentStock: data.total, ...(data.sectors && { sectors: data.sectors, saStock: data.sectors.SA }) } : p)));
+            setAdjustFor(null);
             fetchProducts();
           }}
         />
       )}
 
-      {/* Receive Incoming Order Modal */}
-      {showReceiveModal && incomingProduct && receivingOrder && (
-        <div className="modal-overlay" onClick={() => { setShowReceiveModal(false); setReceivingOrder(null); setIncomingProduct(null); setReceivingOption('full'); setReceiveFormData({ quantityReceived: '', notes: '' }); }}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Receive Purchase Order</h2>
-              <button className="modal-close" onClick={() => { setShowReceiveModal(false); setReceivingOrder(null); setIncomingProduct(null); setReceivingOption('full'); setReceiveFormData({ quantityReceived: '', notes: '' }); }}>×</button>
-            </div>
-
-            <form onSubmit={handleReceiveIncoming}>
-              <div style={{ marginBottom: '20px', padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px' }}>
-                <div style={{ fontWeight: '600', marginBottom: '4px' }}>Product:</div>
-                <div style={{ fontSize: '14px', color: 'rgba(232,234,242,0.45)' }}>{incomingProduct.name}</div>
-                <div style={{ fontSize: '12px', color: 'rgba(232,234,242,0.3)', marginTop: '4px' }}>
-                  PO Number: {receivingOrder.orderNumber}
-                </div>
-                <div style={{ fontSize: '12px', color: 'rgba(232,234,242,0.3)', marginTop: '4px' }}>
-                  Expected Quantity: {displayStock(receivingOrder.quantity, incomingProduct.unit)}
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label style={{ fontWeight: '600', marginBottom: '12px', display: 'block' }}>
-                  Did you receive the full quantity?
-                </label>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  <label style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    padding: '12px',
-                    border: receivingOption === 'full' ? '2px solid #10b981' : '1px solid rgba(255,255,255,0.07)',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    background: receivingOption === 'full' ? 'rgba(34,197,94,0.08)' : 'rgba(255,255,255,0.04)'
-                  }}>
-                    <input
-                      type="radio"
-                      name="receivingOption"
-                      value="full"
-                      checked={receivingOption === 'full'}
-                      onChange={(e) => setReceivingOption(e.target.value)}
-                      style={{ marginRight: '8px' }}
-                    />
-                    <span style={{ fontWeight: receivingOption === 'full' ? '600' : '400' }}>
-                      Yes, I received {displayStock(receivingOrder.quantity, incomingProduct.unit)} in full
-                    </span>
-                  </label>
-
-                  <label style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    padding: '12px',
-                    border: receivingOption === 'partial' ? '2px solid #f59e0b' : '1px solid rgba(255,255,255,0.07)',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    background: receivingOption === 'partial' ? 'rgba(251,191,36,0.08)' : 'rgba(255,255,255,0.04)'
-                  }}>
-                    <input
-                      type="radio"
-                      name="receivingOption"
-                      value="partial"
-                      checked={receivingOption === 'partial'}
-                      onChange={(e) => setReceivingOption(e.target.value)}
-                      style={{ marginRight: '8px' }}
-                    />
-                    <span style={{ fontWeight: receivingOption === 'partial' ? '600' : '400' }}>
-                      No, I received a different quantity
-                    </span>
-                  </label>
-                </div>
-              </div>
-
-              {receivingOption === 'partial' && (
-                <div className="form-group">
-                  <label>Quantity Received *</label>
-                  <input
-                    type="number"
-                    className="input"
-                    value={receiveFormData.quantityReceived}
-                    onChange={(e) => setReceiveFormData({...receiveFormData, quantityReceived: e.target.value})}
-                    placeholder={`e.g., ${receivingOrder.quantity}`}
-                    min="0"
-                    step="any"
-                    required
-                  />
-                  <small style={{ fontSize: '12px', color: 'rgba(232,234,242,0.45)', marginTop: '4px', display: 'block' }}>
-                    Units: {incomingProduct.unit}{incomingProduct.unit === 'mL' ? ' (enter in mL, e.g. 10000 = 10 L)' : ''}
-                  </small>
-                </div>
-              )}
-
-              <div className="form-group">
-                <label>Notes (Optional)</label>
-                <textarea
-                  className="input"
-                  value={receiveFormData.notes}
-                  onChange={(e) => setReceiveFormData({...receiveFormData, notes: e.target.value})}
-                  placeholder="e.g., Received in good condition"
-                  rows="3"
-                />
-              </div>
-
-              <div style={{
-                padding: '12px',
-                background: 'rgba(34,197,94,0.08)',
-                borderRadius: '8px',
-                marginBottom: '20px',
-                fontSize: '13px',
-                color: '#10b981',
-                border: '1px solid #10b981'
-              }}>
-                <strong>✓ Automatic Actions:</strong>
-                <ul style={{ margin: '8px 0 0 20px', padding: 0 }}>
-                  <li>Stock will be updated automatically (+{receivingOption === 'full' ? receivingOrder.quantity : receiveFormData.quantityReceived || '___'} {incomingProduct.unit})</li>
-                  <li>Transaction will be created in History</li>
-                  <li>Incoming order badge will be removed</li>
-                </ul>
-              </div>
-
-              <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowReceiveModal(false)}>
-                  Cancel
-                </button>
-                <button type="submit" className="btn btn-primary" style={{ background: '#10b981', borderColor: '#10b981' }}>
-                  Confirm & Update Stock
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {sheetFor && (
+        <ProductSheet
+          product={products.find((p) => p.id === sheetFor.id) || sheetFor}
+          place={stockMode ? 'stock' : saView ? 'sa' : 'library'}
+          actions={sheetActions(products.find((p) => p.id === sheetFor.id) || sheetFor)}
+          onClose={() => setSheetFor(null)}
+        />
       )}
 
       {confirmState && (
@@ -2030,141 +1590,6 @@ export default function ProductManagement({ user, libraryMode = false, company =
         />
       )}
 
-      {/* ── PO Bulk Import Review Modal ── */}
-      {showImportModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-          <div style={{ background: '#0e0e1a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, width: '100%', maxWidth: 900, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 25px 60px rgba(0,0,0,0.6)' }}>
-
-            {/* Header */}
-            <div style={{ padding: '20px 24px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-              <div>
-                <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: '#e2e8f0' }}>📤 PO Import — Review</h2>
-                {importPreview && (
-                  <p style={{ margin: '4px 0 0', fontSize: 12, color: 'rgba(232,234,242,0.45)' }}>
-                    {importPreview.total} rows read from file ·{' '}
-                    <span style={{ color: '#4ade80' }}>{importPreview.preview.filter(r => r.importable).length} ready</span> ·{' '}
-                    <span style={{ color: '#f87171' }}>{importPreview.preview.filter(r => r.status === 'not_found').length} not found</span> ·{' '}
-                    <span style={{ color: '#fbbf24' }}>{importPreview.preview.filter(r => r.status === 'duplicate').length} duplicate</span>
-                  </p>
-                )}
-              </div>
-              <button onClick={() => { setShowImportModal(false); setImportPreview(null); setImportChecked({}); }}
-                style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: 8, color: '#e2e8f0', fontSize: 18, cursor: 'pointer', width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
-            </div>
-
-            {/* Body */}
-            <div style={{ overflowY: 'auto', flex: 1, padding: '0 0 8px' }}>
-              {importPreviewing ? (
-                <div style={{ textAlign: 'center', padding: 48, color: 'rgba(232,234,242,0.4)' }}>⏳ Reading file...</div>
-              ) : importPreview ? (
-                <>
-                  {/* Legend */}
-                  <div style={{ display: 'flex', gap: 16, padding: '12px 24px', fontSize: 11, color: 'rgba(232,234,242,0.45)', borderBottom: '1px solid rgba(255,255,255,0.06)', flexWrap: 'wrap' }}>
-                    <span>✅ Matched — ready to import</span>
-                    <span>⚠️ Name differs — still importable</span>
-                    <span>🔁 Duplicate — already exists, will skip</span>
-                    <span>❌ Not found — must be added manually</span>
-                  </div>
-
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                    <thead>
-                      <tr style={{ background: 'rgba(255,255,255,0.04)', position: 'sticky', top: 0, zIndex: 1 }}>
-                        <th style={{ padding: '10px 16px', textAlign: 'center', color: '#94a3b8', fontWeight: 600, width: 40 }}>
-                          <input type="checkbox"
-                            checked={importPreview.preview.filter(r => r.importable).every(r => importChecked[r.rowIndex])}
-                            onChange={e => {
-                              const next = { ...importChecked };
-                              importPreview.preview.filter(r => r.importable).forEach(r => { next[r.rowIndex] = e.target.checked; });
-                              setImportChecked(next);
-                            }}
-                          />
-                        </th>
-                        <th style={{ padding: '10px 12px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>Status</th>
-                        <th style={{ padding: '10px 12px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>Product Code / Tag</th>
-                        <th style={{ padding: '10px 12px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>Matched Product</th>
-                        <th style={{ padding: '10px 12px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>PO Number</th>
-                        <th style={{ padding: '10px 12px', textAlign: 'right', color: '#94a3b8', fontWeight: 600 }}>Qty (mL → L)</th>
-                        <th style={{ padding: '10px 12px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>ETA</th>
-                        <th style={{ padding: '10px 12px', textAlign: 'left', color: '#94a3b8', fontWeight: 600 }}>Notes</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {importPreview.preview.map(row => {
-                        const statusMap = {
-                          matched:      { icon: '✅', color: '#4ade80',  bg: 'transparent' },
-                          name_mismatch:{ icon: '⚠️', color: '#fbbf24',  bg: 'rgba(251,191,36,0.04)' },
-                          duplicate:    { icon: '🔁', color: '#60a5fa',  bg: 'rgba(37,99,235,0.04)' },
-                          not_found:    { icon: '❌', color: '#f87171',  bg: 'rgba(220,38,38,0.06)' },
-                          error:        { icon: '🚫', color: '#f87171',  bg: 'rgba(220,38,38,0.08)' },
-                        };
-                        const s = statusMap[row.status] || statusMap.error;
-                        const canCheck = row.importable;
-
-                        return (
-                          <tr key={row.rowIndex} style={{ background: s.bg, borderBottom: '1px solid rgba(255,255,255,0.04)', opacity: !canCheck ? 0.55 : 1 }}>
-                            <td style={{ padding: '10px 16px', textAlign: 'center' }}>
-                              {canCheck
-                                ? <input type="checkbox" checked={!!importChecked[row.rowIndex]} onChange={e => setImportChecked(prev => ({ ...prev, [row.rowIndex]: e.target.checked }))} />
-                                : <span style={{ fontSize: 10, color: 'rgba(232,234,242,0.2)' }}>—</span>}
-                            </td>
-                            <td style={{ padding: '10px 12px' }}>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: s.color }}>{s.icon} {row.status.replace('_', ' ')}</span>
-                              {row.errors.length > 0 && <div style={{ fontSize: 10, color: '#f87171', marginTop: 2 }}>{row.errors.join(', ')}</div>}
-                              {row.nameMismatch && <div style={{ fontSize: 10, color: '#fbbf24', marginTop: 2 }}>Name in file: "{row.rawName}"</div>}
-                              {row.isDuplicate && <div style={{ fontSize: 10, color: '#60a5fa', marginTop: 2 }}>PO already exists</div>}
-                            </td>
-                            <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontSize: 11, color: '#93c5fd' }}>
-                              {row.rawCode && <div>{row.rawCode}</div>}
-                              {row.rawTag && <div style={{ color: 'rgba(232,234,242,0.4)' }}>{row.rawTag}</div>}
-                            </td>
-                            <td style={{ padding: '10px 12px' }}>
-                              {row.matched
-                                ? <><div style={{ fontWeight: 600, color: '#e2e8f0' }}>{row.matched.name}</div><div style={{ fontSize: 10, color: 'rgba(232,234,242,0.4)' }}>{row.matched.productCode}</div></>
-                                : <span style={{ color: '#f87171', fontStyle: 'italic' }}>No match found</span>}
-                            </td>
-                            <td style={{ padding: '10px 12px', fontWeight: 700, color: '#fbbf24' }}>{row.poNumber || '—'}</td>
-                            <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: '#e2e8f0' }}>
-                              {row.quantityMl != null
-                                ? <><span>{row.quantityMl.toLocaleString()} mL</span><span style={{ color: '#60a5fa', marginLeft: 6 }}>= {(row.quantityMl / 1000).toFixed(3)} L</span></>
-                                : <span style={{ color: '#f87171' }}>—</span>}
-                            </td>
-                            <td style={{ padding: '10px 12px', color: '#10b981' }}>{row.etaRaw || <span style={{ color: 'rgba(232,234,242,0.25)' }}>—</span>}</td>
-                            <td style={{ padding: '10px 12px', color: 'rgba(232,234,242,0.45)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.notes || '—'}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </>
-              ) : null}
-            </div>
-
-            {/* Footer */}
-            {importPreview && (
-              <div style={{ padding: '16px 24px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, gap: 12 }}>
-                <div style={{ fontSize: 12, color: 'rgba(232,234,242,0.45)' }}>
-                  <strong style={{ color: '#4ade80' }}>{Object.values(importChecked).filter(Boolean).length}</strong> selected for import
-                  {importPreview.preview.filter(r => r.status === 'not_found').length > 0 && (
-                    <span style={{ marginLeft: 16, color: '#f87171' }}>
-                      ⚠️ {importPreview.preview.filter(r => r.status === 'not_found').length} product(s) not found — add them to the system first, then re-import
-                    </span>
-                  )}
-                </div>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <button onClick={() => { setShowImportModal(false); setImportPreview(null); setImportChecked({}); }}
-                    className="btn" style={{ background: 'rgba(255,255,255,0.06)', color: '#cbd5e1', border: '1px solid rgba(255,255,255,0.12)' }}>
-                    Cancel
-                  </button>
-                  <button onClick={handleConfirmImport} disabled={importConfirming || Object.values(importChecked).filter(Boolean).length === 0}
-                    className="btn" style={{ background: '#10b981', color: 'white', border: 'none', opacity: importConfirming ? 0.7 : 1, cursor: importConfirming ? 'not-allowed' : 'pointer' }}>
-                    {importConfirming ? '⏳ Importing...' : `✅ Import ${Object.values(importChecked).filter(Boolean).length} PO${Object.values(importChecked).filter(Boolean).length !== 1 ? 's' : ''}`}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -3,27 +3,18 @@ import { useSearch } from 'wouter';
 import { useToast } from '../components/Toast';
 import { GlowingEffect } from '../components/GlowingEffect';
 import RegisterFragranceModal from '../components/RegisterFragranceModal';
-import { SECTORS, MUSE_STOCKS, sectorLabel } from '../../../shared/sectors.js';
-import { REMOVE_REASONS } from '../../../shared/stock-reasons.js';
+import { SECTORS, sectorLabel } from '../../../shared/sectors.js';
 import { displayStock } from '../utils/unitConversion';
 
 // The Fragrance Library's Transfers page (PRD_STAGE_1_FRAGRANCE_LIBRARY.md §2.4):
-//   Transfer — any stock to any stock but the main store; the total does not change
-//   Count    — oil a MUSE stock holds that the system did not know; the total goes up
-//              (SA counts on its own Stock page)
-//   Use      — a MUSE use entered by hand, always with its order number (S9); the
-//              total goes down, taken from the stock, then MUSE (shared), then SA (S4)
-// and the recent movements. Everyone with access sees the balances and the list
-// (R4); only admin and root move oil (S10) — the server checks it as well.
-// A company stock may go negative (shown in red, never blocked, R5); the main
-// store may not (D2), and receives only from a purchase order.
-const KINDS = [
-  { key: 'transfer', label: 'Transfer' },
-  { key: 'count', label: 'Count' },
-  { key: 'use', label: 'Use' },
-];
-const MUSE_OPTIONS = SECTORS.filter((s) => MUSE_STOCKS.includes(s.key));
-const KIND_LABEL = { receipt: 'Receipt', transfer: 'Transfer', count: 'Count', use: 'Use', production: 'Production', reversal: 'Reversal' };
+// a transfer moves oil from any stock to any stock but the main store, and the
+// total does not change; and the recent movements. Counts and uses are Adjust
+// stock since H2 (PRD_H2_STOCK_MANAGEMENT.md D3), on the oil in All stock.
+// Everyone with access sees the balances and the list (R4); only admin and root
+// move oil (S10) — the server checks it as well. A company stock may go
+// negative (shown in red, never blocked, R5); the main store may not (D2), and
+// receives only from a purchase order.
+const KIND_LABEL = { receipt: 'Receipt', transfer: 'Transfer', count: 'Count', use: 'Use', adjust: 'Adjust', production: 'Production', reversal: 'Reversal' };
 const oilLabel = (p) => `${p.name} — ${p.productCode}`;
 
 export default function LibraryTransfers({ user }) {
@@ -37,11 +28,9 @@ export default function LibraryTransfers({ user }) {
   const [oilText, setOilText] = useState('');
   const [movements, setMovements] = useState(null);
 
-  const [kind, setKind] = useState('transfer');
   const [from, setFrom] = useState('SA');
   const [to, setTo] = useState('MUSE');
   const [qty, setQty] = useState('');
-  const [reason, setReason] = useState('production');
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
@@ -66,7 +55,7 @@ export default function LibraryTransfers({ user }) {
   useEffect(() => {
     if (!oil) return;
     setOilText(oilLabel(oil));
-    if (kind === 'transfer') changeFrom((oil.sectors?.MAIN || 0) > 0 ? 'MAIN' : 'SA');
+    changeFrom((oil.sectors?.MAIN || 0) > 0 ? 'MAIN' : 'SA');
   }, [oil?.id]);
 
   const loadMovements = () => {
@@ -85,29 +74,17 @@ export default function LibraryTransfers({ user }) {
     setRefused(null);
   };
 
-  const fromOptions = kind === 'use' ? MUSE_OPTIONS : SECTORS;
-  // Never INTO the main store (D2); a count goes into a MUSE stock only.
-  const toOptions = kind === 'count' ? MUSE_OPTIONS : SECTORS.filter((s) => s.key !== 'MAIN' && s.key !== from);
-
-  // Every kind leaves From and To valid for it — a Count's To or a Use's From
-  // carried back into a Transfer could otherwise make From = To (fix round 1, S2).
+  // Never INTO the main store (D2), never into the stock it comes from.
+  const toOptions = SECTORS.filter((s) => s.key !== 'MAIN' && s.key !== from);
   const firstTo = (f) => SECTORS.find((s) => s.key !== 'MAIN' && s.key !== f).key;
-  const changeKind = (k) => {
-    setKind(k);
-    setRefused(null);
-    const nextFrom = k === 'use' && !MUSE_STOCKS.includes(from) ? 'MUSE' : from;
-    if (nextFrom !== from) setFrom(nextFrom);
-    if (k === 'count' && !MUSE_STOCKS.includes(to)) setTo('MUSE');
-    if (k === 'transfer' && (to === nextFrom || to === 'MAIN')) setTo(firstTo(nextFrom));
-  };
   const changeFrom = (v) => {
     setFrom(v);
-    if (kind === 'transfer' && to === v) setTo(firstTo(v));
+    if (to === v) setTo(firstTo(v));
   };
 
   const qtyN = parseFloat(qty) || 0;
-  const overMain = kind === 'transfer' && from === 'MAIN' && qtyN > 0 && toUnit(qtyN) > bal('MAIN') + 0.001;
-  const overFrom = kind !== 'count' && from !== 'MAIN' && qtyN > 0 && toUnit(qtyN) > Math.max(0, bal(from)) + 0.001;
+  const overMain = from === 'MAIN' && qtyN > 0 && toUnit(qtyN) > bal('MAIN') + 0.001;
+  const overFrom = from !== 'MAIN' && qtyN > 0 && toUnit(qtyN) > Math.max(0, bal(from)) + 0.001;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -117,14 +94,10 @@ export default function LibraryTransfers({ user }) {
     setBusy(true);
     setRefused(null);
     try {
-      const line = { quantity: toUnit(qtyN) };
-      if (kind !== 'count') line.from = from;
-      if (kind !== 'use') line.to = to;
-      if (kind === 'use') line.reason = reason;
       const res = await fetch('/api/sectors/move', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productId: oil.id, kind, reference, notes, lines: [line] }),
+        body: JSON.stringify({ productId: oil.id, kind: 'transfer', reference, notes, lines: [{ from, to, quantity: toUnit(qtyN) }] }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -164,7 +137,7 @@ export default function LibraryTransfers({ user }) {
       <div className="page-header">
         <h2 className="page-title">Transfers</h2>
         <p style={{ color: 'var(--text-secondary)', marginTop: 8, fontSize: 13 }}>
-          Move oil between the main store, SA and MUSE; count oil MUSE holds; enter a MUSE use with its order number.
+          Move oil between the main store, SA and MUSE. To count, use or correct a stock, open the oil in All stock and choose Adjust.
         </p>
       </div>
 
@@ -200,39 +173,21 @@ export default function LibraryTransfers({ user }) {
       {isAdmin && (
         <div className="card" style={{ marginBottom: 20, position: 'relative', overflow: 'visible' }}>
           <GlowingEffect spread={30} glow={false} disabled={false} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
-          <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
-            {KINDS.map((k) => (
-              <button key={k.key} type="button" onClick={() => changeKind(k.key)}
-                className={kind === k.key ? 'btn btn-primary' : 'btn btn-secondary'} style={{ padding: '6px 14px' }}>
-                {k.label}
-              </button>
-            ))}
-          </div>
-
           <form onSubmit={submit}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
-              {kind !== 'count' && <div className="form-group"><label>From</label>{select(from, changeFrom, fromOptions)}</div>}
-              {kind !== 'use' && <div className="form-group"><label>To</label>{select(to, setTo, toOptions)}</div>}
+              <div className="form-group"><label>From</label>{select(from, changeFrom, SECTORS)}</div>
+              <div className="form-group"><label>To</label>{select(to, setTo, toOptions)}</div>
               <div className="form-group">
                 <label>Quantity ({unitWord}) *</label>
                 <input className="input" type="number" min="0" step="any" value={qty} onChange={(e) => setQty(e.target.value)} required />
               </div>
-              {kind === 'use' && (
-                <div className="form-group">
-                  <label>Why</label>
-                  <select className="input" value={reason} onChange={(e) => setReason(e.target.value)}>
-                    {REMOVE_REASONS.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
-                  </select>
-                </div>
-              )}
               <div className="form-group">
-                <label>{kind === 'use' ? 'Order number *' : 'Reference (PO or order number)'}</label>
-                <input className="input" value={reference} onChange={(e) => setReference(e.target.value)}
-                  placeholder="e.g. #38637" required={kind === 'use'} />
+                <label>Reference (PO or order number)</label>
+                <input className="input" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="e.g. #38637" />
               </div>
               <div className="form-group">
-                <label>Notes{kind === 'use' && reason === 'other' ? ' *' : ''}</label>
-                <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} required={kind === 'use' && reason === 'other'} />
+                <label>Notes</label>
+                <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} />
               </div>
             </div>
 
@@ -243,20 +198,7 @@ export default function LibraryTransfers({ user }) {
             )}
             {oil && overFrom && (
               <div style={{ color: '#fbbf24', fontSize: 12, marginBottom: 10 }}>
-                More than {sectorLabel(from)} holds ({displayStock(bal(from), oil.unit)}).
-                {kind === 'use' ? ' The rest is taken as the rule below says.' : ' It will show as negative.'}
-              </div>
-            )}
-            {kind === 'count' && (
-              <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginBottom: 10 }}>
-                Oil a MUSE stock holds that the system did not know — the total goes up. SA counts on its own Stock page.
-              </div>
-            )}
-            {kind === 'use' && (
-              <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginBottom: 10 }}>
-                {from === 'MUSE'
-                  ? 'Takes from MUSE (shared) first, then SA.'
-                  : `Takes from ${sectorLabel(from)} first, then MUSE (shared), then SA.`}
+                More than {sectorLabel(from)} holds ({displayStock(bal(from), oil.unit)}). It will show as negative.
               </div>
             )}
 

@@ -4,6 +4,7 @@ import ConfirmModal from '../components/ConfirmModal';
 import * as XLSX from 'xlsx';
 import { shelfOutlook } from '../../../shared/shelf-outlook.js';
 import { GlowingEffect } from '../components/GlowingEffect';
+import { warehouseDate } from '../../../shared/warehouse-hours.js';
 
 // ─── Tooltip ─────────────────────────────────────────────────────────────────
 function Tooltip({ text, children }) {
@@ -770,6 +771,14 @@ export default function ReplenishmentDashboard({ user }) {
 
   useEffect(() => {
     fetchData();
+    // An order raised in Shopify is accepted by itself when this page reads it
+    // (H4 R7), so it is on order here without anybody opening Purchase Orders.
+    // In parallel, so the page is not held up by Shopify; reloaded only if a
+    // line was accepted.
+    fetch('/api/purchase-orders/sync', { method: 'POST' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => { if (s?.autoAccepted > 0) fetchData(); })
+      .catch(() => {});
     const saved = localStorage.getItem('replenishment_imported_by');
     if (saved) setImportedBy(saved);
   }, []);
@@ -830,7 +839,7 @@ export default function ReplenishmentDashboard({ user }) {
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url; a.download = `forecast_backup_${new Date().toISOString().split('T')[0]}.xlsx`; a.click();
+      a.href = url; a.download = `forecast_backup_${warehouseDate()}.xlsx`; a.click();
       URL.revokeObjectURL(url);
     } catch (err) { showToast('Export failed: ' + err.message, 'error'); }
   };
@@ -912,7 +921,7 @@ export default function ReplenishmentDashboard({ user }) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Replenishment_Report_${now.toISOString().split('T')[0]}.xlsx`;
+      a.download = `Replenishment_Report_${warehouseDate(now)}.xlsx`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

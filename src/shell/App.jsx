@@ -6,6 +6,7 @@ import ModulePicker from './ModulePicker.jsx';
 import UserManagement from './UserManagement.jsx';
 import SAModule from '../sa/SAModule.jsx';
 import LibraryModule from '../sa/LibraryModule.jsx';
+import PurchaseOrdersModule from '../sa/PurchaseOrdersModule.jsx';
 import SMModule from '../sm/SMModule.jsx';
 import {
   getStoredUser,
@@ -48,6 +49,7 @@ export default function App() {
     // Fragrance Library tile — its own area since Stage 1 (PRD_STAGE_1_FRAGRANCE_LIBRARY.md
     // §2.1): /library, its own menu over the SA API. SA's menu keeps SA Fragrances.
     else if (moduleKey === 'FRAGLIB') navigate('/library');
+    else if (moduleKey === 'PURCHASING') navigate('/purchase-orders'); // H4: every purchase order
     else if (moduleKey === 'MUSE') navigate('/sm/muse');
     else if (moduleKey === 'OPS') navigate('/sm'); // production dashboard
     else if (moduleKey === 'REPORTS') navigate('/sm/history'); // centralized cross-system report (admin/root)
@@ -90,6 +92,13 @@ export default function App() {
           : <RedirectToPicker onDone={backToPicker} />}
       </Route>
 
+      {/* Same access as its tile: SA, and not a technician (R6). */}
+      <Route path="/purchase-orders/*?">
+        {hasModule('SA') && user.role !== 'technician'
+          ? <PurchaseOrdersWrapper user={user} onSwitchModule={backToPicker} onLogout={handleLogout} />
+          : <RedirectToPicker onDone={backToPicker} />}
+      </Route>
+
       <Route path="/sm/*?">
         {hasModule('SM') || hasModule('MUSE')
           ? <SMWrapper user={user} onLogout={handleLogout} />
@@ -120,6 +129,12 @@ function LibraryWrapper({ user, onSwitchModule, onLogout }) {
   // still send /api to /api/sa (FRAGLIB resolves there, shell/api.js).
   setActiveModule('FRAGLIB');
   return <LibraryModule user={user} onSwitchModule={onSwitchModule} onLogout={onLogout} />;
+}
+
+function PurchaseOrdersWrapper({ user, onSwitchModule, onLogout }) {
+  // Same reason as SAWrapper: a reload straight onto /purchase-orders must still send /api to /api/sa.
+  setActiveModule('PURCHASING');
+  return <PurchaseOrdersModule user={user} onSwitchModule={onSwitchModule} onLogout={onLogout} />;
 }
 
 function SMWrapper({ user, onLogout }) {

@@ -6,6 +6,7 @@ import SearchSelect from '../components/SearchSelect.jsx'
 import { InfoIcon } from '../components/Tooltip.jsx'
 import { fmt as fmtDT } from '../utils/date.js'
 import GlowingEffect from '../components/GlowingEffect.jsx'
+import { warehouseDate } from '../../../shared/warehouse-hours.js';
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -113,7 +114,7 @@ export default function TransactionHistory() {
       const a = document.createElement('a')
       a.href = url
       const label = preset === 'all' ? 'AllTime' : preset
-      a.download = `SM_Transactions_${label}_${new Date().toISOString().split('T')[0]}.csv`
+      a.download = `SM_Transactions_${label}_${warehouseDate()}.csv`
       a.click()
       URL.revokeObjectURL(url)
     } catch (e) { addToast('Export failed: ' + e.message, 'error') }

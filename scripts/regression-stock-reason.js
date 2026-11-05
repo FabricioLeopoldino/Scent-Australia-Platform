@@ -26,6 +26,13 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import jwt from 'jsonwebtoken';
 import pkg from 'pg';
+
+// Test copy only (5 Nov 2026). This suite boots its own server, and a server runs
+// its startup migrations; dotenv above reads the LIVE url. Same guard as regression-sa.js.
+if (!(process.env.PLATFORM_DATABASE_URL || '').includes('ep-old-water-') && process.env.REGRESSION_ALLOW_PRODUCTION !== '1') {
+  console.error('Refusing: PLATFORM_DATABASE_URL is not the sectors-dev branch (ep-old-water-). Set REGRESSION_ALLOW_PRODUCTION=1 to override.');
+  process.exit(1);
+}
 const { Pool } = pkg;
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -62,6 +69,9 @@ try {
   await sa.query(
     `INSERT INTO products (id, tag, "productCode", name, category, unit, "currentStock", "minStockLevel")
      VALUES ($1, $1, $1, $2, 'OILS', 'mL', 100000, 0)`, [TAG, `${TAG} probe`]);
+  // An oil's SA adjustment needs it registered in SA (PRD_H2 A9), as every oil
+  // created through the platform is. Goes with the product (ON DELETE CASCADE).
+  await sa.query(`INSERT INTO fragrance_registrations (product_id, company) VALUES ($1, 'SA')`, [TAG]);
 
   server = spawn(process.execPath, ['server/index.js'], {
     cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
@@ -167,6 +177,8 @@ try {
   if (server) { try { server.kill('SIGKILL'); } catch { /* gone */ } }
   if (productId) {
     await sa.query('DELETE FROM transactions WHERE product_code = $1', [productId]).catch(() => {});
+// Each adjustment writes its Activity row too (PRD_H2 A10).
+await sa.query('DELETE FROM audit_log WHERE entity_id = $1', [productId]).catch(() => {});
     await sa.query('DELETE FROM products WHERE id = $1', [productId]).catch(() => {});
     const left = Number((await sa.query(
       'SELECT count(*) c FROM transactions WHERE product_code = $1', [productId])).rows[0].c)

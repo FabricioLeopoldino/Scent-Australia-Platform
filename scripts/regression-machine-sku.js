@@ -22,7 +22,7 @@
 //
 // Run: node scripts/regression-machine-sku.js
 import 'dotenv/config';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import pkg from 'pg';
@@ -43,22 +43,20 @@ const check = (ok, label, detail = '') => {
 };
 
 try {
-  console.log('\n1. The Diffusers screen reads the SKU, never the prefix');
-  const screen = src('src/sa/pages/MachineInventory.jsx');
-  check(!/Object\.keys\(machine\.shopifySkus/.test(screen),
-    'it no longer renders Object.keys of the SKU map');
-  check((screen.match(/Object\.values\(machine\.shopifySkus/g) || []).length >= 2,
-    'the list and the edit form both read Object.values', 'expected both');
+  // The Diffusers screen was folded into Stock Management in H2
+  // (PRD_H2_STOCK_MANAGEMENT.md): machines are edited in Product Management's form.
+  console.log('\n1. The machine form reads the SKU map, never its prefixes');
+  const screen = src('src/sa/pages/ProductManagement.jsx');
+  check(!/Object\.keys\(\w+\.shopifySkus/.test(screen),
+    'it never renders Object.keys of the SKU map');
 
   console.log('\n2. And it cannot write one');
-  check(!/shopifySkus:\s*skusObject/.test(screen),
-    'the save payload no longer carries shopifySkus at all');
-  // lastIndexOf, not indexOf: the first 'Shopify SKU' in the file is the table
-  // heading. Anchoring on it passed the window over the list and never looked at
-  // the form at all — the check would have gone on passing with the input made
-  // editable again.
-  const field = screen.slice(screen.lastIndexOf('<label>Shopify SKU</label>'));
-  check(/readOnly/.test(field.slice(0, 700)), 'the field is read-only');
+  // The form carries the stored map back unchanged, and no field edits it.
+  check(/shopifySkus: product\.shopifySkus \|\| \{\}/.test(screen),
+    'editing keeps the stored map as it was');
+  // Every mention is the empty map of a new product or the stored one reloaded.
+  check((screen.match(/shopifySkus[^\n]*/g) || []).every((m) => /^shopifySkus: (\{\}|product\.shopifySkus \|\| \{\}),?$/.test(m.trim())),
+    'no field can type a SKU', (screen.match(/shopifySkus[^\n]*/g) || []).join(' | '));
 
   console.log('\n2b. And neither does anything else that shows a SKU to a person');
   // Found by sweeping for the same mistake after fixing the screen: the exported
@@ -132,10 +130,9 @@ try {
     check(new RegExp(`formData\\.${f}`).test(prod) && new RegExp(`${f}: product\\.${f}`).test(prod),
       `it edits and reloads ${f}`);
   }
-  check(!/setShowAddModal\(true\);\s*\}\s*\)?\s*>\s*\n?\s*\+ Add Machine/.test(screen),
-    'the Diffusers screen no longer opens a second create form');
-  check(/\/sa\/products/.test(screen.slice(0, screen.indexOf('+ Add Machine'))),
-    'its Add Machine button points at Products');
+  // Since H2 the Diffusers screen is gone altogether: one screen, one form.
+  check(!existsSync(join(ROOT, 'src/sa/pages/MachineInventory.jsx')),
+    'there is no second screen with a create form of its own');
 
   console.log('\n6. A sale still lands on the value, not the key');
   // If this ever changed to match on the key, the whole finding above inverts.

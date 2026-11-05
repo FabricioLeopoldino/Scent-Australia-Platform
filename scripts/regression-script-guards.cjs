@@ -65,7 +65,13 @@ const WRITES_DB = /\b(DELETE\s+FROM\s+\w|TRUNCATE\s+(TABLE\s+)?\w|UPDATE\s+\w+\s
 // check-muse-launch-readiness.mjs, which is read-only (verified: no mutation,
 // no SQL write anywhere in it).
 const WRITES_SHOPIFY = /\bmutation\s|productVariantsBulk|productUpdate|productSet\b|productCreate|inventorySetQuantities|\b(draft_)?orders\.json|\/variants\/\d+\.json/i;
-const GUARDED = /--apply|--commit|CLEANUP_DATABASE_URL|assertStoreNotLive|ROLLBACK|REFUSING TO RUN|process\.exit\(2\)/;
+// includes('ep-old-water-') (5 Nov 2026): the test-copy guard. A suite carrying it
+// exits before it can open the live database at all, so it cannot write there.
+const GUARDED = /--apply|--commit|CLEANUP_DATABASE_URL|assertStoreNotLive|ROLLBACK|REFUSING TO RUN|process\.exit\(2\)|includes\('ep-old-water-'\)/;
+// Offline by content: the store is the literal 'stub', fetch is replaced, and no
+// database is opened — so a mutation name in it is a fake's answer, not a write.
+// (regression-shopify-product-pattern.js, P7, matched only through its stub.)
+const OFFLINE_STUB = (src) => /SHOP_DOMAIN = 'stub'/.test(src) && /globalThis\.fetch = /.test(src) && !/new Pool|DATABASE_URL/.test(src);
 
 (async () => {
   console.log('\n1. Every script that writes to production data has some guard');
@@ -167,7 +173,7 @@ const GUARDED = /--apply|--commit|CLEANUP_DATABASE_URL|assertStoreNotLive|ROLLBA
     if (!/\.(cjs|js|mjs)$/.test(f)) continue;
     const src = stripComments(readFileSync(join(SCRIPTS, f), 'utf8'));
     if (!(WRITES_DB.test(src) || WRITES_SHOPIFY.test(src))) continue;
-    if (GUARDED.test(src)) continue;
+    if (GUARDED.test(src) || OFFLINE_STUB(src)) continue;
     if (looksLikeATest(src)) {
       if (!WRITES_FIXTURES.includes(f)) newFixtureWriters.push(f);
       continue;
@@ -325,6 +331,20 @@ const GUARDED = /--apply|--commit|CLEANUP_DATABASE_URL|assertStoreNotLive|ROLLBA
     check(!/rejectUnauthorized:\s*false/.test(src),
       `${rel.replace('../', '')} does not accept any certificate`);
   }
+
+  // A suite that boots its own server runs the startup migrations on whatever
+  // database it is given, and dotenv gives it the LIVE one. Every such suite must
+  // refuse anything but the test copy (5 Nov 2026: 22 of them did not). A new
+  // suite written without the guard fails here, before anyone runs it.
+  // regression-webhook-lazy-connect.js is exempt: it boots with NO database, on purpose.
+  console.log('\nSuites that boot their own server refuse anything but the test copy');
+  const booters = readdirSync(SCRIPTS).filter((f) => /^regression-.*\.(c?js|mjs)$/.test(f))
+    .filter((f) => f !== 'regression-webhook-lazy-connect.js')
+    .filter((f) => /server\/index\.js/.test(stripComments(readFileSync(join(SCRIPTS, f), 'utf8'))));
+  // Comments stripped: a guard that was commented out must not count (code review, 5 Nov).
+  const bootersUnguarded = booters.filter((f) => !/includes\('ep-old-water-'\)/.test(stripComments(readFileSync(join(SCRIPTS, f), 'utf8'))));
+  check(booters.length > 0 && bootersUnguarded.length === 0,
+    `all ${booters.length} server-booting suites carry the test-copy guard`, bootersUnguarded.join(', '));
 
   console.log(failed === 0 ? '\n✅ script-guards: all checks passed' : `\n❌ ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);

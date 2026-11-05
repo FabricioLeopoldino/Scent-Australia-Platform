@@ -40,6 +40,13 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import jwt from 'jsonwebtoken';
 import pkg from 'pg';
+
+// Test copy only (5 Nov 2026). This suite boots its own server, and a server runs
+// its startup migrations; dotenv above reads the LIVE url. Same guard as regression-sa.js.
+if (!(process.env.PLATFORM_DATABASE_URL || '').includes('ep-old-water-') && process.env.REGRESSION_ALLOW_PRODUCTION !== '1') {
+  console.error('Refusing: PLATFORM_DATABASE_URL is not the sectors-dev branch (ep-old-water-). Set REGRESSION_ALLOW_PRODUCTION=1 to override.');
+  process.exit(1);
+}
 const { Pool } = pkg;
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -71,6 +78,9 @@ try {
     await pool.query(
       `INSERT INTO products (id, tag, "productCode", name, category, unit, "currentStock", status)
        VALUES ($1,$1,$1,$2,'OILS','mL',50000,'active')`, [code, `${code} probe`]);
+    // Demand Planning lists SA's oils only since Stage 1 (S6). The registration
+    // goes with the probe when it is deleted (ON DELETE CASCADE).
+    await pool.query(`INSERT INTO fragrance_registrations (product_id, company) VALUES ($1, 'SA') ON CONFLICT DO NOTHING`, [code]);
   }
   // Same figure, same product, same everything — only WHICH FILE they are in
   // differs. Anything that separates them downstream is the snapshot rule.

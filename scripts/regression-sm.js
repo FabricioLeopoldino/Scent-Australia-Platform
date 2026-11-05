@@ -358,6 +358,14 @@ async function main() {
     const retList = await api('GET', '/api/sm/transactions?type=return');
     record('returns: shows in the Returns list (type=return filter)',
       Array.isArray(retList.json) && retList.json.some((t) => /__regression_return/.test(t.notes || '')));
+    // Date filter in Sydney days (5 Nov 2026 time-zone audit). created_at is UTC;
+    // 20:30 UTC on 4 Nov is 07:30 on 5 Nov in Sydney — a warehouse morning.
+    await db.query(`UPDATE transactions SET created_at = '2026-11-04 20:30:00' WHERE product_id = $1 AND notes LIKE '%__regression_return%'`, [frag1]);
+    const day = async (d) => ((await api('GET', `/api/sm/transactions?type=return&from=${d}T00:00:00&to=${d}T23:59:59`)).json || [])
+      .some((t) => /__regression_return/.test(t.notes || ''));
+    const on5 = await day('2026-11-05');
+    const on4 = await day('2026-11-04');
+    record('dates: a 07:30 Sydney movement is in its own Sydney day, not the UTC one', on5 && !on4, `5 Nov=${on5} 4 Nov=${on4}`);
     await db.query(`UPDATE products SET current_stock = $1 WHERE id = $2`, [retBefore, frag1]);
     await db.query(`DELETE FROM transactions WHERE product_id = $1 AND notes LIKE '%__regression_return%'`, [frag1]);
 

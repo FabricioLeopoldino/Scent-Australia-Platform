@@ -308,7 +308,7 @@ router.post('/fragrances/:id/strength-log', auth, async (req, res) => {
     const result = await query(
       `INSERT INTO fragrance_strength_log (fragrance_id, fragrance_name, production_order_id, standard_pct, actual_pct_used, was_adjusted, adjustment_reason, batch_reference, date_used, created_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-      [req.params.id, fragrance.rows[0].name, production_order_id || null, standard_pct || 25, actual_pct_used, was_adjusted || false, adjustment_reason || null, batch_reference || null, date_used || new Date().toISOString().split('T')[0], req.user.id]
+      [req.params.id, fragrance.rows[0].name, production_order_id || null, standard_pct || 25, actual_pct_used, was_adjusted || false, adjustment_reason || null, batch_reference || null, date_used || new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' }), req.user.id]
     )
     res.status(201).json(result.rows[0])
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }

@@ -49,13 +49,14 @@ try {
   // Every Shopify call in this file must be a GraphQL read. A mutation would be
   // a write to someone else's system, which this integration never does.
   check(!/mutation/i.test(reader), 'and sends no Shopify mutation');
-  const server = src('server/sa/index.js');
-  const route = server.slice(server.indexOf("'/shopify-purchase-orders'"));
-  check(/^[^\n]*router\.get/.test(server.slice(server.lastIndexOf('router.', server.indexOf("'/shopify-purchase-orders'")))),
+  // Since H4 the read lives in the Purchase Orders module (PRD_H4_PURCHASE_ORDERS.md).
+  const server = src('server/sa/purchase-orders.js');
+  const route = server.slice(server.indexOf("'/purchase-orders/overview'"));
+  check(/^[^\n]*router\.get/.test(server.slice(server.lastIndexOf('router.', server.indexOf("'/purchase-orders/overview'")))),
     'the endpoint is a GET');
   // To the end of the handler, not a fixed number of characters: a window broke
   // the moment the handler grew, failing a check whose subject had not changed.
-  check(/ok: false/.test(route.slice(0, route.indexOf('\nrouter.'))),
+  check(/ok: !!read/.test(route.slice(0, route.indexOf('\nrouter.'))),
     'and fails closed — it reports that it could not read, never a stale list');
 
   console.log('\n2. The guards are in the code, not in someone’s memory');
@@ -105,9 +106,9 @@ try {
   const shownIds = orders.flatMap((o) => o.lines.map((l) => l.lineId));
   check(shownIds.every((id) => liveLineIds.has(id)),
     'and every line it shows is in that set — filtering never looks like deletion');
-  check(/!liveLineIds\.has\(r\.shopify_line_id\)/.test(server),
+  check(/!read\.liveLineIds\.has\(r\.shopify_line_id\)/.test(server),
     'the endpoint flags accepted lines the store no longer has');
-  check(/still counting them as stock on its way/.test(src('src/sa/pages/ShopifyPurchaseOrders.jsx')),
+  check(/no longer in Shopify — cancel it unless it really is coming/.test(src('src/sa/pages/PurchaseOrders.jsx')),
     'and the screen says what that means rather than just listing them');
 
   console.log('\n4c. It refuses rather than showing half the truth');
@@ -148,12 +149,12 @@ try {
   // Deletion was handled first; editing was the gap. The owner edited a purchase
   // order twenty minutes after raising it, so this is ordinary behaviour. Without
   // it the platform would expect the old amount for ever and say nothing.
-  check(/changedInShopify = !!row && l\.matched/.test(server),
+  check(/changedInShopify: l\.matched && Math\.abs\(r\.q - l\.incomingQty\)/.test(server),
     'an accepted line whose quantity moved in Shopify is flagged');
   check(/shopify_po_quantity_synced/.test(server), 'taking the new figure is audited');
   check(/has already been received/.test(server),
     'and it refuses to drop below what has physically arrived');
-  check(/Changed in Shopify — accepted as/.test(src('src/sa/pages/ShopifyPurchaseOrders.jsx')),
+  check(/Changed in Shopify — accepted as/.test(src('src/sa/pages/PurchaseOrders.jsx')),
     'the screen shows both figures rather than quietly correcting one');
 
   console.log('\n4e. The history reads as words, not as a payload');

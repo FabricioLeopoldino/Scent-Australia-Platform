@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { warehouseDate } from '../../../shared/warehouse-hours.js';
 
 // Helper functions for consistent formatting
 const getCategoryLabel = (category) => {
@@ -96,7 +97,7 @@ export function exportProductsToExcel(products, allAliases = []) {
   XLSX.utils.book_append_sheet(wb, ws, 'Products');
 
   // Generate filename with timestamp
-  const timestamp = new Date().toISOString().split('T')[0];
+  const timestamp = warehouseDate();
   const filename = `Products_Export_${timestamp}.xlsx`;
 
   // Download file
@@ -142,7 +143,7 @@ export function exportTransactionsToExcel(transactions, periodLabel = '') {
   XLSX.utils.book_append_sheet(wb, ws, 'Transactions');
 
   // Generate filename with period label
-  const timestamp = new Date().toISOString().split('T')[0];
+  const timestamp = warehouseDate();
   const period = periodLabel ? `_${periodLabel}` : '';
   const filename = `Transactions${period}_${timestamp}.xlsx`;
 
@@ -229,7 +230,7 @@ export function exportFullDatabaseToExcel(products, transactions) {
   }
 
   // Generate filename with timestamp
-  const timestamp = new Date().toISOString().split('T')[0];
+  const timestamp = warehouseDate();
   const filename = `Full_Database_Export_${timestamp}.xlsx`;
 
   // Download file
@@ -498,7 +499,7 @@ export function exportOilUsageToExcel(transactions, periodLabel = '', period = {
   ];
   XLSX.utils.book_append_sheet(wb, wsDetail, 'Detail');
 
-  const timestamp = new Date().toISOString().split('T')[0];
+  const timestamp = warehouseDate();
   const suffix = periodLabel ? `_${periodLabel}` : '';
   const filename = `Oil_Usage${suffix}_${timestamp}.xlsx`;
 

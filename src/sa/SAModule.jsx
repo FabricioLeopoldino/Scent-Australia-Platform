@@ -1,22 +1,19 @@
 import { Router, Route, Switch, Link, Redirect, useLocation } from 'wouter';
 import { ToastProvider } from './components/Toast';
 import Dashboard from './pages/Dashboard';
-import StockManagement from './pages/StockManagement';
 import SkuMapping from './pages/SkuMapping';
 import TransactionHistory from './pages/TransactionHistory';
 import ProductManagement from './pages/ProductManagement';
-import MachineInventory from './pages/MachineInventory';
-import ShopifyPurchaseOrders from './pages/ShopifyPurchaseOrders';
 import ProductReturns from './pages/ProductReturns';
 import BOMViewer from './pages/BOMViewer';
 import DiffuserMachineBOM from './pages/DiffuserMachineBOM';
 import ReplenishmentDashboard from './pages/ReplenishmentDashboard';
-import RawMaterials from './pages/RawMaterials';
 import Formulas from './pages/Formulas';
 import ActivityLog from './pages/ActivityLog';
 import ScentedProducts from './pages/ScentedProducts';
 // TechStock retired 31/08/2026 — page kept at ./pages/TechStock for restoring.
 import ThemeToggle from './components/ThemeToggle';
+import BomTabs, { isBomPath } from './components/BomTabs';
 
 // SA Scent Stock Manager module shell — nav/routes/role-gating identical to
 // the production SA App.jsx. Differences (platform integration only):
@@ -61,25 +58,20 @@ function SAContent({ user, onSwitchModule, onLogout }) {
               which is platform-level now via the Module Picker) */}
           <ul className="nav-links" style={{ flex: 1, justifyContent: 'center' }}>
             <li><Link href="/" className={isActive('/') ? 'nav-active' : ''}>Dashboard</Link></li>
-            <li><Link href="/products" className={isActive('/products') ? 'nav-active' : ''}>Products</Link></li>
+            {/* One page for every non-oil product: Products, Diffusers, Stock and
+                Raw Materials became Stock Management (PRD_H2_STOCK_MANAGEMENT.md, D1). */}
+            <li><Link href="/stock-management" className={isActive('/stock-management') ? 'nav-active' : ''}>Stock Management</Link></li>
             {/* SA's own oils (PRD_STAGE_1_FRAGRANCE_LIBRARY.md §2.1). The Fragrance
                 Library itself — every stock — is its own area, from its own tile. */}
             <li><Link href="/fragrances" className={isActive('/fragrances') ? 'nav-active' : ''}>SA Fragrances</Link></li>
-            <li><Link href="/machines" className={isActive('/machines') ? 'nav-active' : ''}>Diffusers</Link></li>
             <li><Link href="/returns" className={isActive('/returns') ? 'nav-active' : ''}>Returns</Link></li>
-            {/* Delivery 1 of the Shopify PO integration: read-only, for checking
-                against the store before anything is allowed to act on it. */}
-            {user.role !== 'technician' && (
-              <li><Link href="/shopify-po" className={isActive('/shopify-po') ? 'nav-active' : ''}>Shopify POs</Link></li>
-            )}
-            {user.role !== 'technician' && (
-              <li><Link href="/stock" className={isActive('/stock') ? 'nav-active' : ''}>Stock</Link></li>
-            )}
+            {/* Shopify POs moved to the Purchase Orders tile (H4). */}
             {user.role !== 'technician' && (<>
               {user.role !== 'user' && (
                 <li><Link href="/replenishment" className={isActive('/replenishment') ? 'nav-active' : ''}>Demand Planning</Link></li>
               )}
-              <li><Link href="/formulas" className={isActive('/formulas') ? 'nav-active' : ''}>Formulas</Link></li>
+              {/* H3: one BOM entry — SA Product BOM, Diffuser BOM and Formulas are its tabs. */}
+              <li><Link href="/bom" className={isBomPath(location) ? 'nav-active' : ''}>BOM</Link></li>
               {/* Scented nav hidden by owner 2026-07-24 ("not usable for now"). Route + page kept below; re-add this line to restore. */}
               {['admin', 'root'].includes(user.role) && (
                 <li><Link href="/sku-mapping" className={isActive('/sku-mapping') ? 'nav-active' : ''}>SKU Mapping</Link></li>
@@ -111,15 +103,20 @@ function SAContent({ user, onSwitchModule, onLogout }) {
               parts and all, until a hard refresh forced a remount. The owner hit
               this often enough to report it as "sempre tenho que dar Hard
               Refresh". A key makes them two pages again. */}
-          <Route path="/products"><ProductManagement key="products" user={user} /></Route>
+          <Route path="/stock-management"><ProductManagement key="stock-management" user={user} /></Route>
+          {/* The four pages it replaced (D1): an old bookmark opens it, filtered
+              to the same products; the old Stock page also says where oils went. */}
+          <Route path="/products"><Redirect to="/stock-management" /></Route>
+          <Route path="/machines"><Redirect to="/stock-management?filter=SCENT_MACHINES" /></Route>
+          <Route path="/raw-materials"><Redirect to="/stock-management?filter=RAW_MATERIALS" /></Route>
+          <Route path="/stock"><Redirect to="/stock-management?from=stock" /></Route>
           <Route path="/fragrances"><ProductManagement key="sa-fragrances" user={user} libraryMode company="SA" /></Route>
           {/* The page's old address (it was "Fragrance Library" until Stage 1):
               a bookmark lands on SA Fragrances, not on a blank page. */}
           <Route path="/fragrance-library"><Redirect to="/fragrances" /></Route>
-          <Route path="/machines"><MachineInventory user={user} /></Route>
-          {/* Machines, spare parts and raw materials only: the fragrance lines
-              are received and split in the Fragrance Library (Stage 1 §2.3). */}
-          <Route path="/shopify-po"><ShopifyPurchaseOrders user={user} lines="other" /></Route>
+          {/* Every purchase order is in its own area since H4: an old bookmark
+              lands there. "~" leaves this menu's /sa base. */}
+          <Route path="/shopify-po"><Redirect to="~/purchase-orders" /></Route>
           <Route path="/returns"><ProductReturns user={user} /></Route>
           {/* The Fragrance Map was removed (owner, 25 Oct 2026: unused and heavy).
               It only drew the bin locations every oil already carries. Old links
@@ -133,9 +130,8 @@ function SAContent({ user, onSwitchModule, onLogout }) {
               </p>
             </div>
           </Route>
-          <Route path="/stock"><StockManagement user={user} /></Route>
           <Route path="/replenishment">{!['user', 'technician'].includes(user?.role) ? <ReplenishmentDashboard user={user} /> : null}</Route>
-          <Route path="/formulas"><Formulas user={user} /></Route>
+          <Route path="/formulas"><BomTabs /><Formulas user={user} /></Route>
           <Route path="/scented-products"><ScentedProducts user={user} /></Route>
           {/* Tech Stock retired by the owner, 31/08/2026. Not a fault in the
               screen: keeping a second stock ledger did not survive contact with
@@ -158,12 +154,11 @@ function SAContent({ user, onSwitchModule, onLogout }) {
               </p>
             </div>
           </Route>
-          <Route path="/bom"><BOMViewer user={user} /></Route>
-          <Route path="/diffuser-bom"><DiffuserMachineBOM user={user} /></Route>
+          <Route path="/bom"><BomTabs /><BOMViewer user={user} /></Route>
+          <Route path="/diffuser-bom"><BomTabs /><DiffuserMachineBOM user={user} /></Route>
           <Route path="/sku-mapping">{['admin', 'root'].includes(user?.role) ? <SkuMapping user={user} /> : null}</Route>
           <Route path="/history"><TransactionHistory user={user} /></Route>
           <Route path="/activity">{['admin', 'root'].includes(user?.role) ? <ActivityLog user={user} /> : null}</Route>
-          <Route path="/raw-materials"><RawMaterials user={user} /></Route>
         </Switch>
       </div>
     </div>

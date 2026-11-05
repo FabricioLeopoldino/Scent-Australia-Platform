@@ -5,7 +5,7 @@
 // awake. A silent off-by-one here (or a DST slip) is a bill, not a crash.
 
 import assert from 'node:assert/strict';
-import { withinWarehouseHours } from '../shared/warehouse-hours.js';
+import { withinWarehouseHours, warehouseDate } from '../shared/warehouse-hours.js';
 
 // Melbourne is UTC+10 (AEST, winter) and UTC+11 (AEDT, summer, ~Oct–Apr).
 // Both are covered below so a DST bug can't hide.
@@ -50,6 +50,14 @@ for (const [iso, expected, label] of cases) {
 // locales, which would make minuteOfDay 1440 and could flip the comparison.
 assert.equal(withinWarehouseHours(new Date('2026-07-28T14:00:00Z')), false,
   'Wed 00:00 Melbourne must be outside the window');
+
+// warehouseDate (5 Nov 2026 time-zone audit): today's date where the business is.
+// 9 am in Sydney is still the previous day in UTC — the case toISOString() got wrong.
+assert.equal(warehouseDate(new Date('2026-11-04T22:00:00Z')), '2026-11-05', 'summer: 09:00 AEDT 5 Nov is 5 Nov');
+assert.equal(warehouseDate(new Date('2026-06-04T23:30:00Z')), '2026-06-05', 'winter: 09:30 AEST 5 Jun is 5 Jun');
+assert.equal(warehouseDate(new Date('2026-11-05T12:59:00Z')), '2026-11-05', '23:59 AEDT is still the same day');
+assert.equal(warehouseDate(new Date('2026-11-05T13:00:00Z')), '2026-11-06', 'midnight AEDT is the next day');
+console.log('PASS  warehouseDate: four Sydney-day boundary cases');
 
 console.log(
   failed === 0

@@ -28,6 +28,13 @@ const PORT = 3993;
 const BASE = `http://127.0.0.1:${PORT}`;
 const TAG = `ZZOP_${Date.now()}`;
 
+// These boot their own server, and a server runs its startup migrations: on the
+// live database that would apply unreleased migrations early. Test copy only,
+// as regression-sa.js (added 5 Nov 2026: dotenv above reads the LIVE url).
+if (!(process.env.PLATFORM_DATABASE_URL || '').includes('ep-old-water-') && process.env.REGRESSION_ALLOW_PRODUCTION !== '1') {
+  console.error('Refusing: PLATFORM_DATABASE_URL is not the sectors-dev branch (ep-old-water-). Set REGRESSION_ALLOW_PRODUCTION=1 to override.');
+  process.exit(1);
+}
 const sa = new Pool({
   connectionString: process.env.PLATFORM_DATABASE_URL.replace('-pooler.', '.'),
   ssl: { rejectUnauthorized: false }, options: '-c search_path=sa,public',
@@ -72,10 +79,12 @@ try {
   check(listRes.ok, 'GET /warehouse-operators answers', `HTTP ${listRes.status}`);
   const ops = listRes.ok ? await listRes.json() : [];
   check(ops.length >= 5, `it returns the operators (${ops.length})`);
-  const gustavo = ops.find((o) => o.name === 'Gustavo');
+  // Whoever has no login today (it was Gustavo until he got one) — the point is
+  // that such a person can be named, not who it is.
+  const gustavo = ops.find((o) => o.user_id === null);
   const joao = ops.find((o) => o.name === 'Joao Gabriel');
   check(!!gustavo && gustavo.user_id === null,
-    'Gustavo is nameable although he has no login — the reason this list exists');
+    `${gustavo?.name || 'someone'} is nameable although they have no login — the reason this list exists`);
   check(!!joao && joao.user_id != null, 'and someone who does have one is linked to it');
 
   console.log('\n2. A return records both people, and both are filterable');
@@ -96,13 +105,13 @@ try {
     'both operators are stored as an array', JSON.stringify(tx?.operator_ids));
   check(tx?.user_id === 8, 'and the account that entered it is recorded too', `user_id=${tx?.user_id}`);
   // The note must agree with the array, or the history and the report disagree.
-  check(/Gustavo/.test(tx?.notes || '') && /Joao Gabriel/.test(tx?.notes || ''),
+  check(tx?.notes?.includes(gustavo.name) && /Joao Gabriel/.test(tx?.notes || ''),
     'the note carries the same names, resolved server-side', tx?.notes);
 
   const byGustavo = Number((await sa.query(
     `SELECT count(*) c FROM transactions t JOIN sa.warehouse_operators o ON o.id = ANY(t.operator_ids)
-      WHERE o.name = 'Gustavo' AND t.product_code = $1`, [TAG])).rows[0].c);
-  check(byGustavo === 1, 'and "what did Gustavo do" finds it', `found ${byGustavo}`);
+      WHERE o.id = $2 AND t.product_code = $1`, [TAG, gustavo.id])).rows[0].c);
+  check(byGustavo === 1, `and "what did ${gustavo.name} do" finds it`, `found ${byGustavo}`);
 
   console.log('\n3. An unknown operator is refused, not silently dropped');
   const bad = await api('/returns', {
@@ -132,7 +141,7 @@ try {
       WHERE product_code = $1 AND type = 'return' ORDER BY id DESC LIMIT 1`, [TAG])).rows[0];
   check(screenTx?.operator_ids?.length === 1, 'the ids win over the empty name',
     JSON.stringify(screenTx?.operator_ids));
-  check(/Gustavo/.test(screenTx?.notes || '') && !/Returned by:\s*$/.test(screenTx?.notes || ''),
+  check(!!screenTx?.notes?.includes(gustavo.name) && !/Returned by:\s*$/.test(screenTx?.notes || ''),
     'and the note is not left blank', screenTx?.notes);
 
   const neither = await api('/returns', {

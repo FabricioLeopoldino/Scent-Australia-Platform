@@ -1,4 +1,4 @@
-import { Package, FlaskConical, Sparkles, Factory, Users, LogOut, Droplets, History } from 'lucide-react';
+import { Package, FlaskConical, Sparkles, Factory, Users, LogOut, Droplets, History, ClipboardList } from 'lucide-react';
 import { SYSTEM_NAMES, SA_DISPLAY_NAME } from '../../shared/business-names.js';
 
 // Module Picker — behavioral spec in PRD Appendix B.
@@ -43,6 +43,19 @@ const MODULES = [
     logo: '/fragrance-library.png', // the dropper-bottle mark the owner supplied
     accent: '#0ea5e9',
     viewOf: 'SA',
+  },
+  {
+    // Every purchase order in one place (H4, PRD_H4_PURCHASE_ORDERS.md §2.1, O4):
+    // raised in Shopify, accepted, received, corrected and cancelled here. Over the
+    // SA API like the Fragrance Library. Not for technicians: suppliers and costs
+    // are on it (R6), and the server refuses them too.
+    key: 'PURCHASING',
+    title: 'Purchase Orders',
+    subtitle: 'Shopify orders · SA · MUSE',
+    icon: ClipboardList,
+    accent: '#14b8a6',
+    viewOf: 'SA',
+    roles: ['root', 'admin', 'user'],
   },
   {
     // The old Scented Merchandise B2B screens (clients, catalogs, major

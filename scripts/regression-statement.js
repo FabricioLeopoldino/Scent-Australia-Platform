@@ -54,6 +54,13 @@ const check = (ok, label, detail = '') => {
   console.log(ok ? `  ok    ${label}` : `  FAIL  ${label}${detail ? ` — ${detail}` : ''}`);
   if (!ok) failed++;
 };
+// These boot their own server, and a server runs its startup migrations: on the
+// live database that would apply unreleased migrations early. Test copy only,
+// as regression-sa.js (added 5 Nov 2026: dotenv above reads the LIVE url).
+if (!(process.env.PLATFORM_DATABASE_URL || '').includes('ep-old-water-') && process.env.REGRESSION_ALLOW_PRODUCTION !== '1') {
+  console.error('Refusing: PLATFORM_DATABASE_URL is not the sectors-dev branch (ep-old-water-). Set REGRESSION_ALLOW_PRODUCTION=1 to override.');
+  process.exit(1);
+}
 const sa = new Pool({
   connectionString: process.env.PLATFORM_DATABASE_URL.replace('-pooler.', '.'),
   ssl: { rejectUnauthorized: false }, options: '-c search_path=sa,public',
@@ -96,8 +103,17 @@ try {
     `${lbl?.opening} + ${lbl?.received} − ${lbl?.used} = ${lbl?.closing} vs ${lbl?.product.stock_now}`);
 
   console.log('\n3. A product whose first movement is a consumption');
-  const comp = (await get('schema=SM&code=COMP_00006&from=2026-08-01')).body;
-  check(comp?.reconciles === true, 'it balances', `closing ${comp?.closing} vs ${comp?.product.stock_now}`);
+  // COMP_00006 was the example until it was received on 22 Sep 2026. Pick, from
+  // today's data, a MUSE/SM product with movements since August and no receipt ever.
+  const neverCode = (await sa.query(
+    `SELECT t.product_code c FROM sm.transactions t
+      WHERE t.product_code IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM sm.transactions r WHERE r.product_code = t.product_code
+                          AND r.type IN ('add','transfer_in','incoming','ready_formula_in','production_in'))
+      GROUP BY 1 HAVING max(t.created_at) >= '2026-08-01' ORDER BY 1 LIMIT 1`)).rows[0]?.c;
+  check(!!neverCode, 'there is a product that was never received to test with', neverCode || 'none');
+  const comp = (await get(`schema=SM&code=${encodeURIComponent(neverCode)}&from=2026-08-01`)).body;
+  check(comp?.reconciles === true, `it balances (${neverCode})`, `closing ${comp?.closing} vs ${comp?.product.stock_now}`);
   check(comp?.ever_received === false,
     'and is flagged as never received — the zero it starts from is an assumption, not a count');
   const lblReceived = (await get('schema=SM&code=LBL_00001')).body;

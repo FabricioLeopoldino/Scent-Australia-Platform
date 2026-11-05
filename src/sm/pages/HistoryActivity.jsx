@@ -6,6 +6,7 @@ import axios from 'axios'
 import { useToast } from '../SMModule.jsx'
 import { fmt } from '../utils/date.js'
 import GlowingEffect from '../components/GlowingEffect.jsx'
+import { warehouseDate } from '../../../shared/warehouse-hours.js';
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -152,7 +153,7 @@ export default function HistoryActivity({ kind = 'history' }) {
       const url = URL.createObjectURL(r.data)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${kind}-${new Date().toISOString().slice(0, 10)}.csv`
+      a.download = `${kind}-${warehouseDate()}.csv`
       a.click()
       URL.revokeObjectURL(url)
     } catch (e) {

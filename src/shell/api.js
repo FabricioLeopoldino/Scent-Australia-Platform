@@ -54,7 +54,8 @@ export function apiBase(module) {
   // Library from its own tile 404'd the whole page, and it stayed broken for as
   // long as FRAGLIB was the stored active module, because the fault lives in
   // localStorage rather than in the page.
-  if (m === 'SA' || m === 'FRAGLIB') return '/api/sa';
+  // PURCHASING (H4) is the same kind of view: /purchase-orders over the SA API.
+  if (m === 'SA' || m === 'FRAGLIB' || m === 'PURCHASING') return '/api/sa';
   if (m === 'SM' || m === 'MUSE' || m === 'OPS') return '/api/sm'; // MUSE (D7) and OPS (D11) are views over SM
   // REPORTS lands here deliberately: that tile opens the cross-system report,
   // which calls /api/platform/* — already exempt from rewriting.

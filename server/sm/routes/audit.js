@@ -11,8 +11,8 @@ router.get('/audit', auth, requireRole('root', 'admin'), async (req, res) => {
     const params = []
     if (user_id) { params.push(user_id); q += ` AND al.user_id = $${params.length}` }
     if (action) { params.push(action); q += ` AND al.action = $${params.length}` }
-    if (from) { params.push(from); q += ` AND al.created_at >= $${params.length}` }
-    if (to) { params.push(to); q += ` AND al.created_at <= $${params.length}` }
+    if (from) { params.push(from); q += ` AND al.created_at >= ($${params.length}::timestamp AT TIME ZONE 'Australia/Sydney' AT TIME ZONE 'UTC')` }
+    if (to) { params.push(to); q += ` AND al.created_at <= ($${params.length}::timestamp AT TIME ZONE 'Australia/Sydney' AT TIME ZONE 'UTC')` }
     q += ` ORDER BY al.created_at DESC LIMIT 1000`
     res.json((await query(q, params)).rows)
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
