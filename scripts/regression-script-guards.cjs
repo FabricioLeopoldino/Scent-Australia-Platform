@@ -341,7 +341,8 @@ const OFFLINE_STUB = (src) => /SHOP_DOMAIN = 'stub'/.test(src) && /globalThis\.f
   const booters = readdirSync(SCRIPTS).filter((f) => /^regression-.*\.(c?js|mjs)$/.test(f))
     .filter((f) => f !== 'regression-webhook-lazy-connect.js')
     .filter((f) => /server\/index\.js/.test(stripComments(readFileSync(join(SCRIPTS, f), 'utf8'))));
-  const bootersUnguarded = booters.filter((f) => !/includes\('ep-old-water-'\)/.test(readFileSync(join(SCRIPTS, f), 'utf8')));
+  // Comments stripped: a guard that was commented out must not count (code review, 5 Nov).
+  const bootersUnguarded = booters.filter((f) => !/includes\('ep-old-water-'\)/.test(stripComments(readFileSync(join(SCRIPTS, f), 'utf8'))));
   check(booters.length > 0 && bootersUnguarded.length === 0,
     `all ${booters.length} server-booting suites carry the test-copy guard`, bootersUnguarded.join(', '));
 
