@@ -222,7 +222,15 @@ const sh = (c) => {
   }
 
   // ── 6. Optional full suite ────────────────────────────────────────────────
-  if (FULL) {
+  // --full boots a server (startup migrations) and runs suites that WRITE. Pointed
+  // at production — dotenv's default — that is the 14 Aug 2026 incident below. The
+  // read-only checks above stay on whatever database is set; this part needs the
+  // test copy (5 Nov 2026). Run it with PLATFORM_DATABASE_URL = the sectors-dev url.
+  if (FULL && !(process.env.PLATFORM_DATABASE_URL || '').includes('ep-old-water-')) {
+    head('6. Every regression');
+    fail('--full refused: it boots a server and runs suites that write',
+      'set PLATFORM_DATABASE_URL to the test copy (ep-old-water-) to run them');
+  } else if (FULL) {
     head('6. Every regression');
     // Several suites talk to a running server over HTTP and do NOT boot one.
     // The first version of this ran them without providing one, and the results
