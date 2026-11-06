@@ -32,6 +32,27 @@ export function clearSession() {
   localStorage.removeItem(MODULE_KEY);
 }
 
+// An expired session used to drop the person on the login screen with no word
+// of why (walk-through, 6 Nov 2026). The flag lives for this tab only and the
+// login screen reads it once.
+const EXPIRED_KEY = 'platform_session_expired';
+export function expireSession() {
+  clearSession();
+  try { sessionStorage.setItem(EXPIRED_KEY, '1'); } catch { /* blocked storage: no message, still logged out */ }
+  window.location.href = '/';
+}
+// Read once per page load, then remembered: React's StrictMode calls a state
+// initialiser twice, and the second call must not lose the message.
+let expiredOnLoad = null;
+export function takeSessionExpired() {
+  if (expiredOnLoad !== null) return expiredOnLoad;
+  try {
+    expiredOnLoad = sessionStorage.getItem(EXPIRED_KEY) === '1';
+    sessionStorage.removeItem(EXPIRED_KEY);
+  } catch { expiredOnLoad = false; }
+  return expiredOnLoad;
+}
+
 export function setActiveModule(module) {
   if (module) localStorage.setItem(MODULE_KEY, module);
   else localStorage.removeItem(MODULE_KEY);
@@ -85,10 +106,7 @@ export function installFetchInterceptor() {
     return _fetch(url, options).then((res) => {
       const isApi = typeof url === 'string' && url.startsWith('/api/');
       const isAuthCall = typeof url === 'string' && url.includes('/auth/');
-      if (res.status === 401 && isApi && !isAuthCall) {
-        clearSession();
-        window.location.href = '/';
-      }
+      if (res.status === 401 && isApi && !isAuthCall) expireSession();
       return res;
     });
   };

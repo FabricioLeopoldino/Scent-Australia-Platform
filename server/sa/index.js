@@ -3724,7 +3724,9 @@ router.get('/migrate-replenishment', async (req, res) => {
       )
     `);
 
-    // 4. Seed known suppliers (ON CONFLICT = update lead_time if already exists)
+    // 4. Seed known suppliers. Insert-only: a supplier that exists keeps the
+    // lead time set on screen. Both seeds (here and at start-up) used to
+    // overwrite it, and the start-up one ran on every deploy (found 7 Nov 2026).
     const knownSuppliers = [
       { name: 'Luxaroma',         lead_time: 21  },
       { name: 'Smart Fragrances', lead_time: 90  },
@@ -3736,7 +3738,7 @@ router.get('/migrate-replenishment', async (req, res) => {
     for (const s of knownSuppliers) {
       await pool.query(
         `INSERT INTO suppliers (name, lead_time) VALUES ($1, $2)
-         ON CONFLICT (name) DO UPDATE SET lead_time = EXCLUDED.lead_time, updated_at = NOW()`,
+         ON CONFLICT (name) DO NOTHING`,
         [s.name, s.lead_time]
       );
     }
@@ -5966,7 +5968,7 @@ async function runStartupMigrations() {
     for (const s of knownSuppliers) {
       await pool.query(
         `INSERT INTO suppliers (name, lead_time) VALUES ($1, $2)
-         ON CONFLICT (name) DO UPDATE SET lead_time = EXCLUDED.lead_time, updated_at = NOW()`,
+         ON CONFLICT (name) DO NOTHING`,
         [s.name, s.lead_time]
       );
     }

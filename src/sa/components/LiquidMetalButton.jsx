@@ -120,7 +120,9 @@ export function LiquidMetalButton({ label = 'Get Started', onClick, viewMode = '
             )}
             {viewMode === 'text' && (
               <span style={{
-                fontSize: '13px', color: '#777', fontWeight: 600,
+                // #777 on the black face read at about 4:1, under the 4.5:1 a label
+                // needs (walk-through, 6 Nov 2026); this light grey is about 13:1.
+                fontSize: '13px', color: isHovered ? '#f5f5f5' : '#d4d4d4', fontWeight: 600,
                 textShadow: '0px 1px 2px rgba(0,0,0,0.5)',
                 fontFamily: 'Inter, sans-serif',
                 letterSpacing: '0.02em',

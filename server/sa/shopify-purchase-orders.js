@@ -165,10 +165,15 @@ function unitsPerShopifyUnit(product, sku) {
 /**
  * What Shopify says is on order, mapped onto platform products.
  *
- * `products` is the SA catalogue, already loaded by the caller — this file does
- * not touch the database.
+ * `products` is the SA catalogue loaded by the caller, or a promise of it —
+ * this file does not touch the database. Shopify is asked first and the
+ * catalogue awaited while it answers: Shopify's ~2 s is most of the wait for
+ * the Purchase Orders screen (measured 7 Nov 2026: 299 orders, two pages).
  */
-async function readIncomingPurchaseOrders(products) {
+async function readIncomingPurchaseOrders(productsOrPromise) {
+  const rawRead = fetchAllPurchaseOrders();
+  rawRead.catch(() => {}); // handled below; this only stops an early catalogue failure leaving it unhandled
+  const products = await productsOrPromise;
   // Keyed on the SKU VALUE, the same way a sale is matched, so the two can never
   // disagree about what a code means.
   // A multiplier's key is a code too, as for a sale.
@@ -180,7 +185,7 @@ async function readIncomingPurchaseOrders(products) {
     }
   }
 
-  const raw = await fetchAllPurchaseOrders();
+  const raw = await rawRead;
 
   const orders = [];
   for (const po of raw) {

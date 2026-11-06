@@ -51,6 +51,10 @@ try {
   check(!/mutation/i.test(reader), 'and sends no Shopify mutation');
   // Since H4 the read lives in the Purchase Orders module (PRD_H4_PURCHASE_ORDERS.md).
   const server = src('server/sa/purchase-orders.js');
+  // The product list, the Activity screen's query and its filter stayed in
+  // index.js. Pointing those checks at purchase-orders.js made six of them fail
+  // from 5 Nov on (found 7 Nov) while the code they guard was intact.
+  const index = src('server/sa/index.js');
   const route = server.slice(server.indexOf("'/purchase-orders/overview'"));
   check(/^[^\n]*router\.get/.test(server.slice(server.lastIndexOf('router.', server.indexOf("'/purchase-orders/overview'")))),
     'the endpoint is a GET');
@@ -125,7 +129,7 @@ try {
     'the cut-off compares Sydney dates, not UTC ones');
   check(/!po\.transfers\.pageInfo\?\.hasNextPage/.test(reader),
     '"received in Shopify" is claimed only when the whole transfer list was read');
-  check(/role === 'technician'/.test(server),
+  check(/role !== 'technician'\) return true;[\s\S]{0,80}status\(403\)/.test(server) && /'\/purchase-orders\/overview'[\s\S]{0,80}notTechnician\(req, res\)/.test(server),
     'the read endpoint enforces the role itself, not the menu');
   check(/client = await pool\.connect\(\);[\s\S]{0,60}BEGIN/.test(server),
     'the database client is taken after Shopify answers, so a slow store cannot starve the pool');
@@ -136,12 +140,15 @@ try {
   // that had been cancelled. The alert has to travel to where the mistake would
   // be made, not only to where it was detected.
   check(/shopify_missing_since/.test(server), 'a cancelled order is recorded on the row itself');
-  check(/shopifyMissingSince: po\.shopify_missing_since/.test(server),
+  check(/shopifyMissingSince: po\.shopify_missing_since/.test(index),
     'and the product list carries it to the screens');
   const pm = src('src/sa/pages/ProductManagement.jsx');
   check(/order\.shopifyMissingSince/.test(pm), 'the card beside the fragrance says it was cancelled');
-  check(/\{!order\.shopifyMissingSince && \(/.test(pm),
-    'and the receive button is gone from it — that button is the actual danger');
+  // Since H4 the card has no receive button at all: it opens the order in
+  // Purchase Orders, where Receive is hidden on a line that left Shopify.
+  check(!/handleOpenReceiveModal/.test(pm) && /Open in Purchase Orders/.test(pm)
+      && /canReceive = isAdmin && isOpenLine && !l\.missing/.test(src('src/sa/pages/PurchaseOrders.jsx')),
+    'and no receive button is offered for it — that button is the actual danger');
   check(/shopify_missing_since = NULL/.test(server),
     'an order that comes back clears the mark rather than staying wrong');
 
@@ -149,7 +156,8 @@ try {
   // Deletion was handled first; editing was the gap. The owner edited a purchase
   // order twenty minutes after raising it, so this is ordinary behaviour. Without
   // it the platform would expect the old amount for ever and say nothing.
-  check(/changedInShopify: l\.matched && Math\.abs\(r\.q - l\.incomingQty\)/.test(server),
+  // "!settled &&": not on a line already cancelled or closed short (review, 5 Nov).
+  check(/changedInShopify: !settled && l\.matched && Math\.abs\(r\.q - l\.incomingQty\)/.test(server),
     'an accepted line whose quantity moved in Shopify is flagged');
   check(/shopify_po_quantity_synced/.test(server), 'taking the new figure is audited');
   check(/has already been received/.test(server),
@@ -167,7 +175,7 @@ try {
       `${a} has a name on screen`);
     check(new RegExp(`log\\.action === '${a}'`).test(act), `and is written out in words`);
   }
-  check(/AUDIT_LOG_TYPES[\s\S]{0,700}shopify_po_accepted/.test(server),
+  check(/AUDIT_LOG_TYPES[\s\S]{0,700}shopify_po_accepted/.test(index),
     'and can be filtered for, like every other action');
   // Codes are what the first rows stored; names are stored from 24 September.
   // The formatter must not show an empty cell for the older ones.
@@ -181,7 +189,7 @@ try {
   // on 815 rows, every purchase order created, received or cancelled, and every
   // product activated or deactivated. Reading both spellings fixes the history
   // already written as well as what comes next.
-  check(/details->>'product_code', al\.details->>'productCode'/.test(server),
+  check(/details->>'product_code', al\.details->>'productCode'/.test(index),
     'the activity query reads both spellings of the product code');
   const wrong = (await pool.query(`
     SELECT count(*) n FROM audit_log

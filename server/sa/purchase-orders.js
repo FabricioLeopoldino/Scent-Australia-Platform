@@ -323,14 +323,15 @@ async function markMissing(read, rows) {
 
 /** Read Shopify, accept what is clean, flag what vanished. read is null when Shopify could not be read. */
 async function sync(user) {
-  const [products, regs, since] = await Promise.all([loadProducts(), registrationsByProduct(), autoAcceptSince()]);
-  let read = null;
-  let shopifyError = null;
-  try {
-    read = await readIncomingPurchaseOrders(products);
-  } catch (e) {
-    shopifyError = e.message;
-  }
+  // Shopify is read WHILE the database loads, not after (7 Nov 2026). A
+  // database failure still fails the request, as before; a Shopify failure is
+  // still reported as one, because the read's outcome is captured on its own.
+  const products = loadProducts();
+  const reading = readIncomingPurchaseOrders(products).then((r) => ({ r }), (e) => ({ e }));
+  const [, regs, since] = await Promise.all([products, registrationsByProduct(), autoAcceptSince()]);
+  const outcome = await reading;
+  const read = outcome.r || null;
+  const shopifyError = outcome.e ? outcome.e.message : null;
   let autoAccepted = [];
   if (read) {
     const rows = await loadRows();

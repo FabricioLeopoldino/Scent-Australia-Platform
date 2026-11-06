@@ -2,7 +2,7 @@ import { useState, createContext, useContext } from 'react';
 import { Router, Route, Switch } from 'wouter';
 import axios from 'axios';
 import { Check, AlertTriangle, X } from 'lucide-react';
-import { getToken, clearSession } from '../shell/api.js';
+import { getToken, expireSession } from '../shell/api.js';
 import Layout from './components/Layout.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import StockManagement from './pages/StockManagement.jsx';
@@ -74,8 +74,7 @@ function installAxiosInterceptors() {
     (res) => res,
     (err) => {
       if (err.response?.status === 401 && (err.config?.url || '').startsWith('/api/')) {
-        clearSession();
-        window.location.href = '/';
+        expireSession();
       }
       return Promise.reject(err);
     }
