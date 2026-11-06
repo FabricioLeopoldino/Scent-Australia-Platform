@@ -1,4 +1,4 @@
-const { query } = require('../db')
+const { withTransaction } = require('../db')
 const { enqueueInventoryAdjust } = require('./shopify-sync')
 
 // opts.skipShopifyPush — set for movements that ORIGINATED in Shopify (a retail
@@ -7,7 +7,14 @@ const { enqueueInventoryAdjust } = require('./shopify-sync')
 // the delta back would deduct it a SECOND time. Movements that originate here
 // (production, manual adjust, receiving) still push — we stay the source of truth.
 async function adjustProductStock(productId, delta, type, notes, userId, orderId, lineId, qFn, opts = {}) {
-  const qry = qFn || query
+  // The stock change and its ledger row are one write. Without the caller's
+  // transaction (/stock/add, /remove, /return) a failed INSERT left the stock
+  // changed with no ledger row and the user shown an error (QA, 7 Nov 2026).
+  if (!qFn) {
+    return withTransaction((client) => adjustProductStock(productId, delta, type, notes, userId, orderId, lineId,
+      (text, params) => client.query(text, params), opts))
+  }
+  const qry = qFn
   // Guard: prevent stock going negative (deductions only).
   // opts.allowNegative — opt-out for movements that record a PHYSICAL fact which
   // already happened and cannot be refused: a MUSE retail sale Shopify already
