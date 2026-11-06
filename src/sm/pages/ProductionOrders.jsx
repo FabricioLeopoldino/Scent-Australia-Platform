@@ -6,6 +6,7 @@ import { useToast } from '../SMModule.jsx'
 import ConfirmModal from '../components/ConfirmModal.jsx'
 import SearchSelect from '../components/SearchSelect.jsx'
 import { fmtDate as fmt } from '../utils/date.js'
+import { warehouseDate } from '../../../shared/warehouse-hours.js'
 import { LineFlags, lineScent, CustomerProperties } from '../components/LineMeta.jsx'
 import GlowingEffect from '../components/GlowingEffect.jsx'
 
@@ -22,6 +23,11 @@ const STATUS_META = {
   fulfilled:        { label: 'Fulfilled',          color: 'rgba(232,234,242,0.35)', bg: 'rgba(255,255,255,0.04)' },
   cancelled:        { label: 'Cancelled',         color: '#f87171',  bg: 'rgba(220,38,38,0.1)' },
 }
+
+// A DATE column reaches the screen as Sydney midnight in UTC: 7 Nov arrives as
+// "2026-11-06T13:00:00.000Z". Cutting that string gave the day before, so every
+// save of an edited order moved its due date (and labels ETA) back one day.
+const dateInput = (v) => warehouseDate(new Date(v))
 
 const EMPTY_LINE = { product_type: '', fragrance_id: '', oil_id: '', variant_name: '', oil_pct: 25, quantity: '', packaging_component_id: '', label_client_label_id: '', use_ready_formula: false, ready_formula_id: '', labels_supplier: '', labels_eta: '', labels_order_qty: '', needs_labeling: false, needs_packing: false }
 
@@ -758,7 +764,7 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
   const [showClientDrop, setShowClientDrop] = useState(false)
   const [creatingClient, setCreatingClient] = useState(false)
   const [orderType, setOrderType]   = useState(editingOrder?.order_type || 'STANDARD')
-  const [dueDate, setDueDate]       = useState(editingOrder?.due_date ? String(editingOrder.due_date).slice(0, 10) : '')
+  const [dueDate, setDueDate]       = useState(editingOrder?.due_date ? dateInput(editingOrder.due_date) : '')
   const [notes, setNotes]           = useState(editingOrder?.notes || '')
   // D14: which of the 4 usage buckets this order belongs to — same formula
   // used per-line below for masterOptions; hoisted so the Fragrance Library
@@ -779,7 +785,7 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
         use_ready_formula: !!l.use_ready_formula,
         ready_formula_id: l.ready_formula_id ? String(l.ready_formula_id) : '',
         labels_supplier: l.labels_supplier || '',
-        labels_eta: l.labels_eta ? String(l.labels_eta).slice(0, 10) : '',
+        labels_eta: l.labels_eta ? dateInput(l.labels_eta) : '',
         labels_order_qty: l.labels_order_qty != null ? String(l.labels_order_qty) : '',
         needs_labeling: !!l.needs_labeling,
         needs_packing: !!l.needs_packing,
