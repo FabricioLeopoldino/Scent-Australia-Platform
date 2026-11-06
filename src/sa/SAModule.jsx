@@ -126,7 +126,7 @@ function SAContent({ user, onSwitchModule, onLogout }) {
               </p>
             </div>
           </Route>
-          <Route path="/replenishment">{!['user', 'technician'].includes(user?.role) ? <ReplenishmentDashboard user={user} /> : null}</Route>
+          <Route path="/replenishment">{!['user', 'technician'].includes(user?.role) ? <ReplenishmentDashboard user={user} /> : <Redirect to="/" />}</Route>
           <Route path="/formulas"><BomTabs /><Formulas user={user} /></Route>
           <Route path="/scented-products"><ScentedProducts user={user} /></Route>
           {/* Tech Stock retired by the owner, 31/08/2026. Not a fault in the
@@ -156,7 +156,7 @@ function SAContent({ user, onSwitchModule, onLogout }) {
               SKUs, and an oil's Publish / Add missing sizes moved there (P7). */}
           <Route path="/sku-mapping"><Redirect to="/fragrances" /></Route>
           <Route path="/history"><TransactionHistory user={user} /></Route>
-          <Route path="/activity">{['admin', 'root'].includes(user?.role) ? <ActivityLog user={user} /> : null}</Route>
+          <Route path="/activity">{['admin', 'root'].includes(user?.role) ? <ActivityLog user={user} /> : <Redirect to="/" />}</Route>
         </Switch>
       </div>
     </div>

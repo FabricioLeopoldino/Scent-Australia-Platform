@@ -43,6 +43,8 @@ const TYPE_LABELS = {
   po_auto_accepted:             { label: 'PO Accepted (automatic)', color: '#f59e0b' },
   po_receipt_corrected:         { label: 'Receipt Corrected',    color: '#fbbf24' },
   po_closed_short:              { label: 'PO Closed Short',      color: '#94a3b8' },
+  // An oil moved between stocks in the Fragrance Library (server/sa/sectors.js).
+  sector_transfer:              { label: 'Moved between stocks', color: '#60a5fa' },
 };
 
 const CATEGORY_LABELS = {
@@ -359,6 +361,9 @@ export default function ActivityLog({ user }) {
                         ? ` — ${(totalMl / 1000).toLocaleString('en-AU', { maximumFractionDigits: 2 })} L total`
                         : '';
                       notesDisplay = `${actionLabels[d.action] || d.action}${totalStr}${oilList ? ` · ${oilList}` : ''}${d.notes ? ` · ${d.notes}` : ''}`;
+                    } else if (log.action === 'sector_transfer') {
+                      notesDisplay = (d.lines || []).map((l) => `${sectorLabel(l.from)} → ${sectorLabel(l.to)} ${displayStock(l.quantity, d.unit)}`).join(', ')
+                        + (d.reference ? ` · ${d.reference}` : '');
                     } else if (log.action === 'stock_refused') {
                       const q = (v) => displayStock(v || 0, d.unit);
                       // A receipt outside its PO's company (P6), or an adjustment

@@ -616,7 +616,7 @@ export default function Dashboard({ user }) {
             onClick={() => { setShowWatchlistModal(true); setModalSearch(''); }}
             style={{ fontSize: 12, padding: '7px 14px' }}
           >
-            + Add Product
+            + Add to watchlist
           </button>
         </div>
 
@@ -710,7 +710,7 @@ export default function Dashboard({ user }) {
           }}>
             <Star size={36} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4, color: 'var(--text-secondary)' }}>No products in your watchlist</div>
-            <div style={{ fontSize: 12 }}>Click "+ Add Product" to track your most important products</div>
+            <div style={{ fontSize: 12 }}>Click "+ Add to watchlist" to track your most important products</div>
           </div>
         )}
       </div>

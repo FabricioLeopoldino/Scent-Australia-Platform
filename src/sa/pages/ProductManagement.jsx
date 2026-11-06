@@ -817,6 +817,9 @@ export default function ProductManagement({ user, libraryMode = false, company =
               </tr>
             </thead>
             <tbody>
+              {!loading && filteredProducts.length === 0 && (
+                <tr><td colSpan={99} style={{ textAlign: 'center', padding: 32, color: 'rgba(232,234,242,0.45)' }}>No products match these filters</td></tr>
+              )}
               {filteredProducts.map(product => {
                 // SA Fragrances shows SA's balance; Products and All stock the total.
                 const stock = saView ? shelfStock(product) : product.currentStock;
