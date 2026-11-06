@@ -1209,6 +1209,27 @@ router.delete('/products/:id', async (req, res) => {
       });
     }
 
+    // An oil another company uses. MUSE / SM point at it with ON DELETE SET
+    // NULL, so the delete used to succeed and leave their products pointing
+    // at no oil (Basil & Mandarin, OILS_4, 16 Sep 2026).
+    if (product.category === 'OILS') {
+      const hasSm = (await client.query(`SELECT to_regclass('sm.products') IS NOT NULL AS sm`)).rows[0].sm;
+      const users = (await client.query(
+        `SELECT (SELECT string_agg(DISTINCT company, ', ') FROM fragrance_registrations WHERE product_id = $1 AND active AND company <> 'SA') AS companies
+         ${hasSm ? `, (SELECT COUNT(*) FROM sm.products WHERE oil_id = $1)::int AS sm_products,
+                   (SELECT COUNT(*) FROM sm.production_order_lines WHERE oil_id = $1)::int AS sm_lines` : ''}`,
+        [productId])).rows[0];
+      const uses = [
+        users.companies && `it is registered in ${users.companies}`,
+        users.sm_products > 0 && `${users.sm_products} MUSE/SM product(s) use it`,
+        users.sm_lines > 0 && `${users.sm_lines} production order line(s) use it`,
+      ].filter(Boolean);
+      if (uses.length) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `${product.name} cannot be deleted: ${uses.join('; ')}. Deactivate it instead.` });
+      }
+    }
+
     // For SA_SCENTED_PRODUCTS the BOM variant equals the productCode of the SKU itself
     // (one BOM row set per finished-good SKU). Remove those rows so the BOM Viewer
     // doesn't show orphan variants after deletion.
