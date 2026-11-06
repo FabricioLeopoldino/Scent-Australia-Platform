@@ -6,11 +6,16 @@
 // Fails softly by design (R8): no credentials, no SKU, Shopify slow or down —
 // the answer is "no image", never an error, so the sheet always opens.
 
+import { OIL_PATTERN } from '../../shared/shopify-product-pattern.js';
+
 const API = '2026-04';
 
 /**
  * skus: the product's Shopify SKUs. Returns
- *   { image: { url, alt } | null, variants: [{ sku, title, status }] }
+ *   { image: { url, alt } | null, variants: [{ sku, title, status, main }] }
+ * main: the variant sits on the oil's main product (P7), by the same rule the
+ * server's Publish uses (shopify-products.js mainOf: the pattern's product
+ * type, not archived), so the sheet's Publish / Add missing sizes match it.
  * or null when the store cannot be asked.
  */
 export async function readShopifyImage(skus) {
@@ -26,9 +31,9 @@ export async function readShopifyImage(skus) {
       method: 'POST',
       headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        query: `query($q: String!) { productVariants(first: 10, query: $q) { nodes {
+        query: `query($q: String!) { productVariants(first: 25, query: $q) { nodes {
           sku image { url altText }
-          product { title status featuredMedia { preview { image { url altText } } } } } } }`,
+          product { title status productType featuredMedia { preview { image { url altText } } } } } } }`,
         variables: { q: search },
       }),
       signal: AbortSignal.timeout(6000),
@@ -43,7 +48,10 @@ export async function readShopifyImage(skus) {
     const pic = nodes.map((n) => n.image || n.product?.featuredMedia?.preview?.image).find((i) => i?.url) || null;
     return {
       image: pic ? { url: pic.url, alt: pic.altText || nodes[0]?.product?.title || '' } : null,
-      variants: nodes.map((n) => ({ sku: n.sku, title: n.product?.title || '', status: (n.product?.status || '').toLowerCase() })),
+      variants: nodes.map((n) => ({
+        sku: n.sku, title: n.product?.title || '', status: (n.product?.status || '').toLowerCase(),
+        main: n.product?.productType === OIL_PATTERN.productType && n.product?.status !== 'ARCHIVED',
+      })),
     };
   } catch (e) {
     console.error('[shopify-image] read failed:', e.message);

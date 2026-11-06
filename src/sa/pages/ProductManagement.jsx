@@ -1578,6 +1578,7 @@ export default function ProductManagement({ user, libraryMode = false, company =
           product={products.find((p) => p.id === sheetFor.id) || sheetFor}
           place={stockMode ? 'stock' : saView ? 'sa' : 'library'}
           actions={sheetActions(products.find((p) => p.id === sheetFor.id) || sheetFor)}
+          canPublish={['admin', 'root'].includes(user.role)}
           onClose={() => setSheetFor(null)}
         />
       )}

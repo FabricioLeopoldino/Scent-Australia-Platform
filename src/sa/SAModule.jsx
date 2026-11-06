@@ -1,7 +1,6 @@
 import { Router, Route, Switch, Link, Redirect, useLocation } from 'wouter';
 import { ToastProvider } from './components/Toast';
 import Dashboard from './pages/Dashboard';
-import SkuMapping from './pages/SkuMapping';
 import TransactionHistory from './pages/TransactionHistory';
 import ProductManagement from './pages/ProductManagement';
 import ProductReturns from './pages/ProductReturns';
@@ -73,9 +72,6 @@ function SAContent({ user, onSwitchModule, onLogout }) {
               {/* H3: one BOM entry — SA Product BOM, Diffuser BOM and Formulas are its tabs. */}
               <li><Link href="/bom" className={isBomPath(location) ? 'nav-active' : ''}>BOM</Link></li>
               {/* Scented nav hidden by owner 2026-07-24 ("not usable for now"). Route + page kept below; re-add this line to restore. */}
-              {['admin', 'root'].includes(user.role) && (
-                <li><Link href="/sku-mapping" className={isActive('/sku-mapping') ? 'nav-active' : ''}>SKU Mapping</Link></li>
-              )}
             </>)}
             <li><Link href="/history" className={isActive('/history') ? 'nav-active' : ''}>History</Link></li>
             {['admin', 'root'].includes(user.role) && (
@@ -156,7 +152,9 @@ function SAContent({ user, onSwitchModule, onLogout }) {
           </Route>
           <Route path="/bom"><BomTabs /><BOMViewer user={user} /></Route>
           <Route path="/diffuser-bom"><BomTabs /><DiffuserMachineBOM user={user} /></Route>
-          <Route path="/sku-mapping">{['admin', 'root'].includes(user?.role) ? <SkuMapping user={user} /> : null}</Route>
+          {/* SKU Mapping removed (owner, 6 Nov 2026): each product's sheet shows its
+              SKUs, and an oil's Publish / Add missing sizes moved there (P7). */}
+          <Route path="/sku-mapping"><Redirect to="/fragrances" /></Route>
           <Route path="/history"><TransactionHistory user={user} /></Route>
           <Route path="/activity">{['admin', 'root'].includes(user?.role) ? <ActivityLog user={user} /> : null}</Route>
         </Switch>

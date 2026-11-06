@@ -1,7 +1,7 @@
 // Single source of truth for SA's five oil sale-variant SKUs (QA #16).
 //
 // These five keys and their volumes were previously redeclared in FOUR places
-// (server/sa/index.js, BOMViewer, SkuMapping, utils/shopifyExport) with
+// (server/sa/index.js, BOMViewer, utils/shopifyExport) with
 // independently-written labels — nothing kept them in sync, so a renamed or
 // resized variant had to be remembered in four files or the UI would disagree
 // with what actually publishes to Shopify.
