@@ -11,6 +11,7 @@
 // Run: node scripts/regression-shopify-product-pattern.js
 import { oilProductInput, oilVariantBulkInput, variantCost, oilWarnings, OIL_PATTERN } from '../shared/shopify-product-pattern.js';
 import { publishOil, addMissingOilSizes } from '../server/sa/shopify-products.js';
+import { readShopifyImage } from '../server/sa/shopify-image.js';
 
 let failed = 0;
 const check = (ok, label, detail = '') => {
@@ -111,6 +112,22 @@ try {
   script.variants = () => ({ data: { productVariants: { nodes: [v('SA_CA_00078', oldListing('SA_CA'))] } } });
   err = await addMissingOilSizes(oil, {}).catch((e) => e);
   check(err?.status === 409 && /no main product in Shopify yet/.test(err.message), 'no main product yet: refused, Publish creates it');
+
+  // The product sheet's Publish / Add missing sizes (SKU Mapping removed, 6 Nov)
+  // decide from readShopifyImage's `main`. It must be the server's own rule, or
+  // the sheet offers a button the server refuses.
+  console.log('\n4. The product sheet sees the main product the way the server does');
+  const featuredMedia = null;
+  script.variants = () => ({ data: { productVariants: { nodes: [
+    v('SA_CA_00078', { ...oldListing('SA_CA'), featuredMedia }),
+    v('SA_CA_00078', { ...main, status: 'ARCHIVED', featuredMedia }),
+    v('SA_HF_00078', { ...main, featuredMedia }),
+  ] } } });
+  const read = await readShopifyImage(['SA_CA_00078', 'SA_HF_00078']);
+  const mainOf = (sku) => read.variants.filter((x) => x.sku === sku).some((x) => x.main);
+  check(!mainOf('SA_CA_00078'), 'an old listing or an ARCHIVED main product is not the main product');
+  check(mainOf('SA_HF_00078'), 'the live main product is');
+  check(/productVariants\(first: 25/.test(calls.at(-1).query), 'room for old listings and the main product of every size');
 } finally {
   globalThis.fetch = realFetch;
 }

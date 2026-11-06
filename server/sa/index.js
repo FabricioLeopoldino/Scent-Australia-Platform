@@ -952,10 +952,10 @@ router.post('/products', async (req, res) => {
     if (withholdFromShopify) {
       console.log(`🔒 Oil "${row.name}" is exclusive to ${finalExclusivity} — withheld from the Scent Shopify store (D15 §10)`);
     } else if (category === 'OILS') {
-      // An oil goes to Shopify from SKU Mapping's Publish, where its cost per
-      // litre is typed (P7, owner 30 Oct): created here it would go up Active,
-      // on Point of Sale, with no cost per item.
-      console.log(`ℹ️ Oil "${row.name}" created — publish it to Shopify from SKU Mapping (P7)`);
+      // An oil goes to Shopify from its product sheet's Publish, where its cost
+      // per litre is typed (P7, owner 30 Oct): created here it would go up
+      // Active, on Point of Sale, with no cost per item.
+      console.log(`ℹ️ Oil "${row.name}" created — publish it to Shopify from its product sheet (P7)`);
     } else if (['SCENT_MACHINES', 'MACHINES_SPARES', 'RAW_MATERIALS'].includes(category) && process.env.SHOPIFY_SYNC_ENABLED === 'true') {
       try {
         await createProductInShopify(row);

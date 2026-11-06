@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { SECTORS } from '../../../shared/sectors.js';
 import { displayStock } from '../utils/unitConversion';
 import { effectiveMin } from '../utils/stockStatus';
+import { useToast } from './Toast';
+import PublishOilModal from './PublishOilModal';
 
 // The product sheet (PRD_H2_STOCK_MANAGEMENT.md §2.3, the owner's sketch in
 // HYPER_UPDATE_BACKLOG.md §2.2): image, details, three stock cards, Shopify
@@ -12,6 +14,8 @@ import { effectiveMin } from '../utils/stockStatus';
 //   place 'sa'      — SA Fragrances: SA's balance and SA's automatic minimum
 // Everything here is read-only; it changes through the actions (Edit, Adjust…),
 // which the page passes in with its own permission already applied.
+// canPublish (admin/root): an oil's Publish to Shopify and Add missing sizes
+// (P7) live here since SKU Mapping was removed (owner, 6 Nov 2026).
 // The image is read live from the SA Shopify store and never stored (A11); no
 // image, or Shopify down, leaves an empty frame and the sheet opens anyway.
 
@@ -49,8 +53,11 @@ function Card({ title, children }) {
   );
 }
 
-export default function ProductSheet({ product, place = 'stock', actions = [], onClose }) {
+export default function ProductSheet({ product, place = 'stock', actions = [], canPublish = false, onClose }) {
+  const showToast = useToast();
   const [shopify, setShopify] = useState(null);   // null = still asking
+  const [publishFor, setPublishFor] = useState(null); // { mode, missingSkus }
+  const [reread, setReread] = useState(0);         // asks Shopify again after a publish
   const [aliases, setAliases] = useState([]);
 
   useEffect(() => {
@@ -64,12 +71,27 @@ export default function ProductSheet({ product, place = 'stock', actions = [], o
       .then((d) => live && setAliases(Array.isArray(d) ? d : []))
       .catch(() => {});
     return () => { live = false; };
-  }, [product.id]);
+  }, [product.id, reread]);
 
   const unit = product.unit;
   const val = (k) => product.sectors?.[k] || 0;
   const skus = Object.entries(product.shopifySkus || {}).filter(([, v]) => v);
-  const statusOf = (sku) => shopify?.variants?.find((v) => v.sku === sku)?.status || null;
+  // A SKU on both an old one-per-size listing and the main product shows the main one.
+  const variantOf = (sku) => {
+    const all = (shopify?.variants || []).filter((v) => v.sku === sku);
+    return all.find((v) => v.main) || all[0] || null;
+  };
+  const statusOf = (sku) => variantOf(sku)?.status || null;
+  // P7, the same rule as the server's publishOil / addMissingOilSizes: no main
+  // product yet → Publish (old listings may exist); a main product lacking
+  // sizes → Add missing sizes. Unknown until Shopify has answered.
+  const oilPublish = (() => {
+    if (!canPublish || product.category !== 'OILS' || !shopify?.enabled || !skus.length) return null;
+    const missing = skus.map(([, sku]) => sku).filter((sku) => !variantOf(sku)?.main);
+    if (missing.length === skus.length) return { mode: 'publish', label: '↑ Publish to Shopify' };
+    if (missing.length) return { mode: 'add', missingSkus: missing, label: `+ Add missing sizes (${missing.length})` };
+    return null;
+  })();
   const incoming = openIncoming(product);
 
   const stockCard = () => {
@@ -120,7 +142,7 @@ export default function ProductSheet({ product, place = 'stock', actions = [], o
     </div>
   );
 
-  return (
+  return (<>
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 820, width: '94vw' }} role="dialog" aria-label={`Product sheet: ${product.name}`}>
         <div className="modal-header">
@@ -165,7 +187,12 @@ export default function ProductSheet({ product, place = 'stock', actions = [], o
         <div style={{ borderRadius: 10, border: '1px solid var(--border)', padding: '12px 14px', marginBottom: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
             <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: 0.4 }}>Shopify SKUs</div>
-            <a href="/sa/sku-mapping" style={{ fontSize: 12, color: '#60a5fa' }}>Edit in SKU Mapping →</a>
+            {oilPublish && (
+              <button type="button" className="btn btn-primary" style={{ fontSize: 12, padding: '5px 12px' }}
+                onClick={() => setPublishFor(oilPublish)}>
+                {oilPublish.label}
+              </button>
+            )}
           </div>
           {skus.length === 0 ? (
             <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>No Shopify SKU mapped.</div>
@@ -205,5 +232,16 @@ export default function ProductSheet({ product, place = 'stock', actions = [], o
         )}
       </div>
     </div>
-  );
+    {/* After the sheet, so it sits on top of it. */}
+    {publishFor && (
+      <PublishOilModal
+        product={product}
+        mode={publishFor.mode}
+        missingSkus={publishFor.missingSkus}
+        showToast={showToast}
+        onClose={() => setPublishFor(null)}
+        onDone={() => setReread((n) => n + 1)}
+      />
+    )}
+  </>);
 }
