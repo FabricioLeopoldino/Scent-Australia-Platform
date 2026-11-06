@@ -346,6 +346,15 @@ const OFFLINE_STUB = (src) => /SHOP_DOMAIN = 'stub'/.test(src) && /globalThis\.f
   check(booters.length > 0 && bootersUnguarded.length === 0,
     `all ${booters.length} server-booting suites carry the test-copy guard`, bootersUnguarded.join(', '));
 
+  // Start-up runs on every deploy, against LIVE. A seed there that UPDATEs on
+  // conflict silently undoes what someone set on screen: the supplier seed reset
+  // every lead time it knew on each start, from July to 7 Nov 2026.
+  console.log('\nStart-up seeds never overwrite what people set');
+  const saIndex = stripComments(readFileSync(join(ROOT, 'server/sa/index.js'), 'utf8'));
+  const supplierSeeds = saIndex.match(/INSERT INTO suppliers \(name, lead_time\) VALUES \(\$1, \$2\)\s*ON CONFLICT \(name\) DO \w+/g) || [];
+  check(supplierSeeds.length > 0 && supplierSeeds.every((s) => /DO NOTHING$/.test(s)),
+    `the supplier seeds are insert-only (${supplierSeeds.length} found)`);
+
   console.log(failed === 0 ? '\n✅ script-guards: all checks passed' : `\n❌ ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);
 })();

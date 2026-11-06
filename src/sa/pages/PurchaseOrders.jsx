@@ -403,7 +403,9 @@ function LineRow({ o, l, isAdmin, busy, events, onTakeNew, onReceive, onCorrect,
           {(events || []).map((e, i) => (
             <div key={i} style={{ color: e.kind === 'correction' ? '#fbbf24' : 'var(--text-secondary)' }}>
               {when(e.at)} · {e.by || 'unknown'} · {e.kind === 'correction' ? `corrected −${qty(e.quantity, l.unit)}` : `received ${qty(e.quantity, l.unit)}`}
-              {e.lines.length > 0 && ` ${e.kind === 'correction' ? 'from' : '→'} ${e.lines.map((x) => `${sectorLabel(x.stock)} ${qty(x.quantity, l.unit)}`).join(' · ')}`}
+              {/* One stock: just its name, the figure is already said ("received 20 L → SA", not "→ SA 20 L"). */}
+              {e.lines.length > 0 && ` ${e.kind === 'correction' ? 'from' : '→'} ${e.lines.length === 1 ? sectorLabel(e.lines[0].stock)
+                : e.lines.map((x) => `${sectorLabel(x.stock)} ${qty(x.quantity, l.unit)}`).join(' · ')}`}
             </div>
           ))}
           {events == null && <div style={{ color: 'var(--text-muted)' }}>Reading its history…</div>}

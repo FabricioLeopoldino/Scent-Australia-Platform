@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { GlowingEffect } from '../sa/components/GlowingEffect';
+import { takeSessionExpired } from './api.js';
 
 export default function Login({ onLogin }) {
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [showPwd, setShowPwd] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(() => (takeSessionExpired() ? 'Your session has expired. Please sign in again.' : ''));
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e) {

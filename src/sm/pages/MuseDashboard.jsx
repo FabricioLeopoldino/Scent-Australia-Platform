@@ -141,8 +141,10 @@ Say why, so the record shows it — for example "marketing test" or "raised by h
               could not tell what was sold. <strong>No production work was raised for the lines below.</strong>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {/* One order can raise this twice, when ordered and again when fulfilled
+                  (#1048 / #1048.1): the key carries the event, so React keeps both. */}
               {unread.map((o) => (
-                <div key={o.shopify_order_id} style={{ padding: '12px 14px', background: 'var(--surface-2)', border: '1px solid rgba(248,113,113,0.4)', borderRadius: 8 }}>
+                <div key={`${o.action}:${o.shopify_order_id}`} style={{ padding: '12px 14px', background: 'var(--surface-2)', border: '1px solid rgba(248,113,113,0.4)', borderRadius: 8 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace' }}>{o.order_ref}</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
