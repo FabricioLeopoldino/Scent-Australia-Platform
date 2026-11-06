@@ -66,8 +66,34 @@ async function publishOnPointOfSale(productId) {
   }
 }
 
+// Shopify's SKU search shows a new product only after a few seconds, so a
+// second Publish in that gap (a double click, a second tab, the sheet re-read
+// still offering the button) would not see the first one and create a second
+// main product. Each oil is remembered while it is published and for a while after.
+// ponytail: in memory, one server instance (Render); a second instance needs a DB row.
+const publishing = new Map(); // product id -> { at, title } (title null = still sending)
+const PUBLISH_HOLD_MS = 10 * 60 * 1000;
+
 /** Create the oil's main product. Refused when one already exists. */
-export async function publishOil(product, { costPerLitre, prices } = {}) {
+export async function publishOil(product, opts = {}) {
+  const held = publishing.get(product.id);
+  if (held && Date.now() - held.at < PUBLISH_HOLD_MS) {
+    throw httpError(409, held.title
+      ? `${product.name} was just published ("${held.title}"). Shopify can take a few minutes to show it everywhere; refresh before publishing again.`
+      : `${product.name} is being published right now.`);
+  }
+  publishing.set(product.id, { at: Date.now(), title: null });
+  try {
+    const out = await createOilProduct(product, opts);
+    publishing.set(product.id, { at: Date.now(), title: out.title });
+    return out;
+  } catch (e) {
+    publishing.delete(product.id);
+    throw e;
+  }
+}
+
+async function createOilProduct(product, { costPerLitre, prices } = {}) {
   const sizes = oilSkus(product);
   if (!sizes.length) throw httpError(400, `${product.name} has none of the five sale SKUs`);
   const existing = await variantsBySku(sizes.map(([, sku]) => sku));
