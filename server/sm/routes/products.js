@@ -293,7 +293,7 @@ router.get('/products/:id/transactions', auth, async (req, res) => {
 router.get('/fragrances/:id/strength-log', auth, async (req, res) => {
   try {
     const result = await query(
-      `SELECT fsl.*, u.name as created_by_name FROM fragrance_strength_log fsl LEFT JOIN users u ON fsl.created_by = u.id WHERE fsl.fragrance_id = $1 ORDER BY fsl.date_used DESC`,
+      `SELECT fsl.*, u.name as created_by_name FROM fragrance_strength_log fsl LEFT JOIN users u ON fsl.created_by = u.id WHERE fsl.fragrance_id::text = $1 OR fsl.oil_id = $1 ORDER BY fsl.date_used DESC`,
       [req.params.id]
     )
     res.json(result.rows)

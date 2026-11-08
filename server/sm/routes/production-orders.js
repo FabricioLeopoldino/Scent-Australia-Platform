@@ -109,7 +109,16 @@ async function previewDisplacement(productId, requiredQty, excludeOrderId, qFn) 
   }
 }
 
-async function createReservations(orderId, displaceLowPriority = false, userId = null) {
+// One transaction holding the order row: two calls at once (a double click on
+// Queue) would otherwise both clear, then both add, and reserve twice.
+function createReservations(orderId, displaceLowPriority = false, userId = null) {
+  return withTransaction(async (client) => {
+    await client.query(`SELECT id FROM production_orders WHERE id = $1 FOR UPDATE`, [orderId])
+    return reserveForOrder((text, params) => client.query(text, params), orderId, displaceLowPriority)
+  })
+}
+
+async function reserveForOrder(query, orderId, displaceLowPriority) {
   const priority = await resolveOrderPriority(orderId)
 
   // Idempotent: clear any existing 'reserved' rows so re-running doesn't double up.
@@ -579,7 +588,7 @@ router.put('/production-orders/:id/status', auth, async (req, res) => {
     // without debiting stock creates the illusion that stock was consumed when it wasn't.
     if (['completed', 'fulfilled'].includes(status)) {
       await query(
-        `UPDATE external_processing SET status = 'done', actual_return = COALESCE(actual_return, NOW()) WHERE production_order_id = $1 AND status IN ('sent','partial')`,
+        `UPDATE external_processing SET status = 'done', actual_return = COALESCE(actual_return, (NOW() AT TIME ZONE 'Australia/Sydney')::date) WHERE production_order_id = $1 AND status IN ('sent','partial')`,
         [orderId]
       )
     }
@@ -642,7 +651,7 @@ router.post('/external-processing', auth, async (req, res) => {
     const epStatus = isLabels ? 'requested' : (hasSent ? 'sent' : 'requested')
     const result = await query(
       `INSERT INTO external_processing (production_order_id, production_order_line_id, client_id, product_name, processing_type, qty_requested, qty_sent, supplier, expected_return, sent_date, status, notes, client_label_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,${hasSent ? 'NOW()' : 'NULL'},$10,$11,$12) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,${hasSent ? "(NOW() AT TIME ZONE 'Australia/Sydney')::date" : 'NULL'},$10,$11,$12) RETURNING *`,
       [production_order_id || null, production_order_line_id || null, client_id || null, product_name, processing_type,
        qty_requested ? parseFloat(qty_requested) : null, hasSent ? parseFloat(qty_sent) : null,
        supplier || null, expected_return || null, epStatus, notes || null, client_label_id || null]
@@ -684,7 +693,7 @@ router.put('/external-processing/:id/return', auth, async (req, res) => {
     }
     const newStatus = totalReturned >= refQty ? 'done' : 'partial'
     await query(
-      `UPDATE external_processing SET qty_returned = $1, actual_return = NOW(), status = $2, notes = COALESCE($3, notes), short_return_reason = COALESCE($4, short_return_reason) WHERE id = $5`,
+      `UPDATE external_processing SET qty_returned = $1, actual_return = (NOW() AT TIME ZONE 'Australia/Sydney')::date, status = $2, notes = COALESCE($3, notes), short_return_reason = COALESCE($4, short_return_reason) WHERE id = $5`,
       [totalReturned, newStatus, notes || null, short_return_reason || null, req.params.id]
     )
 
@@ -806,7 +815,7 @@ router.put('/external-processing/:id/mark-sent', auth, async (req, res) => {
     const { qty_sent } = req.body
     if (!qty_sent || parseFloat(qty_sent) <= 0) return res.status(400).json({ error: 'qty_sent required' })
     await query(
-      `UPDATE external_processing SET qty_sent = $1, sent_date = NOW(), status = 'sent' WHERE id = $2`,
+      `UPDATE external_processing SET qty_sent = $1, sent_date = (NOW() AT TIME ZONE 'Australia/Sydney')::date, status = 'sent' WHERE id = $2`,
       [parseFloat(qty_sent), req.params.id]
     )
     res.json({ success: true })
@@ -816,7 +825,7 @@ router.put('/external-processing/:id/mark-sent', auth, async (req, res) => {
 router.put('/external-processing/:id/close', auth, async (req, res) => {
   try {
     await query(
-      `UPDATE external_processing SET status = 'done', actual_return = COALESCE(actual_return, NOW()) WHERE id = $1`,
+      `UPDATE external_processing SET status = 'done', actual_return = COALESCE(actual_return, (NOW() AT TIME ZONE 'Australia/Sydney')::date) WHERE id = $1`,
       [req.params.id]
     )
     await auditLog(req.user.id, 'external_processing_closed', 'external_processing', parseInt(req.params.id), null, {})

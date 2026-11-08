@@ -20,7 +20,7 @@ router.post('/stock/remove', auth, async (req, res) => {
     if (!product_id || !quantity || quantity <= 0) return res.status(400).json({ error: 'product_id and positive quantity required' })
     const p = await adjustProductStock(product_id, -quantity, 'remove', notes, req.user.id)
     res.json(p)
-  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
+  } catch (e) { res.status(/^Insufficient stock/.test(e.message) ? 400 : 500).json({ error: sanitizeError(e) }) }
 })
 
 // A customer return puts finished goods back into stock. It is a positive

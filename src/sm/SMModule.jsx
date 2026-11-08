@@ -1,8 +1,8 @@
 import { useState, createContext, useContext } from 'react';
-import { Router, Route, Switch } from 'wouter';
+import { Router, Route, Switch, Redirect } from 'wouter';
 import axios from 'axios';
 import { Check, AlertTriangle, X } from 'lucide-react';
-import { getToken, expireSession } from '../shell/api.js';
+import { getToken, expireSession, getStoredUser } from '../shell/api.js';
 import Layout from './components/Layout.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import StockManagement from './pages/StockManagement.jsx';
@@ -11,7 +11,7 @@ import ProductionOrders from './pages/ProductionOrders.jsx';
 import ManufacturingQueue from './pages/ManufacturingQueue.jsx';
 import TransactionHistory from './pages/TransactionHistory.jsx';
 import IncomingOrders from './pages/IncomingOrders.jsx';
-import ActivityLog from './pages/ActivityLog.jsx';
+
 import HistoryActivity from './pages/HistoryActivity.jsx';
 import Statement from './pages/Statement.jsx';
 import Fragrances from './pages/Fragrances.jsx';
@@ -31,6 +31,9 @@ import StockScentedMerchandise from './pages/StockScentedMerchandise.jsx';
 import BOMMuse from './pages/BOMMuse.jsx';
 import ExternalProcessing from './pages/ExternalProcessing.jsx';
 import './sm.css';
+
+// Same roles as the menu (Layout); a blocked role lands on the Dashboard, not a page of 403s.
+const adminOnly = (el) => ['admin', 'root'].includes(getStoredUser()?.role) ? el : <Redirect to="/" />;
 
 // ─────────────────────────────────────────
 // Contexts — same exports the original SM App.jsx provided; the 30+ page
@@ -136,13 +139,13 @@ export default function SMModule({ user, onLogout }) {
                 <Route path="/external-processing" component={ExternalProcessing} />
                 <Route path="/returns" component={Returns} />
                 {/* Centralized cross-system report (owner 2026-07-28) */}
-                <Route path="/history" component={() => <HistoryActivity kind="history" />} />
-                <Route path="/activity" component={() => <HistoryActivity kind="activity" />} />
-                <Route path="/unmatched-sales" component={() => <HistoryActivity kind="unmatched" />} />
-                <Route path="/statement" component={Statement} />
+                <Route path="/history">{adminOnly(<HistoryActivity kind="history" />)}</Route>
+                <Route path="/activity">{adminOnly(<HistoryActivity kind="activity" />)}</Route>
+                <Route path="/unmatched-sales">{adminOnly(<HistoryActivity kind="unmatched" />)}</Route>
+                <Route path="/statement">{adminOnly(<Statement />)}</Route>
                 {/* Legacy per-module pages kept for deep links; superseded in nav by /history + /activity */}
                 <Route path="/transactions" component={TransactionHistory} />
-                <Route path="/activity-log" component={ActivityLog} />
+                <Route path="/activity-log"><Redirect to="/activity" /></Route>
                 <Route path="/packing-records" component={PackingRecords} />
                 <Route path="/suppliers" component={Suppliers} />
                 <Route path="/muse-stock" component={MuseStock} />

@@ -52,9 +52,10 @@ export default function AttachmentsModal({ product, onClose }) {
   async function handleUpload() {
     if (!file) { addToast('Select a file to upload', 'error'); return }
     setUploading(true)
-    try {
-      const reader = new FileReader()
-      reader.onload = async (ev) => {
+    // The request runs inside onload, so its errors are caught there, not by an outer try.
+    const reader = new FileReader()
+    reader.onload = async (ev) => {
+      try {
         const base64 = ev.target.result.split(',')[1]
         await axios.post(`/api/products/${product.id}/attachments`, {
           filename: file.name,
@@ -67,11 +68,11 @@ export default function AttachmentsModal({ product, onClose }) {
         setFile(null)
         setForm({ attachment_type: 'formula_sheet', version: '', expires_at: '', notes: '' })
         load()
-      }
-      reader.onerror = () => addToast('File read error', 'error')
-      reader.readAsDataURL(file)
-    } catch (e) { addToast(e.response?.data?.error || 'Upload failed', 'error') }
-    finally { setUploading(false) }
+      } catch (e) { addToast(e.response?.data?.error || 'Upload failed', 'error') }
+      finally { setUploading(false) }
+    }
+    reader.onerror = () => { addToast('File read error', 'error'); setUploading(false) }
+    reader.readAsDataURL(file)
   }
 
   async function handleDelete(att) {

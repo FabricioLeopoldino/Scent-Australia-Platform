@@ -6,7 +6,7 @@ import IconButton from '../components/IconButton.jsx'
 import { useToast } from '../SMModule.jsx'
 import ConfirmModal from '../components/ConfirmModal.jsx'
 import MlHint from '../components/MlHint.jsx'
-import { fmt } from '../utils/date.js'
+import { fmtDate } from '../utils/date.js'
 import SearchSelect from '../components/SearchSelect.jsx'
 import GlowingEffect from '../components/GlowingEffect.jsx'
 
@@ -279,7 +279,7 @@ export default function IncomingOrders() {
                     </td>
                     <td style={{ padding: '10px 14px', fontSize: 12, color: 'rgba(232,234,242,0.5)' }}>{po.supplier || '—'}</td>
                     <td style={{ padding: '10px 14px', fontSize: 12, color: po.estimated_delivery_date ? '#10b981' : 'rgba(232,234,242,0.3)' }}>
-                      {po.estimated_delivery_date ? fmt(po.estimated_delivery_date) : '—'}
+                      {po.estimated_delivery_date ? fmtDate(po.estimated_delivery_date) : '—'}
                     </td>
                     <td style={{ padding: '10px 14px' }}>
                       <div style={{ display: 'flex', gap: 6 }}>

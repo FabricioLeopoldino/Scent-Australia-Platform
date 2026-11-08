@@ -240,28 +240,15 @@ async function main() {
     const rf = await db.query(`SELECT current_stock FROM products WHERE category = 'READY_FORMULA' AND name ILIKE '%Santal Bloom%'`);
     record('complete: leftover → READY_FORMULA +100 ml', rf.rows[0] && parseFloat(rf.rows[0].current_stock) >= 100);
 
-    // ── KNOWN GAP (found 2026-08-07, NOT yet fixed) ───────────────────────────
-    // The per-line "extra fragrance" top-up at completion still only understands
-    // the LEGACY fragrance_id: manufacturing.js does `if (!fl.fragrance_id)
-    // continue`, so on a MUSE line — which carries oil_id since Phase B — the
-    // extra ml is silently dropped: the Library oil is NOT debited and no
-    // strength-log row is written. Oil physically used, nothing recorded.
-    //
-    // Not fixed on the spot because the strength log cannot hold an oil:
-    // fragrance_strength_log.fragrance_id is INTEGER NOT NULL and oil ids are
-    // VARCHAR ('OIL_83'), so it needs a schema migration — the wrong change to
-    // make three days before the MUSE launch. Tracked for D17.
-    //
-    // These two checks PIN the current broken behaviour on purpose. When the
-    // server is fixed they will fail, which is the reminder to restore them to
-    // the real assertions (frFinal === frAfter - 50, actual_pct_used > 25).
+    // D17 Block F: the extra top-up on an OIL line leaves the Library and is logged by oil id.
     const frFinal = await oilStockOf(oil1);
-    record('complete: KNOWN GAP — extra fragrance on an OIL line is NOT debited',
-      near(frFinal, frAfter), `oil stock unchanged at ${frFinal} (should have dropped 50)`);
+    record('complete: extra fragrance on an OIL line debits the oil 50 ml',
+      near(frFinal, frAfter - 50), `${frAfter}→${frFinal}`);
 
-    const strength = await db.query(`SELECT actual_pct_used FROM fragrance_strength_log WHERE production_order_id = $1`, [orderId]);
-    record('complete: KNOWN GAP — no strength log for an OIL line',
-      strength.rows.length === 0, `${strength.rows.length} rows (should be 1)`);
+    const strength = await db.query(`SELECT actual_pct_used, oil_id FROM fragrance_strength_log WHERE production_order_id = $1`, [orderId]);
+    record('complete: one strength-log row for the OIL line, above the standard %',
+      strength.rows.length === 1 && strength.rows[0].oil_id === oil1 && parseFloat(strength.rows[0].actual_pct_used) > 25,
+      `${strength.rows.length} rows, ${JSON.stringify(strength.rows[0] || {})}`);
 
     // ── Major Client priority displacement ──
     // idempotent client (rerun-safe)
@@ -445,7 +432,7 @@ async function main() {
     record('hardening: DB error sanitized (no pg message leaked)', dbErr.status === 500 && dbErr.json?.error === 'Internal server error');
 
     const bizErr = await api('POST', '/api/sm/stock/remove', { product_id: ethanolId, quantity: 99999999 });
-    record('hardening: business error passes allowlist', bizErr.status === 500 && /^Insufficient stock/.test(bizErr.json?.error || ''));
+    record('hardening: business error passes allowlist', bizErr.status === 400 && /^Insufficient stock/.test(bizErr.json?.error || ''));
   } finally {
     // The disposable Library oils and the sa.transactions rows their debit wrote
     // must not survive the run — sa is production data.

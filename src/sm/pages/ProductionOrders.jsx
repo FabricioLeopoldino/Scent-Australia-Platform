@@ -974,12 +974,7 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
     setClientId(client.id)
     setClientSearch(client.name)
     setShowClientDrop(false)
-    if (client.is_large_client) {
-      setOrderType('LARGE_CLIENT')
-    } else {
-      setOrderType('STANDARD')
-      setClientProducts([])
-    }
+    setOrderType(client.is_large_client ? 'LARGE_CLIENT' : 'STANDARD')
     loadLabels(client.id)
   }
 

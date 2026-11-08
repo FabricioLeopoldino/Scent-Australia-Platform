@@ -234,7 +234,7 @@ export default function ExternalProcessing() {
             <div className="form-group">
               <label className="label">Qty Returned</label>
               <input type="number" value={epReturnQty} onChange={e => setEpReturnQty(e.target.value)}
-                placeholder={`max ${epReturnModal.qty_sent}`} className="input" />
+                placeholder={`max ${epReturnModal.qty_sent ?? epReturnModal.qty_requested ?? ""}`} className="input" />
             </div>
             {(() => {
               const qtyRef = parseFloat(epReturnModal.processing_type === 'labels' ? epReturnModal.qty_requested : epReturnModal.qty_sent)

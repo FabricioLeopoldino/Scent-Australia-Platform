@@ -22,10 +22,11 @@ async function adjustProductStock(productId, delta, type, notes, userId, orderId
   // instead we record it and let the balance go negative (a signal to investigate,
   // mirroring the SA/oil model). Production/BOM consumption keeps the guard.
   if (delta < 0 && !opts.allowNegative) {
-    const check = await qry(`SELECT current_stock FROM products WHERE id = $1`, [productId])
+    const check = await qry(`SELECT current_stock, product_code, name FROM products WHERE id = $1`, [productId])
     if (!check.rows[0]) throw new Error('Product not found')
-    const newStock = parseFloat(check.rows[0].current_stock) + delta
-    if (newStock < 0) throw new Error(`Insufficient stock: available ${check.rows[0].current_stock}, requested ${Math.abs(delta)}`)
+    const c = check.rows[0]
+    const newStock = parseFloat(c.current_stock) + delta
+    if (newStock < 0) throw new Error(`Insufficient stock of ${c.product_code} ${c.name}: available ${parseFloat(c.current_stock)}, requested ${Math.abs(delta)}`)
   }
   const result = await qry(`UPDATE products SET current_stock = current_stock + $1 WHERE id = $2 RETURNING *`, [delta, productId])
   const p = result.rows[0]

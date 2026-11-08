@@ -312,11 +312,16 @@ router.post('/manufacturing/:id/complete', auth, async (req, res) => {
           if (lr?.fragrance_id || lr?.oil_id) {
             const fn = lr.fragrance_name || lr.oil_name
             const rfCode = lr.fragrance_code || lr.oil_code || lr.oil_id
-            let rfProd = await tq(`SELECT * FROM products WHERE category = 'READY_FORMULA' AND name ILIKE $1 LIMIT 1`, [`%${fn}%`])
+            // Full code: cutting it to 8 characters gave every FRAG_000xx oil the same RF code.
+            const code = `RF-${String(rfCode || fn).toUpperCase().replace(/\s+/g, '-')}`
+            const rfName = `Ready Formula — ${fn}`
+            let rfProd = await tq(
+              `SELECT * FROM products WHERE category = 'READY_FORMULA' AND (product_code = $1 OR name = $2)
+               ORDER BY (product_code = $1) DESC LIMIT 1`, [code, rfName])
             if (!rfProd.rows[0]) {
               rfProd = await tq(
                 `INSERT INTO products (name, product_code, category, unit, current_stock) VALUES ($1,$2,'READY_FORMULA','ml',0) RETURNING *`,
-                [`Ready Formula — ${fn}`, `RF-${(rfCode || fn).toString().substring(0,8).toUpperCase().replace(/\s+/g,'-')}`]
+                [rfName, code]
               )
             }
             await adjustProductStock(rfProd.rows[0].id, parseFloat(ll.leftover_formula_ml), 'ready_formula_in',
@@ -480,23 +485,31 @@ router.post('/manufacturing/:id/complete', auth, async (req, res) => {
         const extraMl = parseFloat(ll.extra_fragrance_ml)
         if (!extraMl || extraMl <= 0) continue
         const lineRow = await tq(
-          `SELECT pol.fragrance_id, pol.oil_pct, pol.quantity, p.name as fragrance_name,
-                  master.volume_ml as master_volume
+          `SELECT pol.fragrance_id, pol.oil_id, pol.oil_pct, pol.quantity,
+                  COALESCE(p.name, oil.name) as fragrance_name,
+                  master.volume_ml as master_volume,
+                  (SELECT v.business_unit FROM products v
+                     JOIN products m ON m.id = v.master_product_id
+                    WHERE m.product_code = pol.product_type AND m.category = 'FINISHED_GOOD' AND v.oil_id = pol.oil_id
+                    ORDER BY (v.name IS DISTINCT FROM pol.variant_name), (v.archived IS TRUE), v.id LIMIT 1) AS business_unit
            FROM production_order_lines pol
            LEFT JOIN products p ON p.id = pol.fragrance_id
+           LEFT JOIN sa.products oil ON oil.id = pol.oil_id
            LEFT JOIN products master ON master.product_code = pol.product_type AND master.is_master = true
-           WHERE pol.id = $1`,
-          [ll.line_id]
+           WHERE pol.id = $1 AND pol.production_order_id = $2`,
+          [ll.line_id, req.params.id]
         )
         const fl = lineRow.rows[0]
-        if (!fl || !fl.fragrance_id) continue
+        if (!fl || !(fl.fragrance_id || fl.oil_id)) continue
 
-        // Debit the extra ml from fragrance stock
-        await adjustProductStock(
-          fl.fragrance_id, -extraMl, 'production_debit',
-          `Extra ${extraMl} ml added during ${order.rows[0].order_number}${ll.extra_fragrance_reason ? ` — ${ll.extra_fragrance_reason}` : ''}`,
-          req.user.id, parseInt(req.params.id), null, tq
-        )
+        const extraNote = `Extra ${extraMl} ml added during ${order.rows[0].order_number}${ll.extra_fragrance_reason ? ` — ${ll.extra_fragrance_reason}` : ''}`
+        if (fl.oil_id) {
+          // D17 Block F1: a Library oil line — same audited path as the start debit.
+          await consumeFragranceOil(tq, fl.oil_id, extraMl, segment, extraNote, fl.business_unit)
+        } else {
+          await adjustProductStock(fl.fragrance_id, -extraMl, 'production_debit', extraNote,
+            req.user.id, parseInt(req.params.id), null, tq)
+        }
 
         // Strength log: compute equivalent actual % used so the Oil % History chart stays useful
         const standardPct = parseFloat(fl.oil_pct) || 25
@@ -507,9 +520,9 @@ router.post('/manufacturing/:id/complete', auth, async (req, res) => {
         const totalFormulaMl = qty * volume || 1
         const actualPct = (actualFragMl / totalFormulaMl) * 100
         await tq(
-          `INSERT INTO fragrance_strength_log (fragrance_id, fragrance_name, production_order_id, standard_pct, actual_pct_used, was_adjusted, adjustment_reason, batch_reference, date_used, created_by)
-           VALUES ($1,$2,$3,$4,$5,true,$6,$7,(NOW() AT TIME ZONE 'Australia/Sydney')::date,$8)`,
-          [fl.fragrance_id, fl.fragrance_name, parseInt(req.params.id), standardPct,
+          `INSERT INTO fragrance_strength_log (fragrance_id, oil_id, fragrance_name, production_order_id, standard_pct, actual_pct_used, was_adjusted, adjustment_reason, batch_reference, date_used, created_by)
+           VALUES ($1,$2,$3,$4,$5,$6,true,$7,$8,(NOW() AT TIME ZONE 'Australia/Sydney')::date,$9)`,
+          [fl.fragrance_id || null, fl.oil_id || null, fl.fragrance_name, parseInt(req.params.id), standardPct,
            Number(actualPct.toFixed(2)), ll.extra_fragrance_reason || `Added ${extraMl} ml extra`,
            order.rows[0].order_number, req.user.id]
         )

@@ -213,13 +213,13 @@ async function runStartupMigrations() {
 
   // EP status correction — records marked 'partial' but actually fully returned (labels use qty_requested as ref, others use qty_sent)
   await query(`UPDATE external_processing
-    SET status = 'done', actual_return = COALESCE(actual_return, NOW())
+    SET status = 'done', actual_return = COALESCE(actual_return, (NOW() AT TIME ZONE 'Australia/Sydney')::date)
     WHERE status = 'partial'
       AND processing_type = 'labels'
       AND qty_requested IS NOT NULL
       AND qty_returned >= qty_requested`)
   await query(`UPDATE external_processing
-    SET status = 'done', actual_return = COALESCE(actual_return, NOW())
+    SET status = 'done', actual_return = COALESCE(actual_return, (NOW() AT TIME ZONE 'Australia/Sydney')::date)
     WHERE status = 'partial'
       AND processing_type IN ('candle_filling','other')
       AND qty_sent IS NOT NULL
@@ -426,6 +426,10 @@ async function runStartupMigrations() {
   await query(`ALTER TABLE product_bom ADD COLUMN IF NOT EXISTS client_stock_id INTEGER REFERENCES client_stock(id) ON DELETE SET NULL`)
   // Make component_product_id nullable (it's NULL when client_stock_id is set)
   await query(`ALTER TABLE product_bom ALTER COLUMN component_product_id DROP NOT NULL`).catch(() => {})
+
+  // D17 Block F2: a Library oil line logs its extra top-up by oil id (sa.products.id is VARCHAR).
+  await query(`ALTER TABLE fragrance_strength_log ADD COLUMN IF NOT EXISTS oil_id VARCHAR(50)`)
+  await query(`ALTER TABLE fragrance_strength_log ALTER COLUMN fragrance_id DROP NOT NULL`)
 
   // Migrate legacy client_product_bom rows → product_bom (idempotent: skips if already migrated)
   await query(`
