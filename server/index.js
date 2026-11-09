@@ -11,7 +11,7 @@ import { requireAuth, requireModule } from './platform/auth.js';
 import platformRouter from './platform/router.js';
 import transfersRouter from './platform/transfers.js';
 import reportsRouter from './platform/reports.js';
-import { router as saRouter, runSaStartupMigrations } from './sa/index.js';
+import { router as saRouter, suppliersRouter, runSaStartupMigrations } from './sa/index.js';
 import { shopifyWebhookReceiver } from './platform/webhooks.js';
 import { mountMcp } from './platform/mcp.js';
 // CJS interop (Appendix A 9b): default import = module.exports
@@ -200,6 +200,8 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 // (superseded / Phase 5). routes/reset.js was deleted 2026-07-30 — it was a
 // destructive TRUNCATE endpoint kept permanently unmounted; the safer,
 // asserted scripts/cleanup-sm-test-data.cjs replaces that need.
+// MUSE/SM read and register suppliers in the same registry as SA (one list).
+app.use('/api/sm', requireModule('SM'), suppliersRouter);
 app.use('/api/sm', requireModule('SM'), smRouter);
 
 // Webhook receiver (PRD §10) — public, HMAC-authed; raw body preserved by

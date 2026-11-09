@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import SupplierPicker from '../../sa/components/SupplierPicker.jsx'
 import { Play, CheckCircle, Clock, X, AlertTriangle, ChevronDown, ChevronRight, Package, ClipboardList, ImageIcon, Flame, Tag, Truck, Undo2, RotateCw } from 'lucide-react'
 import axios from 'axios'
 import { useToast } from '../SMModule.jsx'
@@ -864,7 +865,7 @@ export default function ManufacturingQueue() {
             <div className="modal-body">
               <div style={{ display: 'grid', gap: 12 }}>
                 <F label="Filling Supplier">
-                  <input value={lineModalForm.supplier} onChange={e => setLineModalForm(f => ({ ...f, supplier: e.target.value }))} placeholder="Supplier name..." style={inp} />
+                  <SupplierPicker value={lineModalForm.supplier} onChange={supplier => setLineModalForm(f => ({ ...f, supplier }))} />
                 </F>
               </div>
             </div>
@@ -899,7 +900,7 @@ export default function ManufacturingQueue() {
                   />
                 </F>
                 <F label="Supplier / Contact">
-                  <input value={waitingForm.external_supplier} onChange={e => setWaitingForm(f => ({ ...f, external_supplier: e.target.value }))} placeholder="Supplier name..." style={inp} />
+                  <SupplierPicker value={waitingForm.external_supplier} onChange={external_supplier => setWaitingForm(f => ({ ...f, external_supplier }))} />
                 </F>
                 <F label="Expected back (ETA)">
                   <input type="date" value={waitingForm.external_expected_at} onChange={e => setWaitingForm(f => ({ ...f, external_expected_at: e.target.value }))} style={inp} />

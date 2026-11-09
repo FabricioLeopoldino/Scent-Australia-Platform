@@ -20,7 +20,6 @@ const { startSyncCron, registerWebhooks } = require('./services/shopify-sync')
 
 const smRouter = express.Router()
 
-smRouter.use(require('./routes/suppliers'))
 smRouter.use(require('./routes/products'))
 smRouter.use(require('./routes/muse-fragrance'))
 smRouter.use(require('./routes/stock'))

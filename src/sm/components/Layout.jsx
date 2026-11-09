@@ -6,7 +6,7 @@ import {
   LayoutDashboard, ShoppingBag, Factory, Package, Archive,
   BookOpen, Users, ScanBarcode, Truck, RotateCcw,
   History, ScrollText, UserCog, LogOut, ChevronLeft, ChevronRight,
-  Beaker, ClipboardList, Building2, Star, Briefcase, Tag, Box, FlaskConical,
+  Beaker, ClipboardList, Star, Briefcase, Tag, Box, FlaskConical,
   Sun, Moon, Send, FileText, AlertTriangle,
 } from 'lucide-react'
 
@@ -34,7 +34,6 @@ const NAV_SECTIONS = [
     { path: '/barcode', label: 'Barcode Scanner', icon: ScanBarcode, roles: ['root','admin','user'] },
     { path: '/incoming-orders', label: 'Incoming Orders', icon: Truck, roles: ['root','admin','user'] },
     { path: '/external-processing', label: 'External Processing', icon: Send, roles: ['root','admin','user'] },
-    { path: '/suppliers', label: 'Suppliers', icon: Building2, roles: ['root','admin','user'] },
     { path: '/returns', label: 'Returns', icon: RotateCcw, roles: ['root','admin','user'] },
   ]},
   { header: 'SHARED INVENTORY', views: ['ops'], items: [

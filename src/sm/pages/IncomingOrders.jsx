@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import SupplierPicker from '../../sa/components/SupplierPicker.jsx'
 import { Plus, X, CheckCircle, Truck, Search, AlertTriangle, Settings, Trash2 } from 'lucide-react'
 import axios from 'axios'
 import Button from '../components/Button.jsx'
@@ -381,7 +382,7 @@ export default function IncomingOrders() {
                 <MlHint value={createForm.quantity} unit={products.find(p => p.id === parseInt(createForm.product_id))?.unit} />
               </F>
               <F label="Supplier">
-                <input value={createForm.supplier} onChange={e => setCreateForm(f => ({ ...f, supplier: e.target.value }))} placeholder="Supplier name" style={inp} />
+                <SupplierPicker value={createForm.supplier} onChange={supplier => setCreateForm(f => ({ ...f, supplier }))} />
               </F>
               <F label="ETA">
                 <input type="date" value={createForm.estimated_delivery_date} onChange={e => setCreateForm(f => ({ ...f, estimated_delivery_date: e.target.value }))} style={inp} />

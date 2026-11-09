@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import SupplierPicker from '../../sa/components/SupplierPicker.jsx'
 import { Plus, Edit2, Trash2, X, ChevronDown, ChevronRight, Tag, Package, ClipboardList, ImageIcon, Layers } from 'lucide-react'
 import axios from 'axios'
 import Button from '../components/Button.jsx'
@@ -1048,7 +1049,7 @@ export default function Clients() {
                 </select>
               </F>
               <F label="Artwork Version"><Input value={labelForm.artwork_version} onChange={v => setLabelForm(f => ({ ...f, artwork_version: v }))} placeholder="v1" /></F>
-              <F label="Supplier"><Input value={labelForm.supplier} onChange={v => setLabelForm(f => ({ ...f, supplier: v }))} placeholder="Print Express..." /></F>
+              <F label="Supplier"><SupplierPicker value={labelForm.supplier} onChange={supplier => setLabelForm(f => ({ ...f, supplier }))} /></F>
               <F label="Initial Qty (units)"><Input type="number" value={labelForm.quantity} onChange={v => setLabelForm(f => ({ ...f, quantity: v }))} placeholder="0" /></F>
               <F label="Label Image" full>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

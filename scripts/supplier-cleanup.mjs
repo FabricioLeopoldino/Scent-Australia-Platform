@@ -64,7 +64,12 @@ const MAP = {
   'Risdon International': 'Risdon International',
   'The Fragrance Room': 'The Fragrance Room',
   'The Ingredient Warehouse': 'The Ingredient Warehouse',
+  'Wilmar': 'Wilmar', // typed on a MUSE product
 };
+// Seeded at every server boot until 9 Nov 2026; nobody here buys from them
+// (owner: "a giant list of suppliers that don't even exist here"). Deleted when
+// no SA or MUSE product uses them.
+const SEEDED_NEVER_USED = ['Firmenich', 'Givaudan', 'IFF', 'Symrise', 'Takasago', 'Sensient'];
 const RENAME = { 'Ouwave (Diffusers)': 'Crearoma (Ouwave)' };
 const NEW_LEAD_TIME = 30;
 const target = new Map(Object.entries(MAP).map(([from, to]) => [supplierKey(from), to]));
@@ -127,8 +132,29 @@ try {
     if (before !== after) leadChanges.push(`${p.productCode} ${p.name}: ${before} → ${after} days`);
   }
 
-  // 3. Registry names that are now spellings of another one (BELL, "Smart Fragrances > BELL").
+  // 2b. MUSE products carry the supplier as text only: same mapping.
+  const museProducts = (await client.query(`SELECT id, product_code, supplier FROM sm.products WHERE COALESCE(supplier, '') <> ''`)).rows;
+  for (const p of museProducts) {
+    const k = supplierKey(p.supplier);
+    const to = target.has(k) ? target.get(k) : reg.get(k)?.name;
+    if (to === undefined) { undecided.set(`MUSE ${p.product_code}: ${p.supplier}`, 1); continue; }
+    if (p.supplier === to) continue;
+    await client.query(`UPDATE sm.products SET supplier = $1 WHERE id = $2`, [to, p.id]);
+    const label = `MUSE "${p.supplier}" → ${to ? `"${to}"` : 'no supplier'}`;
+    moved.set(label, (moved.get(label) || 0) + 1);
+  }
+
+  // 3. Registry names that are now spellings of another one (BELL, "Smart Fragrances > BELL"),
+  // and the boot seed nobody uses.
   const merged = [];
+  const museKeys = new Set(museProducts.map((p) => supplierKey(p.supplier)));
+  for (const s of suppliers) {
+    if (!SEEDED_NEVER_USED.some((n) => supplierKey(n) === supplierKey(s.name))) continue;
+    const used = (await client.query(`SELECT COUNT(*)::int n FROM products WHERE supplier_id = $1 OR lower(trim(supplier)) = lower($2)`, [s.id, s.name])).rows[0].n;
+    if (used || museKeys.has(supplierKey(s.name))) continue; // in use: keep it
+    await client.query(`DELETE FROM suppliers WHERE id = $1`, [s.id]);
+    merged.push(`${s.name} → removed (never used)`);
+  }
   for (const s of suppliers) {
     const to = target.get(supplierKey(s.name));
     if (to === undefined || supplierKey(to) === supplierKey(s.name)) continue;

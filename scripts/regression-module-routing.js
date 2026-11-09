@@ -99,8 +99,11 @@ try {
   // Two routes rendering ProductManagement with different props are two pages,
   // and must say so.
   const sa = readFileSync(join(ROOT, 'src/sa/SAModule.jsx'), 'utf8');
-  const routes = [...sa.matchAll(/<Route path="([^"]+)">\s*<(\w+)([^>]*)\/>/g)]
-    .map((m) => ({ path: m[1], comp: m[2], attrs: m[3] }));
+  // Only a route whose whole content is that one component: a Redirect holds no
+  // state, and a tab strip (BomTabs) above a different page is meant to be reused.
+  const routes = [...sa.matchAll(/<Route path="([^"]+)">\s*<(\w+)([^>]*)\/>\s*<\/Route>/g)]
+    .map((m) => ({ path: m[1], comp: m[2], attrs: m[3] }))
+    .filter((r) => r.comp !== 'Redirect');
   const byComp = {};
   for (const r of routes) (byComp[r.comp] ||= []).push(r);
   const shared = Object.entries(byComp).filter(([, rs]) => rs.length > 1);

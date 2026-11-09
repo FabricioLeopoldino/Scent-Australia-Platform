@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import SupplierPicker from '../../sa/components/SupplierPicker.jsx'
 import { X, Upload } from 'lucide-react'
 import JsBarcode from 'jsbarcode'
 import { useInkColor } from '../utils/theme.js'
@@ -316,7 +317,7 @@ export default function ProductFormModal({ mode, form, setForm, saving, onClose,
           </PField>
 
           <PField label="Supplier">
-            <input value={form.supplier} onChange={e => setForm(f => ({ ...f, supplier: e.target.value }))} placeholder="Supplier name" style={pInput} />
+            <SupplierPicker value={form.supplier} onChange={supplier => setForm(f => ({ ...f, supplier }))} />
           </PField>
           <PField label="Supplier Code">
             <input value={form.supplier_code} onChange={e => setForm(f => ({ ...f, supplier_code: e.target.value }))} placeholder="Supplier's SKU" style={{ ...pInput, fontFamily: 'monospace' }} />

@@ -18,7 +18,6 @@ import Fragrances from './pages/Fragrances.jsx';
 import Returns from './pages/Returns.jsx';
 import BarcodeScanner from './pages/BarcodeScanner.jsx';
 import PackingRecords from './pages/PackingRecords.jsx';
-import Suppliers from './pages/Suppliers.jsx';
 import MuseStock from './pages/MuseStock.jsx';
 import MuseProducts from './pages/MuseProducts.jsx';
 import MuseDashboard from './pages/MuseDashboard.jsx';
@@ -147,7 +146,6 @@ export default function SMModule({ user, onLogout }) {
                 <Route path="/transactions" component={TransactionHistory} />
                 <Route path="/activity-log"><Redirect to="/activity" /></Route>
                 <Route path="/packing-records" component={PackingRecords} />
-                <Route path="/suppliers" component={Suppliers} />
                 <Route path="/muse-stock" component={MuseStock} />
                 <Route path="/muse" component={MuseDashboard} />
                 <Route path="/muse/products" component={MuseProducts} />
