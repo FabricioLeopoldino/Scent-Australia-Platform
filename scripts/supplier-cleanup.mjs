@@ -45,6 +45,9 @@ const MAP = {
   'Crearoma (Ouwave)': 'Crearoma (Ouwave)', 'Crearoma': 'Crearoma (Ouwave)',
   'ouwave': 'Crearoma (Ouwave)', 'Ouwave (Diffusers)': 'Crearoma (Ouwave)',
   'OV10': 'Crearoma (Ouwave)', 'OV5': 'Crearoma (Ouwave)', 'ECO-5': 'Crearoma (Ouwave)', 'OY-5 [OUWAVE]': 'Crearoma (Ouwave)',
+  // Refurb = returned Crearoma machines, cleaned and tested, sold second hand.
+  'Wifi Medium Diffuser Refurb': 'Crearoma (Ouwave)', 'ScentLite Refurb': 'Crearoma (Ouwave)', '700 Medium Diffuser Refurb': 'Crearoma (Ouwave)',
+  'Vanerete?': 'Vanerete', 'Vanerete': 'Vanerete', // ScentPod ceiling/light rail diffuser
   'Anotec 0307': 'Anotec', // 0307 is the code; FRAG_0309 already carries ANOTEC0307 as its supplier code
   'SA': '', 'Scent Australia': '', 'Candle Supply': '', 'Natural Candle Supply': '', // no longer used
   // Company names that were only ever typed on products: they join the registry as they are.
