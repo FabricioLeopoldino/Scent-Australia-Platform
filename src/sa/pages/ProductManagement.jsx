@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSearch, useLocation } from 'wouter';
 import { useToast } from '../components/Toast';
+import SupplierPicker from '../components/SupplierPicker';
 import ConfirmModal from '../components/ConfirmModal';
 import { displayStock } from '../utils/unitConversion';
 import { getStockStatus as getSharedStockStatus, effectiveMin, shelfStock, isSaProduct } from '../utils/stockStatus';
@@ -817,6 +818,9 @@ export default function ProductManagement({ user, libraryMode = false, company =
               </tr>
             </thead>
             <tbody>
+              {!loading && filteredProducts.length === 0 && (
+                <tr><td colSpan={99} style={{ textAlign: 'center', padding: 32, color: 'rgba(232,234,242,0.45)' }}>No products match these filters</td></tr>
+              )}
               {filteredProducts.map(product => {
                 // SA Fragrances shows SA's balance; Products and All stock the total.
                 const stock = saView ? shelfStock(product) : product.currentStock;
@@ -1375,12 +1379,7 @@ export default function ProductManagement({ user, libraryMode = false, company =
 
                 <div className="form-group">
                   <label>Supplier</label>
-                  <input
-                    type="text"
-                    className="input"
-                    value={formData.supplier}
-                    onChange={(e) => setFormData({...formData, supplier: e.target.value})}
-                  />
+                  <SupplierPicker value={formData.supplier} onChange={(supplier) => setFormData((f) => ({ ...f, supplier }))} />
                 </div>
 
                 <div className="form-group">

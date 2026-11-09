@@ -439,6 +439,7 @@ export default function StockScentedMerchandise() {
           saving={adjustSaving}
           onClose={() => setAdjustModal(null)}
           onSave={handleAdjust}
+          onType={(type) => setAdjustModal(m => ({ ...m, type }))}
         />
       )}
 
@@ -694,7 +695,7 @@ function CreateReservedModal({ form, setForm, clients, saving, onClose, onSave }
   )
 }
 
-function AdjustStockModal({ modal, qty, setQty, notes, setNotes, saving, onClose, onSave }) {
+function AdjustStockModal({ modal, qty, setQty, notes, setNotes, saving, onClose, onSave, onType }) {
   const { product, reservedItem, type } = modal
   const target = reservedItem || product
   const targetName = reservedItem ? reservedItem.product_name : product.name
@@ -719,6 +720,16 @@ function AdjustStockModal({ modal, qty, setQty, notes, setNotes, saving, onClose
             <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace', marginTop: 2 }}>{targetCode} · current: {Number(targetStock || 0).toLocaleString()} {targetUnit}</div>
           </div>
 
+          {type !== 'set' && (
+            <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+              {['add', 'remove'].map(t => (
+                <button key={t} type="button" onClick={() => onType(t)}
+                  className={`btn ${type === t ? (t === 'add' ? 'btn-primary' : 'btn-danger') : 'btn-secondary'}`}>
+                  {titles[t]}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="form-group">
             <label className="label">{type === 'set' ? 'New stock value' : 'Quantity'}</label>
             <input type="number" min={0} step="any" value={qty} onChange={e => setQty(e.target.value)} autoFocus className="input" placeholder="0" />

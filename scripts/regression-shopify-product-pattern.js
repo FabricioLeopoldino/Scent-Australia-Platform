@@ -86,19 +86,39 @@ try {
   check(out.oldListings.length === 5, 'the old one-per-size listings are named, to archive');
 
   script.publish = () => ({ errors: [{ message: 'Access denied for publishablePublish field. Required access: `write_publications` access scope.' }] });
-  out = await publishOil(oil, { costPerLitre: 42.40 });
+  out = await publishOil({ ...oil, id: 'OIL_79' }, { costPerLitre: 42.40 });
   check(out.posPublished === false && /write_publications/.test(out.posError), 'without the channel permission: created, and the answer says to turn Point of Sale on', out.posError);
 
   script.variants = () => ({ data: { productVariants: { nodes: [v('SA_CA_00078', main)] } } });
   calls = [];
-  let err = await publishOil(oil, { costPerLitre: 42.40 }).catch((e) => e);
+  let err = await publishOil({ ...oil, id: 'OIL_80' }, { costPerLitre: 42.40 }).catch((e) => e);
   check(err?.status === 409 && /already has its main product/.test(err.message), 'a second main product is refused', err?.message);
   check(!calls.some((c) => /productSet/.test(c.query)), 'and nothing is written');
 
   script.set = () => ({ data: { productSet: { product: null, userErrors: [{ field: ['variants'], message: 'Price must be greater than 0' }] } } });
   script.variants = () => ({ data: { productVariants: { nodes: [] } } });
-  err = await publishOil(oil, {}).catch((e) => e);
+  err = await publishOil({ ...oil, id: 'OIL_81' }, {}).catch((e) => e);
   check(err?.status === 400 && /Shopify refused the product: Price must be greater than 0/.test(err.message), 'Shopify\'s refusal comes back in its own words');
+
+  // Shopify's SKU search lags a new product by seconds, so the second of two
+  // Publishes would not see the first. The server holds the oil instead.
+  console.log('\n2b. A second Publish while Shopify cannot see the first yet');
+  script.variants = () => ({ data: { productVariants: { nodes: [] } } });
+  script.set = () => ({ data: { productSet: { product: { id: 'gid://shopify/Product/new2', title: 'Jardin de Carthage (LUX0639)', variants: { nodes: [] } }, userErrors: [] } } });
+  calls = [];
+  const sets = () => calls.filter((c) => /productSet/.test(c.query)).length;
+  const twin = { ...oil, id: 'OIL_82' };
+  const [one, two] = await Promise.all([publishOil(twin, {}).catch((e) => e), publishOil(twin, {}).catch((e) => e)]);
+  check(sets() === 1, 'a double click: Shopify is asked to create it once', String(sets()));
+  check(one?.title && two?.status === 409 && /being published right now/.test(two.message), 'the second click is refused while the first is sending', two?.message);
+  err = await publishOil(twin, {}).catch((e) => e);
+  check(err?.status === 409 && /was just published/.test(err.message) && sets() === 1, 'right after, while Shopify still shows no main product: refused, nothing sent', err?.message);
+  const failing = { ...oil, id: 'OIL_83' };
+  script.set = () => ({ data: { productSet: { product: null, userErrors: [{ field: ['x'], message: 'no' }] } } });
+  await publishOil(failing, {}).catch(() => {});
+  script.set = () => ({ data: { productSet: { product: { id: 'gid://shopify/Product/new3', title: 'X', variants: { nodes: [] } }, userErrors: [] } } });
+  out = await publishOil(failing, {}).catch((e) => e);
+  check(out?.title === 'X', 'a Publish Shopify refused can be tried again straight away', out?.message);
 
   console.log('\n3. Add the missing sizes');
   script.variants = () => ({ data: { productVariants: { nodes: [v('SA_CA_00078', main), v('SA_1L_00078', main), v('SA_PRO_00078', main), v('SA_HF_00078', oldListing('SA_HF'))] } } });

@@ -34,6 +34,7 @@ import { dirname, join } from 'path';
 import { saPool as pool, withTransaction } from '../db.js';
 import { SA_SKU_VARIANTS, SA_SKU_KEYS } from '../../shared/sa-sku-variants.js';
 import { withinWarehouseHours, warehouseDate } from '../../shared/warehouse-hours.js';
+import { sameSupplier, similarSupplier, supplierKey } from '../../shared/supplier-names.js';
 
 // The five sale SKUs as Shopify sees them. Volumes come from the shared module
 // (single source of truth, QA #16); suffix/price are commercial data and live
@@ -810,6 +811,8 @@ router.post('/products', async (req, res) => {
     if (!name || !category) {
       return res.status(400).json({ error: 'Name and category are required' });
     }
+    const sup = await resolveSupplier(supplier, null);
+    if (sup?.error) return res.status(400).json({ error: sup.error });
 
     // A new oil is registered in SA unless the request says where (S6,
     // registerIn: ['SA','MUSE'] or []), so every existing caller keeps today's
@@ -907,14 +910,14 @@ router.post('/products', async (req, res) => {
       `INSERT INTO products
        (id, tag, "productCode", name, category, unit, "currentStock", "minStockLevel",
         "shopifySkus", "skuMultipliers", supplier, "supplier_code", "unitPerBox", "stockBoxes", "incoming_orders",
-        sub_category, color, location, bin_location, exclusivity)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+        sub_category, color, location, bin_location, exclusivity, supplier_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
        RETURNING *`,
       [
         newId, newTag, newProductCode, name, category, unit || 'units',
         currentStock || 0, minStockLevel || 0, skusJson, skuMultipliersJson,
-        supplier || '', supplier_code || '', unitPerBox || 1, stockBoxes, '[]',
-        finalSubCategory, finalColor, finalLocation, finalBinLocation, finalExclusivity
+        sup?.supplier ?? '', supplier_code || '', unitPerBox || 1, stockBoxes, '[]',
+        finalSubCategory, finalColor, finalLocation, finalBinLocation, finalExclusivity, sup?.supplier_id ?? null
       ]
     );
     await registerOil(c, result.rows[0].id, registerIn, req.user.id);
@@ -1026,6 +1029,10 @@ router.put('/products/:id', async (req, res) => {
       finalExclusivity = exclusivity;
     }
 
+    const supplierNow = await pool.query(`SELECT supplier FROM products WHERE id = $1`, [productId]);
+    const sup = await resolveSupplier(supplier, supplierNow.rows[0]?.supplier);
+    if (sup?.error) return res.status(400).json({ error: sup.error });
+
     // currentStock is intentionally NOT updated here — stock only changes via
     // /api/stock/add, /api/stock/remove, /api/stock/adjust, webhook, or /api/returns.
     // Allowing the edit form to overwrite currentStock would silently reverse webhook deductions.
@@ -1129,14 +1136,15 @@ router.put('/products/:id', async (req, res) => {
        color = CASE WHEN $13::text IS NOT NULL THEN $13 ELSE color END,
        location = CASE WHEN $14::text IS NOT NULL THEN $14 ELSE location END,
        bin_location = CASE WHEN $15::text IS NOT NULL THEN $15 ELSE bin_location END,
-       exclusivity = CASE WHEN $17::boolean THEN $18 ELSE exclusivity END
+       exclusivity = CASE WHEN $17::boolean THEN $18 ELSE exclusivity END,
+       supplier_id = CASE WHEN $19::boolean THEN $20::int ELSE supplier_id END
        WHERE id = $16
        RETURNING *`,
       [
         name, category, productCode, tag, unit, minStockLevel,
-        skusJson, skuMultipliersJson, supplier, supplier_code, unitPerBox,
+        skusJson, skuMultipliersJson, sup ? sup.supplier : null, supplier_code, unitPerBox,
         finalSubCategory ?? null, finalColor ?? null, finalLocation ?? null, finalBinLocation ?? null, productId,
-        exclusivitySent, finalExclusivity
+        exclusivitySent, finalExclusivity, !!sup, sup?.supplier_id ?? null
       ]
     );
 
@@ -1207,6 +1215,27 @@ router.delete('/products/:id', async (req, res) => {
       return res.status(400).json({
         error: `This product has ${txCount.rows[0].n} transaction(s) in the ledger and cannot be permanently deleted — deactivate it instead to keep its history.`
       });
+    }
+
+    // An oil another company uses. MUSE / SM point at it with ON DELETE SET
+    // NULL, so the delete used to succeed and leave their products pointing
+    // at no oil (Basil & Mandarin, OILS_4, 16 Sep 2026).
+    if (product.category === 'OILS') {
+      const hasSm = (await client.query(`SELECT to_regclass('sm.products') IS NOT NULL AS sm`)).rows[0].sm;
+      const users = (await client.query(
+        `SELECT (SELECT string_agg(DISTINCT company, ', ') FROM fragrance_registrations WHERE product_id = $1 AND active AND company <> 'SA') AS companies
+         ${hasSm ? `, (SELECT COUNT(*) FROM sm.products WHERE oil_id = $1)::int AS sm_products,
+                   (SELECT COUNT(*) FROM sm.production_order_lines WHERE oil_id = $1)::int AS sm_lines` : ''}`,
+        [productId])).rows[0];
+      const uses = [
+        users.companies && `it is registered in ${users.companies}`,
+        users.sm_products > 0 && `${users.sm_products} MUSE/SM product(s) use it`,
+        users.sm_lines > 0 && `${users.sm_lines} production order line(s) use it`,
+      ].filter(Boolean);
+      if (uses.length) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `${product.name} cannot be deleted: ${uses.join('; ')}. Deactivate it instead.` });
+      }
     }
 
     // For SA_SCENTED_PRODUCTS the BOM variant equals the productCode of the SKU itself
@@ -4016,6 +4045,21 @@ router.get('/forecast/import-history', async (req, res) => {
   }
 });
 
+// A product's supplier is a name from the registry (owner, 9 Nov 2026). Returns
+// null when there is nothing to change, { supplier, supplier_id } to write
+// (the registry's own spelling), or { error }. The text a product already
+// carries is accepted unchanged, so an old typo never blocks editing the rest.
+async function resolveSupplier(sent, current) {
+  if (sent === undefined || sent === null) return null;
+  const name = String(sent).trim();
+  if (!name) return { supplier: '', supplier_id: null };
+  const { rows } = await pool.query(`SELECT id, name FROM suppliers`);
+  const hit = sameSupplier(name, rows);
+  if (hit) return { supplier: hit.name, supplier_id: hit.id };
+  if (current != null && name === String(current).trim()) return null;
+  return { error: `Supplier "${name}" is not registered. Pick it from the list, or ask an admin to register it.` };
+}
+
 // ── GET /api/suppliers — List all suppliers with their lead times
 router.get('/suppliers', async (req, res) => {
   try {
@@ -4030,12 +4074,15 @@ router.get('/suppliers', async (req, res) => {
 router.post('/suppliers', async (req, res) => {
   if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can manage suppliers' });
   try {
-    const { name, lead_time, notes } = req.body;
-    if (!name || !lead_time) return res.status(400).json({ error: 'name and lead_time are required' });
+    const { name, lead_time, notes, confirm_new } = req.body;
+    if (!name?.trim() || !(parseInt(lead_time) > 0)) return res.status(400).json({ error: 'Name and lead time (days) are required' });
+    const { rows: existing } = await pool.query(`SELECT id, name FROM suppliers`);
+    const same = sameSupplier(name, existing);
+    if (same) return res.status(409).json({ error: `"${same.name}" is already registered.`, existing: same });
+    const near = similarSupplier(name, existing);
+    if (near && !confirm_new) return res.status(409).json({ error: `Did you mean "${near.name}"?`, suggestion: near });
     const result = await pool.query(
-      `INSERT INTO suppliers (name, lead_time, notes) VALUES ($1, $2, $3)
-       ON CONFLICT (name) DO UPDATE SET lead_time = EXCLUDED.lead_time, notes = EXCLUDED.notes, updated_at = NOW()
-       RETURNING *`,
+      `INSERT INTO suppliers (name, lead_time, notes) VALUES ($1, $2, $3) RETURNING *`,
       [name.trim(), parseInt(lead_time), notes || '']
     );
     expireAutoMin();
@@ -4049,18 +4096,27 @@ router.post('/suppliers', async (req, res) => {
 router.put('/suppliers/:id', async (req, res) => {
   if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can manage suppliers' });
   try {
-    const { id } = req.params;
+    const id = parseInt(req.params.id);
     const { name, lead_time, notes } = req.body;
-    const result = await pool.query(
-      `UPDATE suppliers SET
-         name      = COALESCE($1, name),
-         lead_time = COALESCE($2, lead_time),
-         notes     = COALESCE($3, notes),
-         updated_at = NOW()
-       WHERE id = $4 RETURNING *`,
-      [name || null, lead_time ? parseInt(lead_time) : null, notes ?? null, parseInt(id)]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'Supplier not found' });
+    const { rows: all } = await pool.query(`SELECT id, name FROM suppliers`);
+    if (!all.some((s) => s.id === id)) return res.status(404).json({ error: 'Supplier not found' });
+    const clash = name?.trim() && sameSupplier(name, all.filter((s) => s.id !== id));
+    if (clash) return res.status(409).json({ error: `"${clash.name}" is already registered.` });
+    // A rename carries every product of that supplier with it (the text feeds
+    // Shopify's tag and description, and Demand Planning's lead time).
+    const result = await withTransaction(pool, async (c) => {
+      const r = await c.query(
+        `UPDATE suppliers SET
+           name      = COALESCE($1, name),
+           lead_time = COALESCE($2, lead_time),
+           notes     = COALESCE($3, notes),
+           updated_at = NOW()
+         WHERE id = $4 RETURNING *`,
+        [name?.trim() || null, lead_time ? parseInt(lead_time) : null, notes ?? null, id]
+      );
+      await c.query(`UPDATE products SET supplier = $1 WHERE supplier_id = $2 AND supplier IS DISTINCT FROM $1`, [r.rows[0].name, id]);
+      return r;
+    });
     expireAutoMin();
     res.json(result.rows[0]);
   } catch (error) {
@@ -4072,8 +4128,13 @@ router.put('/suppliers/:id', async (req, res) => {
 router.delete('/suppliers/:id', async (req, res) => {
   if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can manage suppliers' });
   try {
-    const result = await pool.query(`DELETE FROM suppliers WHERE id = $1 RETURNING id`, [parseInt(req.params.id)]);
-    if (!result.rows.length) return res.status(404).json({ error: 'Supplier not found' });
+    const id = parseInt(req.params.id);
+    const sup = (await pool.query(`SELECT name FROM suppliers WHERE id = $1`, [id])).rows[0];
+    if (!sup) return res.status(404).json({ error: 'Supplier not found' });
+    const { rows: texts } = await pool.query(`SELECT supplier_id, supplier FROM products WHERE supplier_id = $1 OR supplier <> ''`, [id]);
+    const used = texts.filter((p) => p.supplier_id === id || supplierKey(p.supplier) === supplierKey(sup.name)).length;
+    if (used) return res.status(400).json({ error: `${sup.name} is the supplier of ${used} product${used === 1 ? '' : 's'}. Move them to another supplier first.` });
+    const result = await pool.query(`DELETE FROM suppliers WHERE id = $1 RETURNING id`, [id]);
     expireAutoMin();
     res.json({ success: true });
   } catch (error) {

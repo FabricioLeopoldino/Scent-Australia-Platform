@@ -913,6 +913,14 @@ export default function MuseStock() {
               <button className="modal-close" onClick={() => setAdjModal(null)}><X size={14} /></button>
             </div>
             <div className="modal-body">
+              <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+                {['add', 'remove'].map(mode => (
+                  <button key={mode} type="button" onClick={() => setAdjModal(m => ({ ...m, mode }))}
+                    className={`btn ${adjModal.mode === mode ? (mode === 'add' ? 'btn-primary' : 'btn-danger') : 'btn-secondary'}`}>
+                    {mode === 'add' ? 'Add Stock' : 'Remove Stock'}
+                  </button>
+                ))}
+              </div>
               <div className="form-group">
                 <label className="label">Quantity ({adjModal.variant.unit}) *</label>
                 <input type="number" min={0.01} step="any" value={adjQty} onChange={e => setAdjQty(e.target.value)} autoFocus placeholder="0" className="input" />

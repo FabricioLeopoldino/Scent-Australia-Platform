@@ -14,6 +14,9 @@ const { query } = require('./db')
 
 function auth(req, res, next) {
   if (!req.user) return res.status(401).json({ error: 'Unauthorized' })
+  // No MUSE/SM screen is offered to technicians (Layout menu), so the server
+  // refuses their writes too (QA 9 Nov: stock and order create were open).
+  if (req.user.role === 'technician' && req.method !== 'GET') return res.status(403).json({ error: 'Forbidden' })
   next()
 }
 

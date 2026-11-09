@@ -625,7 +625,7 @@ function SupplierModal({ suppliers, onClose, onSaved }) {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: supplier.newName, lead_time: parseInt(supplier.newLeadTime), notes: supplier.newNotes })
       });
-      if (!res.ok) throw new Error('Save failed');
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Save failed');
       setList(l => l.map(s => s.id === supplier.id ? { ...s, name: supplier.newName, lead_time: parseInt(supplier.newLeadTime), notes: supplier.newNotes, editing: false } : s));
       setMsg({ type: 'success', text: 'Saved!' });
       onSaved();
@@ -637,22 +637,28 @@ function SupplierModal({ suppliers, onClose, onSaved }) {
     setConfirmState({ message: 'Delete this supplier?', onConfirm: async () => {
       setConfirmState(null);
       try {
-        await fetch(`/api/suppliers/${id}`, { method: 'DELETE' });
+        const res = await fetch(`/api/suppliers/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Delete failed');
         setList(l => l.filter(s => s.id !== id));
         onSaved();
       } catch (e) { showToast(e.message, 'error'); }
     }});
   };
 
-  const add = async () => {
+  const add = async (confirmNew = false) => {
     if (!newName.trim() || !newLeadTime) { showToast('Name and lead time required', 'warning'); return; }
     setSaving(true);
     try {
       const res = await fetch('/api/suppliers', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName.trim(), lead_time: parseInt(newLeadTime) })
+        body: JSON.stringify({ name: newName.trim(), lead_time: parseInt(newLeadTime), confirm_new: confirmNew })
       });
       const json = await res.json();
+      // A name close to a registered one: confirm before adding a near-duplicate.
+      if (res.status === 409 && json.suggestion) {
+        setConfirmState({ message: `${json.error} Register "${newName.trim()}" as a separate supplier anyway?`, onConfirm: () => { setConfirmState(null); add(true); } });
+        return;
+      }
       if (!res.ok) throw new Error(json.error);
       setList(l => [...l, { ...json, editing: false, newLeadTime: json.lead_time, newName: json.name, newNotes: json.notes || '' }]);
       setNewName(''); setNewLeadTime('');
@@ -722,7 +728,7 @@ function SupplierModal({ suppliers, onClose, onSaved }) {
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Supplier name" style={{ flex: 1, border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, padding: '8px 12px', fontSize: 13, background: 'rgba(255,255,255,0.06)', color: '#e2e8f0' }} />
             <input type="number" value={newLeadTime} onChange={e => setNewLeadTime(e.target.value)} placeholder="Days" style={{ width: 80, border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8, padding: '8px 12px', fontSize: 13, textAlign: 'center', background: 'rgba(255,255,255,0.06)', color: '#e2e8f0' }} />
-            <button onClick={add} disabled={saving} style={{ padding: '8px 18px', background: '#2563eb', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Add</button>
+            <button onClick={() => add()} disabled={saving} style={{ padding: '8px 18px', background: '#2563eb', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>Add</button>
           </div>
         </div>
       </div>

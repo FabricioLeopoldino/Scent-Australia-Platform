@@ -31,7 +31,9 @@ export const calcSmartDemand = (dailyEntries, forecastDaily, asOf = null) => {
     // before — the parameter changes no production behaviour.
     const todayStr = asOf || new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
     const cutoffDate = new Date(todayStr);
-    cutoffDate.setDate(cutoffDate.getDate() - RECENT_DAYS);
+    // UTC arithmetic: todayStr parses as UTC midnight. Local days (Sydney) made
+    // the window one day longer for a week after daylight saving ends in April.
+    cutoffDate.setUTCDate(cutoffDate.getUTCDate() - RECENT_DAYS);
     const recentCutoffStr = cutoffDate.toISOString().slice(0, 10);
 
     recentEntries = dailyEntries.filter(e => e.date >= recentCutoffStr);
