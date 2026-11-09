@@ -41,6 +41,7 @@ async function txCount(type) {
 }
 
 async function setup() {
+  await query(`DELETE FROM sector_movements WHERE product_id = $1`, [OIL_ID]); // Library debits write these since 4 Nov
   await query(`DELETE FROM transactions WHERE product_id = $1`, [OIL_ID]);
   await query(`DELETE FROM products WHERE id = $1`, [OIL_ID]);
   await query(
@@ -50,6 +51,7 @@ async function setup() {
   );
 }
 async function cleanup() {
+  await query(`DELETE FROM sector_movements WHERE product_id = $1`, [OIL_ID]); // Library debits write these since 4 Nov
   await query(`DELETE FROM transactions WHERE product_id = $1`, [OIL_ID]);
   // sa.products' AFTER UPDATE trigger logs every stock change into
   // direct_stock_changes — remove OUR fixture's rows too (§18: restore the
