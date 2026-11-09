@@ -40,10 +40,13 @@ const MAP = {
   'Scent Method': 'Scent Method',
   'Smart Fragrances': 'Smart Fragrances', 'Smart Fragrances > BELL': 'Smart Fragrances', 'BELL': 'Smart Fragrances',
   'Natarom': 'Natarom',
-  'Guangzhou': 'Guangzhou',
-  'ouwave': 'Ouwave (Diffusers)', 'Ouwave (Diffusers)': 'Ouwave (Diffusers)',
-  'OV10': 'Crearoma',
-  'SA': '', 'Scent Australia': '',
+  'Guangzhou': 'Guangzhou', 'CHINA': 'Guangzhou',
+  // Every diffuser comes from Crearoma, which is Ouwave; OV10/OV5/ECO-5/OY-5 are its models.
+  'Crearoma (Ouwave)': 'Crearoma (Ouwave)', 'Crearoma': 'Crearoma (Ouwave)',
+  'ouwave': 'Crearoma (Ouwave)', 'Ouwave (Diffusers)': 'Crearoma (Ouwave)',
+  'OV10': 'Crearoma (Ouwave)', 'OV5': 'Crearoma (Ouwave)', 'ECO-5': 'Crearoma (Ouwave)', 'OY-5 [OUWAVE]': 'Crearoma (Ouwave)',
+  'Anotec 0307': 'Anotec', // 0307 is the code; FRAG_0309 already carries ANOTEC0307 as its supplier code
+  'SA': '', 'Scent Australia': '', 'Candle Supply': '', 'Natural Candle Supply': '', // no longer used
   // Company names that were only ever typed on products: they join the registry as they are.
   'ABP (Australian Botanical Products)': 'ABP (Australian Botanical Products)',
   'Air Esscentials': 'Air Esscentials',
@@ -59,6 +62,7 @@ const MAP = {
   'The Fragrance Room': 'The Fragrance Room',
   'The Ingredient Warehouse': 'The Ingredient Warehouse',
 };
+const RENAME = { 'Ouwave (Diffusers)': 'Crearoma (Ouwave)' };
 const NEW_LEAD_TIME = 30;
 const target = new Map(Object.entries(MAP).map(([from, to]) => [supplierKey(from), to]));
 
@@ -76,6 +80,16 @@ try {
   const byName = new Map(suppliers.map((s) => [s.name.toLowerCase().trim(), s]));
   const leadNow = (p) => p.lead_time ?? (p.supplier_id ? byId.get(p.supplier_id)?.lead_time
     : byName.get(String(p.supplier || '').toLowerCase().trim())?.lead_time) ?? 30;
+
+  // 0. Renames that keep the registry row (and its lead time): Ouwave (Diffusers)
+  // becomes Crearoma (Ouwave) instead of being folded into a new 30-day entry.
+  const renamed = [];
+  for (const [from, to] of Object.entries(RENAME)) {
+    const row = suppliers.find((s) => supplierKey(s.name) === supplierKey(from));
+    if (!row || suppliers.some((s) => supplierKey(s.name) === supplierKey(to))) continue;
+    await client.query(`UPDATE suppliers SET name = $1 WHERE id = $2`, [to, row.id]);
+    renamed.push(`${row.name} → ${to} (${row.lead_time} days)`); row.name = to;
+  }
 
   // 1. Every registry name the map points at must exist.
   const created = [];
@@ -122,6 +136,7 @@ try {
   }
 
   console.log(`\nSupplier clean-up — ${APPLY ? 'APPLIED' : 'DRY RUN (nothing written)'}\n`);
+  console.log(`Registry renames: ${renamed.join('; ') || 'none'}`);
   console.log(`New registry suppliers (${created.length}, at ${NEW_LEAD_TIME} days): ${created.join(', ') || 'none'}`);
   console.log(`Registry entries folded into another: ${merged.join('; ') || 'none'}`);
   console.log(`\nProducts moved:`);
