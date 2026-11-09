@@ -30,7 +30,7 @@ export default function SupplierPicker({ value, onChange }) {
       const body = await res.json().catch(() => ({}));
       if (res.status === 409 && body.existing) { onChange(body.existing.name); setAdding(false); return; }
       if (!res.ok) { setProblem({ text: body.error || `Could not register (${res.status})`, suggestion: body.suggestion }); return; }
-      setList((l) => [...l, body].sort((a, b) => a.name.localeCompare(b.name)));
+      setList((l) => [...l, body]); // the list is most-used first; a new one goes last
       onChange(body.name);
       setAdding(false); setName(''); setLeadTime('');
     } finally { setSaving(false); }

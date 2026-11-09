@@ -351,9 +351,11 @@ const OFFLINE_STUB = (src) => /SHOP_DOMAIN = 'stub'/.test(src) && /globalThis\.f
   // every lead time it knew on each start, from July to 7 Nov 2026.
   console.log('\nStart-up seeds never overwrite what people set');
   const saIndex = stripComments(readFileSync(join(ROOT, 'server/sa/index.js'), 'utf8'));
-  const supplierSeeds = saIndex.match(/INSERT INTO suppliers \(name, lead_time\) VALUES \(\$1, \$2\)\s*ON CONFLICT \(name\) DO \w+/g) || [];
-  check(supplierSeeds.length > 0 && supplierSeeds.every((s) => /DO NOTHING$/.test(s)),
-    `the supplier seeds are insert-only (${supplierSeeds.length} found)`);
+  // Since 9 Nov 2026 there is no supplier seed at all: even an insert-only one
+  // brings back a supplier someone deleted or merged (BELL, the six fragrance
+  // houses nobody here buys from). The registry is people's, not code's.
+  const supplierSeeds = saIndex.match(/INSERT INTO suppliers \(name, lead_time\) VALUES \(\$1, \$2\)\s*ON CONFLICT/g) || [];
+  check(supplierSeeds.length === 0, `no start-up code seeds the supplier list (${supplierSeeds.length} found)`);
 
   console.log(failed === 0 ? '\n✅ script-guards: all checks passed' : `\n❌ ${failed} failed`);
   process.exit(failed === 0 ? 0 : 1);

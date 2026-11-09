@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import SupplierPicker from '../../sa/components/SupplierPicker.jsx'
 import { Plus, X, ChevronDown, ChevronRight, Trash2, AlertTriangle, CheckCircle, Clock, Package, Edit2 } from 'lucide-react'
 import axios from 'axios'
 import Button from '../components/Button.jsx'
@@ -599,9 +600,7 @@ export default function ProductionOrders() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
                     <div>
                       <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'rgba(232,234,242,0.4)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 5 }}>Supplier</label>
-                      <input value={item.supplier} onChange={e => updateEpItem(idx, 'supplier', e.target.value)}
-                        placeholder="Print shop, filler..."
-                        style={{ width: '100%', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 7, padding: '7px 10px', color: '#e8eaf2', fontSize: 12, outline: 'none', boxSizing: 'border-box' }} />
+                      <SupplierPicker value={item.supplier} onChange={v => updateEpItem(idx, 'supplier', v)} />
                     </div>
                     <div>
                       <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'rgba(232,234,242,0.4)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 5 }}>Expected Return</label>

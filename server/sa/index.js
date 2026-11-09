@@ -57,6 +57,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const router = express.Router();
+// The supplier registry is ONE list for the whole platform (owner, 9 Nov 2026):
+// these routes are mounted under /api/sa here and under /api/sm in server/index.js,
+// so MUSE pickers read and register into the same sa.suppliers.
+const suppliersRouter = express.Router();
+router.use(suppliersRouter);
 // Fragrance Library sectors (PRD_LIBRARY_SECTORS.md) — /sectors/* routes.
 router.use(sectorsRouter);
 // Purchase Orders (H4, PRD_H4_PURCHASE_ORDERS.md) — the list, accepting,
@@ -3756,21 +3761,6 @@ router.get('/migrate-replenishment', async (req, res) => {
     // 4. Seed known suppliers. Insert-only: a supplier that exists keeps the
     // lead time set on screen. Both seeds (here and at start-up) used to
     // overwrite it, and the start-up one ran on every deploy (found 7 Nov 2026).
-    const knownSuppliers = [
-      { name: 'Luxaroma',         lead_time: 21  },
-      { name: 'Smart Fragrances', lead_time: 90  },
-      { name: 'FIA',              lead_time: 21  },
-      { name: 'Scent Method',     lead_time: 21  },
-      { name: 'BELL',             lead_time: 90  },
-      { name: 'Natarom',          lead_time: 90  },
-    ];
-    for (const s of knownSuppliers) {
-      await pool.query(
-        `INSERT INTO suppliers (name, lead_time) VALUES ($1, $2)
-         ON CONFLICT (name) DO NOTHING`,
-        [s.name, s.lead_time]
-      );
-    }
 
     console.log('✅ Replenishment migration complete');
     res.json({ success: true, message: 'Migration complete: lead_time column added, forecasts + suppliers tables created with default suppliers seeded.' });
@@ -4061,9 +4051,12 @@ async function resolveSupplier(sent, current) {
 }
 
 // ── GET /api/suppliers — List all suppliers with their lead times
-router.get('/suppliers', async (req, res) => {
+suppliersRouter.get('/suppliers', async (req, res) => {
   try {
-    const result = await pool.query(`SELECT * FROM suppliers ORDER BY name`);
+    // Most used first: the picker opens on the suppliers people actually pick.
+    const result = await pool.query(
+      `SELECT s.*, (SELECT COUNT(*)::int FROM products p WHERE p.supplier_id = s.id) AS product_count
+       FROM suppliers s ORDER BY product_count DESC, s.name`);
     res.json(result.rows);
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
@@ -4071,7 +4064,7 @@ router.get('/suppliers', async (req, res) => {
 });
 
 // ── POST /api/suppliers — Create a new supplier
-router.post('/suppliers', async (req, res) => {
+suppliersRouter.post('/suppliers', async (req, res) => {
   if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can manage suppliers' });
   try {
     const { name, lead_time, notes, confirm_new } = req.body;
@@ -4093,7 +4086,7 @@ router.post('/suppliers', async (req, res) => {
 });
 
 // ── PUT /api/suppliers/:id — Update supplier lead time
-router.put('/suppliers/:id', async (req, res) => {
+suppliersRouter.put('/suppliers/:id', async (req, res) => {
   if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can manage suppliers' });
   try {
     const id = parseInt(req.params.id);
@@ -4115,6 +4108,9 @@ router.put('/suppliers/:id', async (req, res) => {
         [name?.trim() || null, lead_time ? parseInt(lead_time) : null, notes ?? null, id]
       );
       await c.query(`UPDATE products SET supplier = $1 WHERE supplier_id = $2 AND supplier IS DISTINCT FROM $1`, [r.rows[0].name, id]);
+      // MUSE products carry the name only (no link to this table).
+      const before = all.find((s) => s.id === id).name;
+      if (before !== r.rows[0].name) await c.query(`UPDATE sm.products SET supplier = $1 WHERE supplier = $2`, [r.rows[0].name, before]);
       return r;
     });
     expireAutoMin();
@@ -4125,14 +4121,16 @@ router.put('/suppliers/:id', async (req, res) => {
 });
 
 // ── DELETE /api/suppliers/:id — Delete a supplier
-router.delete('/suppliers/:id', async (req, res) => {
+suppliersRouter.delete('/suppliers/:id', async (req, res) => {
   if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can manage suppliers' });
   try {
     const id = parseInt(req.params.id);
     const sup = (await pool.query(`SELECT name FROM suppliers WHERE id = $1`, [id])).rows[0];
     if (!sup) return res.status(404).json({ error: 'Supplier not found' });
     const { rows: texts } = await pool.query(`SELECT supplier_id, supplier FROM products WHERE supplier_id = $1 OR supplier <> ''`, [id]);
-    const used = texts.filter((p) => p.supplier_id === id || supplierKey(p.supplier) === supplierKey(sup.name)).length;
+    const { rows: museTexts } = await pool.query(`SELECT supplier FROM sm.products WHERE supplier <> ''`);
+    const used = texts.filter((p) => p.supplier_id === id || supplierKey(p.supplier) === supplierKey(sup.name)).length
+      + museTexts.filter((p) => supplierKey(p.supplier) === supplierKey(sup.name)).length;
     if (used) return res.status(400).json({ error: `${sup.name} is the supplier of ${used} product${used === 1 ? '' : 's'}. Move them to another supplier first.` });
     const result = await pool.query(`DELETE FROM suppliers WHERE id = $1 RETURNING id`, [id]);
     expireAutoMin();
@@ -6017,22 +6015,6 @@ async function runStartupMigrations() {
     `);
     await pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL`);
     await pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`);
-    const knownSuppliers = [
-      { name: 'Firmenich',          lead_time: 60  },
-      { name: 'Givaudan',           lead_time: 60  },
-      { name: 'IFF',                lead_time: 45  },
-      { name: 'Symrise',            lead_time: 60  },
-      { name: 'Takasago',           lead_time: 75  },
-      { name: 'Sensient',           lead_time: 30  },
-      { name: 'Natarom',            lead_time: 90  },
-    ];
-    for (const s of knownSuppliers) {
-      await pool.query(
-        `INSERT INTO suppliers (name, lead_time) VALUES ($1, $2)
-         ON CONFLICT (name) DO NOTHING`,
-        [s.name, s.lead_time]
-      );
-    }
     // Migrate existing incoming_orders JSONB → purchase_orders table (runs only if PO table is empty)
     await pool.query(`
       INSERT INTO purchase_orders (product_id, order_number, quantity, supplier, notes, added_at, added_by)
@@ -6849,4 +6831,4 @@ if (process.env.NODE_ENV === 'production') {
 // EXPORTS (Appendix A step 3/6) — app.listen removed; the platform server
 // mounts the router at /api/sa and calls runSaStartupMigrations at boot.
 // ========================================================================
-export { router, runStartupMigrations as runSaStartupMigrations };
+export { router, suppliersRouter, runStartupMigrations as runSaStartupMigrations };

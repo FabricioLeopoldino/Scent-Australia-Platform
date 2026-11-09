@@ -77,7 +77,7 @@ export function apiBase(module) {
   // localStorage rather than in the page.
   // PURCHASING (H4) is the same kind of view: /purchase-orders over the SA API.
   if (m === 'SA' || m === 'FRAGLIB' || m === 'PURCHASING') return '/api/sa';
-  if (m === 'SM' || m === 'MUSE' || m === 'OPS') return '/api/sm'; // MUSE (D7) and OPS (D11) are views over SM
+  if (m === 'SM' || m === 'MUSE' || m === 'ARCHIVE' || m === 'OPS') return '/api/sm'; // MUSE (D7), The Archive and OPS (D11) are views over SM
   // REPORTS lands here deliberately: that tile opens the cross-system report,
   // which calls /api/platform/* — already exempt from rewriting.
   return '/api/platform';
