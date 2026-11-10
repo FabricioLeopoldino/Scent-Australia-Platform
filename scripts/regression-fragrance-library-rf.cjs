@@ -59,6 +59,8 @@ async function cleanup() {
   await sa.query(`DELETE FROM transactions WHERE product_id = $1`, [OIL_ID]).catch(() => {});
   // §18: the sa.products trigger logs every stock change — remove our fixture's rows
   await sa.query(`DELETE FROM direct_stock_changes WHERE product_id = $1`, [OIL_ID]).catch(() => {});
+  // The production start draws the oil from a company stock (Stage 1): those rows point at the oil.
+  await sa.query(`DELETE FROM sector_movements WHERE product_id = $1`, [OIL_ID]).catch(() => {});
   await sa.query(`DELETE FROM products WHERE id = $1`, [OIL_ID]).catch(() => {});
 }
 

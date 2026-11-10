@@ -5,6 +5,7 @@ import { SA_DISPLAY_NAME } from '../../../shared/business-names.js'
 import { useToast } from '../SMModule.jsx'
 import { splitVolume } from '../utils/volume.js'
 import GlowingEffect from '../components/GlowingEffect.jsx'
+import StockBreakdown from '../../sa/components/StockBreakdown.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -15,9 +16,25 @@ function api() { return { headers: { Authorization: `Bearer ${localStorage.getIt
 // Data source: /api/fragrance-library?segment= (D14), filtered by exclusivity.
 const SEGMENT_BY_MODULE = { MUSE: 'MUSE' } // anything else (SM/OPS) → STANDARD
 
+// The stock of the unit whose tile is open (shared/sectors.js keys). The page
+// used to show the oil's TOTAL under "Stock (SA)" (owner, 10 Nov 2026: New York
+// read 67.7 L in The Atelier, which held 20 L). It now shows the same
+// breakdown as SA's Fragrance Library, with this unit's line highlighted.
+const OWN_STOCK_BY_MODULE = { SM: 'MUSE_ATELIER', MUSE: 'MUSE_LIBRARY', ARCHIVE: 'MUSE_ARCHIVE' }
+
+// What a unit can draw on, by the use rule (sa.sector_draw): its own stock,
+// then MUSE (shared), then SA. Another unit's oil and the main store are not
+// its to use. With no unit (the OPS view), the oil's total.
+const usable = (o, own) => {
+  const s = o.sectors
+  if (!own || !s) return parseFloat(o.current_stock || 0)
+  return Math.max(s[own] || 0, 0) + Math.max(s.MUSE || 0, 0) + (s.SA || 0)
+}
+
 export default function Fragrances() {
   const activeModule = typeof localStorage !== 'undefined' ? localStorage.getItem('platform_active_module') : null
   const segment = SEGMENT_BY_MODULE[activeModule] || 'STANDARD'
+  const own = OWN_STOCK_BY_MODULE[activeModule] || null
   const [oils, setOils]               = useState([])
   const [loading, setLoading]         = useState(true)
   const [search, setSearch]           = useState('')
@@ -39,10 +56,11 @@ export default function Fragrances() {
   const displayed = oils.filter(o =>
     !search ||
     (o.name || '').toLowerCase().includes(search.toLowerCase()) ||
-    (o.code || '').toLowerCase().includes(search.toLowerCase())
+    (o.code || '').toLowerCase().includes(search.toLowerCase()) ||
+    (o.tag || '').toLowerCase().includes(search.toLowerCase())
   )
   const totalMl = oils.reduce((sum, o) => sum + parseFloat(o.current_stock || 0), 0)
-  const emptyCount = oils.filter(o => parseFloat(o.current_stock || 0) <= 0).length
+  const emptyCount = oils.filter(o => usable(o, own) <= 0).length
 
   return (
     <div style={{ padding: 28 }}>
@@ -50,7 +68,7 @@ export default function Fragrances() {
         <FlaskConical size={20} color="#a78bfa" />
         <div>
           <h1 style={{ fontFamily: 'Archivo Black, sans-serif', fontSize: 22, color: '#e8eaf2' }}>Fragrance Library</h1>
-          <p style={{ fontSize: 13, color: 'rgba(232,234,242,0.4)', marginTop: 2 }}>Shared oil pool — the SA Fragrance Library, with live stock</p>
+          <p style={{ fontSize: 13, color: 'rgba(232,234,242,0.4)', marginTop: 2 }}>Every oil, and who holds it — SA and MUSE</p>
         </div>
       </div>
 
@@ -63,7 +81,7 @@ export default function Fragrances() {
       {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, marginBottom: 22, maxWidth: 560 }}>
         <Stat label="Oils available" value={oils.length} color="#a78bfa" />
-        <Stat label="Total Stock" value={(() => { const s = splitVolume(totalMl, 'ml'); return `${s.value} ${s.unit}` })()} color="#60a5fa" />
+        <Stat label="Total stock, all companies" value={(() => { const s = splitVolume(totalMl, 'ml'); return `${s.value} ${s.unit}` })()} color="#60a5fa" />
         <Stat label="Out of Stock" value={emptyCount} color={emptyCount > 0 ? '#f87171' : '#4ade80'} />
       </div>
 
@@ -100,7 +118,8 @@ export default function Fragrances() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                {['Oil', 'Code', 'Stock (SA)', 'Availability', 'Status'].map(h => (
+                {/* SA's Fragrance Library columns, in its order (owner, 10 Nov 2026: MUSE screens follow SA's layout). */}
+                {['Tag', 'Product Code', 'Name', 'Bin Location', 'Total stock', 'Availability', 'Status'].map(h => (
                   <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'rgba(232,234,242,0.4)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{h}</th>
                 ))}
               </tr>
@@ -108,20 +127,25 @@ export default function Fragrances() {
             <tbody>
               {displayed.map(o => {
                 const stock = parseFloat(o.current_stock || 0)
-                const isEmpty = stock <= 0
+                const canUse = usable(o, own)
+                const isEmpty = canUse <= 0
                 // Oils are always mL (SA convention); force 'ml' regardless of the
                 // DB's literal case ('mL') so splitVolume converts to L like the SA page.
                 const s = splitVolume(stock, 'ml')
+                const u = splitVolume(canUse, 'ml')
                 return (
-                  <tr key={o.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
+                  <tr key={o.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', verticalAlign: 'top' }}
                     onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}
                     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                   >
-                    <td style={{ padding: '10px 16px', fontSize: 13, fontWeight: 600, color: '#a78bfa' }}>{o.name}</td>
+                    <td style={{ padding: '10px 16px', fontSize: 11, fontFamily: 'monospace', color: 'rgba(232,234,242,0.5)' }}>{o.tag || '-'}</td>
                     <td style={{ padding: '10px 16px', fontSize: 11, fontFamily: 'monospace', color: 'rgba(232,234,242,0.5)' }}>{o.code}</td>
+                    <td style={{ padding: '10px 16px', fontSize: 13, fontWeight: 600, color: '#a78bfa' }}>{o.name}</td>
+                    <td style={{ padding: '10px 16px', fontSize: 12, color: 'rgba(232,234,242,0.6)' }}>{o.bin_location || '-'}</td>
                     <td style={{ padding: '10px 16px' }}>
-                      <span style={{ fontSize: 14, fontWeight: 700, color: isEmpty ? '#f87171' : '#4ade80' }}>{s.value}</span>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: stock < 0 ? '#f87171' : '#e8eaf2' }}>{s.value}</span>
                       <span style={{ fontSize: 11, color: 'rgba(232,234,242,0.4)', marginLeft: 4 }}>{s.unit}</span>
+                      <StockBreakdown sectors={o.sectors} unit={o.unit} own={own} />
                     </td>
                     <td style={{ padding: '10px 16px' }}>
                       {o.exclusivity
@@ -132,8 +156,8 @@ export default function Fragrances() {
                       {o.status !== 'active'
                         ? <span style={{ background: 'rgba(148,163,184,0.12)', color: '#94a3b8', padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700 }}>INACTIVE</span>
                         : isEmpty
-                        ? <span style={{ background: 'rgba(239,68,68,0.1)', color: '#f87171', padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700 }}>OUT</span>
-                        : <span style={{ background: 'rgba(34,197,94,0.1)', color: '#4ade80', padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700 }}>OK</span>}
+                        ? <span style={{ background: 'rgba(239,68,68,0.1)', color: '#f87171', padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700 }} title={own ? 'Nothing this unit can use: its own stock, MUSE (shared) and SA are all empty' : undefined}>OUT</span>
+                        : <span style={{ background: 'rgba(34,197,94,0.1)', color: '#4ade80', padding: '2px 10px', borderRadius: 20, fontSize: 10, fontWeight: 700 }} title={own ? `This unit can use ${u.value} ${u.unit}: its own stock, then MUSE (shared), then SA` : undefined}>OK</span>}
                     </td>
                   </tr>
                 )

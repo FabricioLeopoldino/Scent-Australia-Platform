@@ -20,7 +20,7 @@ router.get('/fragrance-library', auth, async (req, res) => {
     // Default: active oils only (safe for the order/BOM pickers — never show a
     // discontinued oil there). The Fragrance Library display page opts in to see
     // inactive ones too via ?include_inactive=1, behind its own toggle.
-    let statusFilter = `AND status = 'active'`
+    let statusFilter = `AND p.status = 'active'`
     if (req.query.include_inactive === '1') {
       statusFilter = ''
     }
@@ -30,12 +30,30 @@ router.get('/fragrance-library', auth, async (req, res) => {
     // screen call — so the picker can never offer an oil that production will
     // then refuse, which is what a second copy of the rule in SQL invites.
     // ~270 rows; the cost of filtering here is nothing.
+    //
+    // `current_stock` is the oil's TOTAL across every company. `sectors` says
+    // who holds it (the keys of shared/sectors.js; SA = the total minus what the
+    // main store and the MUSE stocks hold, as sa/sectors.js sectorBalances does).
+    // The MUSE screens showed the total under "Stock (SA)" (owner, 10 Nov 2026:
+    // New York read 67.7 L in The Atelier, which held 20 L).
     const r = await query(
-      `SELECT id, "productCode" AS code, name, "currentStock" AS current_stock, unit, exclusivity, status
-       FROM sa.products WHERE category = 'OILS' ${statusFilter}
-       ORDER BY "productCode"`
+      `SELECT p.id, p.tag, p."productCode" AS code, p.name, p."currentStock" AS current_stock, p.unit, p.exclusivity, p.status,
+              COALESCE(m.bin_location, p.bin_location) AS bin_location,
+              COALESCE(h.main, 0) AS main, COALESCE(h.muse, 0) AS muse, COALESCE(h.muse_atelier, 0) AS muse_atelier,
+              COALESCE(h.muse_library, 0) AS muse_library, COALESCE(h.muse_archive, 0) AS muse_archive, COALESCE(h.held, 0) AS held
+       FROM sa.products p
+       LEFT JOIN sa.sector_held h ON h.product_id = p.id
+       LEFT JOIN sa.fragrance_registrations m ON m.product_id = p.id AND m.company = 'MUSE' AND m.active
+       WHERE p.category = 'OILS' ${statusFilter}
+       ORDER BY p."productCode"`
     )
-    res.json(r.rows.filter((o) => canUseOil(o.exclusivity, seg.exclusivityBucket)))
+    res.json(r.rows.filter((o) => canUseOil(o.exclusivity, seg.exclusivityBucket)).map(({ main, muse, muse_atelier, muse_library, muse_archive, held, ...o }) => ({
+      ...o,
+      sectors: {
+        MAIN: Number(main), SA: Number(o.current_stock) - Number(held), MUSE: Number(muse),
+        MUSE_ATELIER: Number(muse_atelier), MUSE_LIBRARY: Number(muse_library), MUSE_ARCHIVE: Number(muse_archive),
+      },
+    })))
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 

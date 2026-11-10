@@ -13,7 +13,8 @@ import { LiquidMetalButton } from '../components/LiquidMetalButton';
 import RegisterFragranceModal from '../components/RegisterFragranceModal';
 import AdjustStockModal from '../components/AdjustStockModal';
 import ProductSheet, { Swatch } from '../components/ProductSheet';
-import { SECTORS, destinationByStock } from '../../../shared/sectors.js';
+import StockBreakdown from '../components/StockBreakdown';
+import { destinationByStock } from '../../../shared/sectors.js';
 
 // libraryMode (D15 follow-up, 2026-07-30): renders this exact same page — same
 // engine, same product-code sequence, same endpoints — as a locked-down,
@@ -938,31 +939,7 @@ export default function ProductManagement({ user, libraryMode = false, company =
                           figure, then its units under it (owner, 29 Oct: "MUSE total
                           20 L, Atelier 10, Library 5, Archive 5"); MUSE's own shared
                           stock reads "Shared", so it is not taken for the total. */}
-                      {fullLibrary && (() => {
-                        const val = (k) => product.sectors?.[k] || 0;
-                        const shown = (k) => Math.abs(val(k)) > 0.0005;
-                        const museParts = SECTORS.filter((s) => s.company === 'MUSE' && shown(s.key));
-                        const lines = [
-                          ...(shown('MAIN') ? [{ key: 'MAIN', short: 'Main', label: 'Main store', v: val('MAIN') }] : []),
-                          { key: 'SA', short: 'SA', label: 'SA', v: val('SA') },
-                          ...(museParts.length ? [
-                            { key: 'MUSE_TOTAL', short: 'MUSE total', label: 'MUSE, all units', v: museParts.reduce((t, s) => t + val(s.key), 0) },
-                            ...museParts.map((s) => ({ key: s.key, short: s.key === 'MUSE' ? 'Shared' : s.short, label: s.label, v: val(s.key), sub: true })),
-                          ] : []),
-                        ];
-                        return (
-                          <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', columnGap: 8, fontSize: 11, lineHeight: 1.5, marginTop: 4, whiteSpace: 'nowrap', justifyContent: 'start' }}>
-                            {lines.flatMap((l) => {
-                              const style = { color: l.v < 0 ? '#f87171' : l.key === 'MAIN' ? '#38bdf8' : 'var(--text-secondary)', fontWeight: l.v < 0 ? 700 : undefined };
-                              const title = l.v < 0 ? `${l.label} is below zero — shown in red, never blocked` : l.label;
-                              return [
-                                <span key={`${l.key}-l`} style={{ ...style, ...(l.sub && { paddingLeft: 10 }) }} title={title}>{l.short}</span>,
-                                <span key={`${l.key}-v`} style={{ ...style, textAlign: 'right' }} title={title}>{displayStock(l.v, product.unit)}</span>,
-                              ];
-                            })}
-                          </div>
-                        );
-                      })()}
+                      {fullLibrary && <StockBreakdown sectors={product.sectors} unit={product.unit} />}
                     </td>
                     {!fullLibrary && <td>{displayStock(effectiveMin(product), product.unit)}{product.minStockAuto != null && ' (auto)'}</td>}
                     {!fullLibrary && (
