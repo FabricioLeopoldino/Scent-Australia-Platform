@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { SECTORS } from '../../../shared/sectors.js';
 import { displayStock } from '../utils/unitConversion';
 import { effectiveMin } from '../utils/stockStatus';
 import { useToast } from './Toast';
 import PublishOilModal from './PublishOilModal';
+import StockBreakdown from './StockBreakdown';
 
 // The product sheet (PRD_H2_STOCK_MANAGEMENT.md §2.3, the owner's sketch in
 // HYPER_UPDATE_BACKLOG.md §2.2): image, details, three stock cards, Shopify
@@ -74,7 +74,6 @@ export default function ProductSheet({ product, place = 'stock', actions = [], c
   }, [product.id, reread]);
 
   const unit = product.unit;
-  const val = (k) => product.sectors?.[k] || 0;
   const skus = Object.entries(product.shopifySkus || {}).filter(([, v]) => v);
   // A SKU on both an old one-per-size listing and the main product shows the main one.
   const variantOf = (sku) => {
@@ -97,20 +96,10 @@ export default function ProductSheet({ product, place = 'stock', actions = [], c
   const stockCard = () => {
     if (place === 'sa') return <div style={{ fontSize: 22, fontWeight: 800 }}>{displayStock(product.saStock ?? product.currentStock, unit)}</div>;
     if (place === 'library') {
-      const museParts = SECTORS.filter((s) => s.company === 'MUSE' && Math.abs(val(s.key)) > 0.0005);
-      const line = (label, v, sub) => (
-        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, paddingLeft: sub ? 10 : 0,
-          color: v < 0 ? '#f87171' : sub ? 'var(--text-secondary)' : 'var(--text-primary)' }}>
-          <span>{label}</span><span style={{ fontWeight: 700 }}>{displayStock(v, unit)}</span>
-        </div>
-      );
       return (
         <>
           <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 6 }}>{displayStock(product.currentStock, unit)}</div>
-          {Math.abs(val('MAIN')) > 0.0005 && line('Main store', val('MAIN'))}
-          {line('SA', val('SA'))}
-          {museParts.length > 0 && line('MUSE total', museParts.reduce((t, s) => t + val(s.key), 0))}
-          {museParts.map((s) => line(s.key === 'MUSE' ? 'Shared' : s.short, val(s.key), true))}
+          <StockBreakdown sectors={product.sectors} unit={unit} size={12} fill />
         </>
       );
     }

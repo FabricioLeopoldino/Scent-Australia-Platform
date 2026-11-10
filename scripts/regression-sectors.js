@@ -227,6 +227,13 @@ async function run() {
   record('case 8: a transfer is valued at the average of the PRICED receipts (the unpriced one ignored)', near(t1?.costPerUnit, 0.05, 1e-9), `cost=${t1?.costPerUnit}`);
   record('case 8: the unpriced receipt says so (null)', hist.find((m) => m.reference === 'TESTREG-SEC-PO2')?.costPerUnit === null);
   await check('PO2 into SA, 1 L to MUSE (shared)', A, { SA: 69, MUSE: 1, MUSE_ATELIER: 25, MUSE_LIBRARY: 25 });
+  // The MUSE screens read the same six balances (owner, 10 Nov 2026: The Atelier
+  // showed the oil's total under "Stock (SA)").
+  {
+    const m = ((await api('root', 'GET', '/api/sm/fragrance-library?segment=STANDARD')).json || []).find((o) => o.id === A);
+    const s = (await oil(A))?.sectors || {};
+    record('MUSE Fragrance Library reads the same balances as SA', !!m?.sectors && Object.keys(s).length === 6 && Object.keys(s).every((k) => near(m.sectors[k], s[k])), JSON.stringify(m?.sectors));
+  }
 
   // ── Case 10: all of it into the main store — out of on order, not SA's, the D1 warning.
   const po3 = await addPo(A, 'TESTREG-SEC-PO3', 100, 0.05);

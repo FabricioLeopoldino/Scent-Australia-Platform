@@ -479,7 +479,7 @@ function DetailDrawer({ master, detail, loading, fragrances, availableFragrances
                           </div>
                         </div>
                         <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontSize: 9, color: 'rgba(232,234,242,0.4)', textTransform: 'uppercase', fontWeight: 700 }}>Oil Stock (SA)</div>
+                          <div style={{ fontSize: 9, color: 'rgba(232,234,242,0.4)', textTransform: 'uppercase', fontWeight: 700 }}>Oil stock (total)</div>
                           {(() => { const s = splitVolume(f.current_stock, 'ml'); return (
                             <div style={{ fontSize: 13, fontWeight: 700, color: Number(f.current_stock) > 0 ? '#4ade80' : '#f87171' }}>
                               {s.value} <span style={{ fontSize: 10, color: 'rgba(232,234,242,0.4)' }}>{s.unit}</span>
