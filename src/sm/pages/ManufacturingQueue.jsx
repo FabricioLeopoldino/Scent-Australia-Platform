@@ -283,7 +283,7 @@ export default function ManufacturingQueue() {
     <div style={{ padding: 28 }}>
       <div className="ed-head">
         <h1 className="ed-title">Manufacturing Queue</h1>
-        <p className="ed-sub">Orders with reserved stock, ready for the bench.</p>
+        <p className="ed-sub">Orders ready for the bench. A stock warning never stops an order from starting.</p>
         <div className="ed-rule" />
       </div>
 
@@ -348,10 +348,11 @@ export default function ManufacturingQueue() {
                       <Chip color={sc}>{statusLabel[status]}</Chip>
                       {order.order_type === 'LARGE_CLIENT' && <Chip color="#a78bfa">Major Client</Chip>}
                       {!order.client_id && <Chip color="#fbbf24">MUSE</Chip>}
-                      {order.stock_reserved
-                        ? <Chip color="#4ade80">Stock reserved</Chip>
-                        : <Chip color="#f87171">Stock not reserved</Chip>
-                      }
+                      {/* A warning, never a block (owner, 10 Nov 2026). Only while queued. */}
+                      {order.shortages && (order.shortages.length
+                        ? <Chip color="#f87171">Short: {order.shortages.length} item{order.shortages.length > 1 ? 's' : ''}</Chip>
+                        : <Chip color="#4ade80">Stock OK</Chip>
+                      )}
                       {hasLabelsShort && (
                         <Chip color="#fbbf24">Labels short{labelsEta ? ` — ETA ${fmtDate(labelsEta)}` : ''}</Chip>
                       )}
@@ -376,6 +377,12 @@ export default function ManufacturingQueue() {
                     {order.lines && (
                       <div style={{ fontSize: 12, color: 'rgba(232,234,242,0.4)', marginTop: 3 }}>
                         {order.lines.map(l => `${ptLabel(l)} ×${l.quantity}`).join(' + ')}
+                      </div>
+                    )}
+                    {order.shortages?.length > 0 && (
+                      <div style={{ fontSize: 11, color: '#f87171', marginTop: 3 }}>
+                        Short if started now (it can still be started): {order.shortages.map(s =>
+                          `${s.name} needs ${Number(s.need).toLocaleString()} ${s.unit || ''}, has ${Number(s.have).toLocaleString()}`).join(' · ')}
                       </div>
                     )}
                     {order.job && (

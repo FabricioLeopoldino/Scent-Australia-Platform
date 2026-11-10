@@ -105,12 +105,38 @@ const lineShape = (li) => ({
     : null,
 });
 
+// A bundle is sold as ONE line whose own SKU is not a product of ours; the
+// store names what is inside it in a line property (owner, 11 Nov 2026, order
+// #1048: "Reed Diffuser Duo", SKU MUSE-LIB-BUNDLE-RDDUO ×2, with
+// _component_skus "Muse_RD00033 | Muse_RD00033"). Such a line is opened into
+// its components — one line per distinct SKU, quantity = how many times it is
+// listed × bundles ordered — so the bundle needs no product and no BOM here.
+// The customer's choices (the other properties) ride along on every component.
+// Used by BOTH paths, the paid order and the fulfilment: opening only one of
+// them would plan the work and then ship it without moving stock.
+function expandBundles(lineItems) {
+  const out = [];
+  for (const li of (Array.isArray(lineItems) ? lineItems : [])) {
+    const prop = (Array.isArray(li.properties) ? li.properties : []).find((p) => p?.name === '_component_skus');
+    const skus = String(prop?.value ?? '').split('|').map((s) => s.trim()).filter(Boolean);
+    if (!skus.length) { out.push(li); continue; }
+    const perBundle = new Map();
+    for (const s of skus) perBundle.set(s, (perBundle.get(s) || 0) + 1);
+    const title = li.title || li.name || '(untitled)';
+    const bundles = parseInt(li.quantity, 10) || 0;
+    for (const [sku, n] of perBundle) {
+      out.push({ ...li, sku, quantity: bundles * n, title: `${title} (bundle ${li.sku || 'no SKU'})` });
+    }
+  }
+  return out;
+}
+
 async function planLinesFromShopifyOrder(tq, body) {
   const toProduce = [];
   const unmatched = [];
   const fromStock = [];   // matched, and the shelf already covers it — pick, don't make
   const shape = lineShape;
-  for (const li of (Array.isArray(body.line_items) ? body.line_items : [])) {
+  for (const li of expandBundles(body.line_items)) {
     const sku = (li.sku || '').trim();
     const qty = parseInt(li.quantity, 10) || 0;
     const title = li.title || li.name || '(untitled)';
@@ -304,7 +330,7 @@ async function smFulfillmentHandler(req, res, topic, body) {
       return;
     }
 
-    const lines = Array.isArray(body.line_items) ? body.line_items : [];
+    const lines = expandBundles(body.line_items);
     if (!lines.length) {
       console.log(`[muse-fulfil] ${key} has no line items — nothing to do`);
       return;

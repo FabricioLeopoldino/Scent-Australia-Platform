@@ -5,7 +5,7 @@ import { SA_DISPLAY_NAME } from '../../../shared/business-names.js'
 import { useToast } from '../SMModule.jsx'
 import { splitVolume } from '../utils/volume.js'
 import GlowingEffect from '../components/GlowingEffect.jsx'
-import StockBreakdown from '../../sa/components/StockBreakdown.jsx'
+import StockBreakdown, { OWN_STOCK_BY_MODULE, usable } from '../../sa/components/StockBreakdown.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -16,20 +16,9 @@ function api() { return { headers: { Authorization: `Bearer ${localStorage.getIt
 // Data source: /api/fragrance-library?segment= (D14), filtered by exclusivity.
 const SEGMENT_BY_MODULE = { MUSE: 'MUSE' } // anything else (SM/OPS) → STANDARD
 
-// The stock of the unit whose tile is open (shared/sectors.js keys). The page
-// used to show the oil's TOTAL under "Stock (SA)" (owner, 10 Nov 2026: New York
-// read 67.7 L in The Atelier, which held 20 L). It now shows the same
+// The page used to show the oil's TOTAL under "Stock (SA)" (owner, 10 Nov 2026:
+// New York read 67.7 L in The Atelier, which held 20 L). It now shows the same
 // breakdown as SA's Fragrance Library, with this unit's line highlighted.
-const OWN_STOCK_BY_MODULE = { SM: 'MUSE_ATELIER', MUSE: 'MUSE_LIBRARY', ARCHIVE: 'MUSE_ARCHIVE' }
-
-// What a unit can draw on, by the use rule (sa.sector_draw): its own stock,
-// then MUSE (shared), then SA. Another unit's oil and the main store are not
-// its to use. With no unit (the OPS view), the oil's total.
-const usable = (o, own) => {
-  const s = o.sectors
-  if (!own || !s) return parseFloat(o.current_stock || 0)
-  return Math.max(s[own] || 0, 0) + Math.max(s.MUSE || 0, 0) + (s.SA || 0)
-}
 
 export default function Fragrances() {
   const activeModule = typeof localStorage !== 'undefined' ? localStorage.getItem('platform_active_module') : null

@@ -118,7 +118,7 @@ try {
   server.stderr.on('data', (d) => { log += d; });
 
   let up = false;
-  for (let i = 0; i < 90 && !up; i++) {
+  for (let i = 0; i < 240 && !up; i++) {   // the test copy takes ~50 s to boot
     try { up = (await fetch(`${BASE}/api/health`)).ok; } catch { /* booting */ }
     if (!up) await new Promise((r) => setTimeout(r, 500));
   }

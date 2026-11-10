@@ -126,7 +126,7 @@ try {
   server.stderr.on('data', (d) => { log += d; });
 
   let up = false;
-  for (let i = 0; i < 90 && !up; i++) {
+  for (let i = 0; i < 240 && !up; i++) {   // the test copy takes ~50 s to boot
     try { up = (await fetch(`${BASE}/api/health`)).ok; } catch { /* booting */ }
     if (!up) await new Promise((r) => setTimeout(r, 500));
   }
@@ -220,6 +220,32 @@ try {
     const reasons = (alarm[0]?.details?.unmatched || []).map((u) => u.reason).sort();
     check(JSON.stringify(reasons) === JSON.stringify(['no_sku', 'sku_not_found']),
       'the alarm names both reasons', JSON.stringify(reasons));
+  }
+
+  // ── 5b. A bundle line is opened into what is inside it ───────────────────
+  // The real shape of order #1048 (11 Nov 2026): the line's own SKU is not a
+  // product here; _component_skus names the two diffusers inside each bundle.
+  {
+    const ref = `#ZZ-BUNDLE-${Date.now()}`;
+    await post('orders/paid', {
+      id: 810010, name: ref,
+      line_items: [{
+        title: 'Reed Diffuser Duo', quantity: 2, sku: 'ZZ-BUNDLE-RDDUO',
+        properties: [
+          { name: 'Reed Diffuser 1', value: 'Country Linen' },
+          { name: '_bundle', value: 'reed-diffuser-duo' },
+          { name: '_component_skus', value: `${skuOf(1)} | ${skuOf(1)}` },
+        ],
+      }],
+    });
+    const rows = await waitFor(() => ordersFor(ref), (x) => x.length > 0);
+    const lines = rows[0] ? await linesOf(rows[0].id) : [];
+    check(lines.length === 1 && Number(lines[0].quantity) === 4 && lines[0].product_type === `${TAG}_M`,
+      '2 bundles of 2 → one line of 4 of the product inside', JSON.stringify(lines));
+    await new Promise((r) => setTimeout(r, 1500));
+    const alarm = (await pool.query(
+      `SELECT 1 FROM audit_log WHERE action = 'shopify_order_unmatched' AND entity_name = $1`, [ref])).rows;
+    check(alarm.length === 0, 'and the bundle SKU raises no "not found" alarm', `${alarm.length} rows`);
   }
 
   // ── 6. Cancelling an order WE created must reach its production order ────

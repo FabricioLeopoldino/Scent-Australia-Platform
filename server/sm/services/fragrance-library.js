@@ -228,4 +228,4 @@ async function restoreFragranceOil(tq, oilId, qtyMl, segment, notes) {
   return { oilId: oil.id, name: oil.name, code: oil.productCode, qtyMl: qty, newStock }
 }
 
-module.exports = { consumeFragranceOil, restoreFragranceOil, SEGMENT_MAP, canUseOil, EXCLUSIVITY_ALLOWS, SECTOR_FOR_UNIT }
+module.exports = { consumeFragranceOil, restoreFragranceOil, SEGMENT_MAP, canUseOil, EXCLUSIVITY_ALLOWS, SECTOR_FOR_UNIT, productionSector }

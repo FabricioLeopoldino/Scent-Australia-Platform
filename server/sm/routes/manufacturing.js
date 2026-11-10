@@ -5,7 +5,7 @@ const { query, withTransaction } = require('../db')
 const { auth, auditLog } = require('../auth')
 const { adjustProductStock } = require('../services/stock-service')
 const { ensureMuseSku } = require('./masters')
-const { consumeFragranceOil, restoreFragranceOil } = require('../services/fragrance-library')
+const { consumeFragranceOil, restoreFragranceOil, productionSector } = require('../services/fragrance-library')
 const { setOrderStatus } = require('../services/order-status')
 
 // D14: which of the 4 usage buckets (SA is the 4th, native to the SA module)
@@ -19,6 +19,67 @@ async function resolveOrderSegment(order, tq) {
   if (isMuse) return 'MUSE'
   const cli = await qry(`SELECT is_large_client FROM clients WHERE id = $1`, [order.client_id])
   return cli.rows[0]?.is_large_client ? 'MAJOR' : 'STANDARD'
+}
+
+// The oil each line of an order takes, with the unit of the variant being made
+// (see the note in startProductionInternal). ONE query for the debit and for
+// the shortage warning, so the warning can never look at a different stock
+// from the one production will draw.
+const OIL_LINES_SQL =
+  `SELECT pol.id, pol.oil_id, pol.oil_qty_ml,
+          (SELECT v.business_unit FROM products v
+             JOIN products m ON m.id = v.master_product_id
+            WHERE m.product_code = pol.product_type AND m.category = 'FINISHED_GOOD' AND v.oil_id = pol.oil_id
+            ORDER BY (v.name IS DISTINCT FROM pol.variant_name), (v.archived IS TRUE), v.id LIMIT 1) AS business_unit
+     FROM production_order_lines pol
+    WHERE pol.production_order_id = $1 AND pol.oil_id IS NOT NULL AND pol.oil_qty_ml > 0`
+
+// What a queued order would leave short if it started now: [{ name, need,
+// have, unit }]. A WARNING only — production is never blocked on stock (owner,
+// 10 Nov 2026: "sim mas não trava"). It replaces the "Stock reserved" chip,
+// which only said that reservation rows existed and stayed green with the
+// stock below zero.
+// Oil: what the order's unit can use — its own stock, MUSE (shared), then SA,
+// the order sa.sector_draw takes it in. Another MUSE unit's oil does not count.
+// ponytail: each order is checked alone against today's stock; two queued
+// orders wanting the same last bottle both read OK. Net the queue when it matters.
+async function orderShortages(order) {
+  const short = (await query(
+    `SELECT p.name, p.unit, SUM(poc.quantity_required)::float AS need, p.current_stock::float AS have
+       FROM production_order_components poc JOIN products p ON p.id = poc.product_id
+      WHERE poc.production_order_id = $1 AND poc.source = 'general_stock'
+      GROUP BY p.id, p.name, p.unit, p.current_stock
+     HAVING SUM(poc.quantity_required) > p.current_stock
+     UNION ALL
+     SELECT MAX(poc.product_name) || ' (client stock)', MAX(poc.unit), SUM(poc.quantity_required)::float, cs.quantity::float
+       FROM production_order_components poc JOIN client_stock cs ON cs.id = poc.client_stock_id
+      WHERE poc.production_order_id = $1 AND poc.source = 'client_stock'
+      GROUP BY cs.id, cs.quantity
+     HAVING SUM(poc.quantity_required) > cs.quantity`, [order.id])).rows
+
+  const oilLines = (await query(OIL_LINES_SQL, [order.id])).rows
+  if (oilLines.length) {
+    const segment = await resolveOrderSegment(order)
+    const need = new Map()   // "oil|stock" → mL
+    for (const l of oilLines) {
+      const k = `${l.oil_id}|${productionSector(segment, l.business_unit)}`
+      need.set(k, (need.get(k) || 0) + parseFloat(l.oil_qty_ml))
+    }
+    const oils = (await query(
+      `SELECT p.id, p.name, p.unit, p."currentStock"::float AS total, COALESCE(h.held, 0)::float AS held,
+              COALESCE(h.muse, 0)::float AS muse, COALESCE(h.muse_atelier, 0)::float AS muse_atelier,
+              COALESCE(h.muse_library, 0)::float AS muse_library, COALESCE(h.muse_archive, 0)::float AS muse_archive
+         FROM sa.products p LEFT JOIN sa.sector_held h ON h.product_id = p.id
+        WHERE p.id = ANY($1)`, [[...new Set(oilLines.map((l) => l.oil_id))]])).rows
+    for (const [k, ml] of need) {
+      const [oilId, sector] = k.split('|')
+      const o = oils.find((x) => x.id === oilId)
+      if (!o) { short.push({ name: `Oil ${oilId} (not in the Fragrance Library)`, need: ml, have: 0, unit: 'mL' }); continue }
+      const have = (o.total - o.held) + Math.max(o.muse, 0) + Math.max(o[sector.toLowerCase()], 0)
+      if (ml > have) short.push({ name: o.name, need: ml, have, unit: o.unit || 'mL' })
+    }
+  }
+  return short
 }
 
 router.get('/manufacturing/queue', auth, async (req, res) => {
@@ -67,6 +128,8 @@ router.get('/manufacturing/queue', auth, async (req, res) => {
       )
       order.stock_reserved = parseInt(resv.rows[0].total) > 0
       order.stock_all_reserved = parseInt(resv.rows[0].reserved) === parseInt(resv.rows[0].total) && parseInt(resv.rows[0].total) > 0
+      // Only while queued: once started, the stock has already been taken.
+      order.shortages = order.status === 'queued' ? await orderShortages(order) : null
       order.labels_short = lines.rows.some(l => l.label_client_label_id && l.label_stock !== null && parseInt(l.label_stock) < parseInt(l.quantity))
       order.labels_eta = lines.rows.filter(l => l.labels_eta).map(l => l.labels_eta).sort()[0] || null
 
@@ -149,16 +212,7 @@ async function startProductionInternal(orderId, userId, targetStatus = 'in_produ
     // the MUSE webhook writes from the sold variant — fix round 3, F2), then a
     // live one before an archived one, then the oldest (lowest id). None → The
     // Library.
-    const oilLines = await tq(
-      `SELECT pol.id, pol.oil_id, pol.oil_qty_ml,
-              (SELECT v.business_unit FROM products v
-                 JOIN products m ON m.id = v.master_product_id
-                WHERE m.product_code = pol.product_type AND m.category = 'FINISHED_GOOD' AND v.oil_id = pol.oil_id
-                ORDER BY (v.name IS DISTINCT FROM pol.variant_name), (v.archived IS TRUE), v.id LIMIT 1) AS business_unit
-         FROM production_order_lines pol
-        WHERE pol.production_order_id = $1 AND pol.oil_id IS NOT NULL AND pol.oil_qty_ml > 0`,
-      [orderId]
-    )
+    const oilLines = await tq(OIL_LINES_SQL, [orderId])
     if (oilLines.rows.length > 0) {
       const segment = await resolveOrderSegment(order.rows[0], tq)
       for (const line of oilLines.rows) {

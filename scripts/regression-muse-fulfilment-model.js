@@ -134,7 +134,7 @@ try {
   server.stdout.on('data', (d) => { log += d; });
   server.stderr.on('data', (d) => { log += d; });
   let up = false;
-  for (let i = 0; i < 90 && !up; i++) {
+  for (let i = 0; i < 240 && !up; i++) {   // the test copy takes ~50 s to boot
     try { up = (await fetch(`${BASE}/api/health`)).ok; } catch { /* booting */ }
     if (!up) await new Promise((r) => setTimeout(r, 500));
   }
@@ -170,6 +170,17 @@ try {
     const used = before - await oil();
     check(used === 150, '2 on the shelf, 5 sold → oil for 3 only (150 mL)', `${used} mL`);
     check(await stock(V.PART.id) === 0, 'and the shelf lands on 0, never negative', `${await stock(V.PART.id)}`);
+  }
+
+  // ── 3b. A bundle ships as what is inside it (order #1048, 11 Nov 2026) ─────
+  {
+    const before = await oil();
+    await ship(930007, 940007, [{ title: 'Duo', quantity: 1, sku: 'ZZ-BUNDLE-RDDUO',
+      properties: [{ name: '_component_skus', value: `${V.FULL.sku} | ${V.FULL.sku}` }] }], '#ZZ-F-BUNDLE');
+    await processed(930007, 'muse_sale');
+    check(await stock(V.FULL.id) === 3, '1 bundle of 2 → 2 come off the shelf (5 → 3)', `${await stock(V.FULL.id)}`);
+    check(before - await oil() === 0, 'and no oil is consumed for units already made');
+    check((await alarms('#ZZ-F-BUNDLE')).length === 0, 'and the bundle SKU raises no alarm');
   }
 
   // ── 4. A failing line must not void the rest of the shipment ──────────────
@@ -210,6 +221,30 @@ try {
       body: b ? JSON.stringify(b) : undefined });
 
     await api('PUT', `/production-orders/${po[0].id}/status`, { status: 'queued' });
+
+    const afterQueueOil = await oil();
+    // sa.products' trigger names its log table without a schema, so the write needs sa first.
+    const setOil = async (ml) => {
+      const c = await pool.connect();
+      try {
+        await c.query('BEGIN');
+        await c.query('SET LOCAL search_path TO sa, public');
+        await c.query(`UPDATE sa.products SET "currentStock" = $2 WHERE id = $1`, [OIL_ID, ml]);
+        await c.query('COMMIT');
+      } finally { c.release(); }
+    };
+    // The queue's shortage warning (owner, 10 Nov 2026: a warning, never a block).
+    const shortOf = async () => (await (await api('GET', '/manufacturing/queue')).json())
+      .find((o) => o.id === po[0].id)?.shortages;
+    check(JSON.stringify(await shortOf()) === '[]', 'queued with enough stock → no shortage', JSON.stringify(await shortOf()));
+    await pool.query(`UPDATE products SET current_stock = 1 WHERE id = $1`, [ethanolId]);
+    await setOil(10);
+    const sh = await shortOf();
+    check(sh?.length === 2 && sh.some((s) => s.need === 200 && s.have === 10) && sh.some((s) => s.need === 600 && s.have === 1),
+      'short on ethanol and on oil → both named with need and have', JSON.stringify(sh));
+    await pool.query(`UPDATE products SET current_stock = 1000000 WHERE id = $1`, [ethanolId]);
+    await setOil(afterQueueOil);
+
     await api('POST', `/manufacturing/${po[0].id}/start`);
     const afterStart = await oil();
 
@@ -265,9 +300,10 @@ try {
     await pool.query(`DELETE FROM transactions WHERE product_id = ANY($1::int[])`, [pids]).catch(() => {});
   }
   await pool.query(`DELETE FROM audit_log WHERE entity_name LIKE '#ZZ-F-%'`).catch(() => {});
-  await pool.query(`DELETE FROM webhook_processed WHERE shopify_order_id BETWEEN 930001 AND 940006`).catch(() => {});
+  await pool.query(`DELETE FROM webhook_processed WHERE shopify_order_id BETWEEN 930001 AND 940007`).catch(() => {});
   await pool.query(`DELETE FROM product_bom WHERE product_type = $1`, [`${TAG}_M`]).catch(() => {});
   await pool.query(`DELETE FROM products WHERE product_code LIKE $1`, [`${TAG}%`]).catch(() => {});
+  await pool.query(`DELETE FROM sa.direct_stock_changes WHERE product_id LIKE $1`, [`${OIL_ID}%`]).catch(() => {});
   await pool.query(`DELETE FROM sa.transactions WHERE product_id LIKE $1`, [`${OIL_ID}%`]).catch(() => {});
   await pool.query(`DELETE FROM sa.products WHERE id LIKE $1`, [`${OIL_ID}%`]).catch(() => {});
   await pool.end();

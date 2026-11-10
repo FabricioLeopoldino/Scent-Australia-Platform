@@ -14,6 +14,18 @@ import { displayStock } from '../utils/unitConversion';
 // `own` is the stock of the screen's own unit (MUSE_ATELIER in The Atelier):
 // it is always shown, even at zero, and highlighted. `fill` stretches the
 // figures to the right edge (the oil sheet's card).
+// The stock of the unit whose tile is open (shared/sectors.js keys).
+export const OWN_STOCK_BY_MODULE = { SM: 'MUSE_ATELIER', MUSE: 'MUSE_LIBRARY', ARCHIVE: 'MUSE_ARCHIVE' };
+
+// What a unit can draw on, by the use rule (sa.sector_draw): its own stock,
+// then MUSE (shared), then SA. Another unit's oil and the main store are not
+// its to use. With no unit (the OPS view), the oil's total.
+export const usable = (o, own) => {
+  const s = o.sectors;
+  if (!own || !s) return parseFloat(o.current_stock || 0);
+  return Math.max(s[own] || 0, 0) + Math.max(s.MUSE || 0, 0) + (s.SA || 0);
+};
+
 export default function StockBreakdown({ sectors, unit = 'mL', own = null, size = 11, fill = false }) {
   const val = (k) => Number(sectors?.[k]) || 0;
   const shown = (k) => Math.abs(val(k)) > 0.0005;
