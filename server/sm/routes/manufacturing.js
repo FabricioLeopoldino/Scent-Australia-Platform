@@ -5,34 +5,19 @@ const { query, withTransaction } = require('../db')
 const { auth, auditLog } = require('../auth')
 const { adjustProductStock } = require('../services/stock-service')
 const { ensureMuseSku } = require('./masters')
-const { consumeFragranceOil, restoreFragranceOil, productionSector } = require('../services/fragrance-library')
+const {
+  consumeFragranceOil, restoreFragranceOil, productionSector,
+  resolveOrderSegment, resolveCandleOil, LINE_OIL_SELECT,
+} = require('../services/fragrance-library')
 const { setOrderStatus } = require('../services/order-status')
-
-// D14: which of the 4 usage buckets (SA is the 4th, native to the SA module)
-// an order belongs to — MUSE (no client) vs a B2B client, split by
-// is_large_client into Major vs Standard. Shared by startProductionInternal
-// (the debit) and /complete (finished-goods + reporting) so the two can never
-// disagree about which bucket an order's oil consumption lands in.
-async function resolveOrderSegment(order, tq) {
-  const qry = tq || query
-  const isMuse = !order.client_id
-  if (isMuse) return 'MUSE'
-  const cli = await qry(`SELECT is_large_client FROM clients WHERE id = $1`, [order.client_id])
-  return cli.rows[0]?.is_large_client ? 'MAJOR' : 'STANDARD'
-}
+const { candleOilFor, sendCandleOil, returnCandleOil, requireOilRole, CandleOilError } = require('../services/candle-oil')
 
 // The oil each line of an order takes, with the unit of the variant being made
-// (see the note in startProductionInternal). ONE query for the debit and for
-// the shortage warning, so the warning can never look at a different stock
+// (services/fragrance-library.js LINE_OIL_SELECT). ONE query for the debit and
+// for the shortage warning, so the warning can never look at a different stock
 // from the one production will draw.
 const OIL_LINES_SQL =
-  `SELECT pol.id, pol.oil_id, pol.oil_qty_ml,
-          (SELECT v.business_unit FROM products v
-             JOIN products m ON m.id = v.master_product_id
-            WHERE m.product_code = pol.product_type AND m.category = 'FINISHED_GOOD' AND v.oil_id = pol.oil_id
-            ORDER BY (v.name IS DISTINCT FROM pol.variant_name), (v.archived IS TRUE), v.id LIMIT 1) AS business_unit
-     FROM production_order_lines pol
-    WHERE pol.production_order_id = $1 AND pol.oil_id IS NOT NULL AND pol.oil_qty_ml > 0`
+  `${LINE_OIL_SELECT} WHERE pol.production_order_id = $1 AND pol.oil_id IS NOT NULL AND pol.oil_qty_ml > 0`
 
 // What a queued order would leave short if it started now: [{ name, need,
 // have, unit }]. A WARNING only — production is never blocked on stock (owner,
@@ -59,10 +44,12 @@ async function orderShortages(order) {
 
   const oilLines = (await query(OIL_LINES_SQL, [order.id])).rows
   if (oilLines.length) {
-    const segment = await resolveOrderSegment(order)
+    const segment = await resolveOrderSegment(order, query)
     const need = new Map()   // "oil|stock" → mL
     for (const l of oilLines) {
-      const k = `${l.oil_id}|${productionSector(segment, l.business_unit)}`
+      // A candle pours its candle version where one exists (D17 Block A).
+      l.pours = l.is_candle ? await resolveCandleOil(query, l.oil_id) : l.oil_id
+      const k = `${l.pours}|${productionSector(segment, l.business_unit)}`
       need.set(k, (need.get(k) || 0) + parseFloat(l.oil_qty_ml))
     }
     const oils = (await query(
@@ -70,7 +57,7 @@ async function orderShortages(order) {
               COALESCE(h.muse, 0)::float AS muse, COALESCE(h.muse_atelier, 0)::float AS muse_atelier,
               COALESCE(h.muse_library, 0)::float AS muse_library, COALESCE(h.muse_archive, 0)::float AS muse_archive
          FROM sa.products p LEFT JOIN sa.sector_held h ON h.product_id = p.id
-        WHERE p.id = ANY($1)`, [[...new Set(oilLines.map((l) => l.oil_id))]])).rows
+        WHERE p.id = ANY($1)`, [[...new Set(oilLines.map((l) => l.pours))]])).rows
     for (const [k, ml] of need) {
       const [oilId, sector] = k.split('|')
       const o = oils.find((x) => x.id === oilId)
@@ -216,7 +203,13 @@ async function startProductionInternal(orderId, userId, targetStatus = 'in_produ
     if (oilLines.rows.length > 0) {
       const segment = await resolveOrderSegment(order.rows[0], tq)
       for (const line of oilLines.rows) {
+        // D17.3: a candle's oil is not taken here. It leaves with the glasses
+        // for the filler and is debited then, for the amount that actually
+        // left (services/candle-oil.js). Taking it here as well was the double
+        // debit that block exists to prevent.
+        if (line.is_candle) continue
         await consumeFragranceOil(tq, line.oil_id, line.oil_qty_ml, segment, `Production: ${order.rows[0].order_number}`, line.business_unit)
+        await tq(`UPDATE production_order_lines SET oil_debited_at = NOW() WHERE id = $1`, [line.id])
       }
     }
 
@@ -325,6 +318,20 @@ router.post('/manufacturing/:id/complete', auth, async (req, res) => {
     const pendingLines = await query(`SELECT id FROM production_order_lines WHERE production_order_id = $1 AND line_status != 'done'`, [req.params.id])
     if (pendingLines.rows.length > 0) {
       return res.status(400).json({ error: `${pendingLines.rows.length} line(s) not yet completed. Mark all lines as done first.` })
+    }
+
+    // D17 B3 safety net. A candle's oil is recorded when it goes to the filler,
+    // not at Start — so a candle line can now finish with no oil ever taken
+    // (sent by someone who may not record oil, or filled in-house one day).
+    // Never a block: said loudly, on the screen and in Activity, so it is fixed.
+    const candleNoOil = (await query(
+      `SELECT pol.line_number FROM production_order_lines pol
+        WHERE pol.production_order_id = $1 AND pol.is_candle AND pol.oil_id IS NOT NULL AND pol.oil_debited_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM external_processing ep
+                           WHERE ep.production_order_line_id = pol.id AND ep.oil_qty_sent_ml IS NOT NULL)
+        ORDER BY pol.line_number`, [req.params.id])).rows.map((r) => r.line_number)
+    if (candleNoOil.length) {
+      console.error(`⚠️  [candle-oil] ${order.rows[0].order_number} completed with NO oil recorded for candle line(s) ${candleNoOil.join(', ')}`)
     }
 
     // Safety net: guarantee the BOM stock was debited before completing. If the order
@@ -583,8 +590,8 @@ router.post('/manufacturing/:id/complete', auth, async (req, res) => {
       }
     })
 
-    await auditLog(req.user.id, 'production_completed', 'production_order', parseInt(req.params.id), order.rows[0].order_number, { line_leftovers_count: (line_leftovers || []).length })
-    res.json({ success: true })
+    await auditLog(req.user.id, 'production_completed', 'production_order', parseInt(req.params.id), order.rows[0].order_number, { line_leftovers_count: (line_leftovers || []).length, ...(candleNoOil.length ? { candle_lines_without_oil: candleNoOil } : {}) })
+    res.json({ success: true, candle_lines_without_oil: candleNoOil })
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
@@ -633,42 +640,106 @@ router.post('/manufacturing/:id/lines/:lineId/packing-done', auth, async (req, r
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
-router.post('/manufacturing/:id/lines/:lineId/send-for-filling', auth, async (req, res) => {
+// What a candle line will pour and what its recipe asks for — for the "Send
+// for Filling" window, which shows the oil (the candle version where one
+// exists) and offers the calculated amount to be rounded up by hand.
+router.get('/manufacturing/:id/lines/:lineId/candle-oil', auth, async (req, res) => {
   try {
-    const { supplier } = req.body
-    await query(
-      `UPDATE production_order_lines SET candle_status = 'sent_for_filling', line_status = 'sent_for_filling', sent_for_filling_at = NOW(), filling_supplier = $1 WHERE id = $2 AND production_order_id = $3`,
-      [supplier || null, req.params.lineId, req.params.id]
-    )
-    await setOrderStatus(parseInt(req.params.id), 'waiting_external')
-    const [lineRow4, ord4] = await Promise.all([
-      query(`SELECT product_type FROM production_order_lines WHERE id = $1`, [req.params.lineId]),
-      query(`SELECT order_number FROM production_orders WHERE id = $1`, [req.params.id]),
-    ])
-    await auditLog(req.user.id, 'line_sent_for_filling', 'production_order', parseInt(req.params.id), ord4.rows[0]?.order_number, { line: lineRow4.rows[0]?.product_type, supplier: supplier || null })
-    res.json({ success: true })
+    const info = await candleOilFor(query, req.params.lineId)
+    if (!info || info.line.production_order_id !== parseInt(req.params.id)) return res.json(null)
+    const { line, ...oil } = info
+    res.json(oil)
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
+// The line leaves for the filler. One transaction: the line's status, the
+// external-processing record of what is out (D17 R7 — this door used to leave
+// none, so candles sent from here were on no list), the order's status and,
+// when given, the oil that went with the glasses (admin/root, D17.14).
+router.post('/manufacturing/:id/lines/:lineId/send-for-filling', auth, async (req, res) => {
+  try {
+    const { supplier, eta, oil_sent_ml } = req.body
+    const oilMl = parseFloat(oil_sent_ml) || 0
+    if (oilMl > 0) requireOilRole(req.user)
+    const orderId = parseInt(req.params.id), lineId = parseInt(req.params.lineId)
+    const out = await withTransaction(async (client) => {
+      const tq = (text, params) => client.query(text, params)
+      const line = (await tq(
+        `SELECT pol.*, po.order_number, po.client_id, oil.name AS oil_name
+           FROM production_order_lines pol
+           JOIN production_orders po ON po.id = pol.production_order_id
+           LEFT JOIN sa.products oil ON oil.id = pol.oil_id
+          WHERE pol.id = $1 AND pol.production_order_id = $2 FOR UPDATE OF pol`, [lineId, orderId])).rows[0]
+      if (!line) throw new CandleOilError('Line not found', 404)
+      if (line.line_status === 'sent_for_filling') throw new CandleOilError('This line is already out for filling')
+      await tq(
+        `UPDATE production_order_lines SET candle_status = 'sent_for_filling', line_status = 'sent_for_filling', sent_for_filling_at = NOW(), filling_supplier = $1 WHERE id = $2`,
+        [supplier || null, lineId])
+      const ep = (await tq(
+        `INSERT INTO external_processing (production_order_id, production_order_line_id, client_id, product_name, processing_type, qty_sent, supplier, expected_return, sent_date, status)
+         VALUES ($1,$2,$3,$4,'candle_filling',$5,$6,$7,(NOW() AT TIME ZONE 'Australia/Sydney')::date,'sent') RETURNING id`,
+        [orderId, lineId, line.client_id || null,
+         line.variant_name || `${line.product_type}${line.oil_name ? ` — ${line.oil_name}` : ''}`,
+         line.quantity, supplier || null, eta || null])).rows[0]
+      const oil = oilMl > 0 ? await sendCandleOil(tq, { epId: ep.id, ml: oilMl }) : null
+      await setOrderStatus(orderId, 'waiting_external', { tq })
+      return { line, ep, oil }
+    })
+    await auditLog(req.user.id, 'line_sent_for_filling', 'production_order', orderId, out.line.order_number, {
+      line: out.line.product_type, supplier: supplier || null, external_processing_id: out.ep.id,
+      ...(out.oil?.ml ? { oil: out.oil.oil.code, oil_name: out.oil.oil.name, oil_sent_ml: out.oil.ml } : {}),
+      ...(out.oil?.skipped ? { oil_not_taken: 'already taken when production started' } : {}),
+    })
+    res.json({ success: true, external_processing_id: out.ep.id, oil_sent_ml: out.oil?.ml || 0, oil_skipped: out.oil?.skipped || null })
+  } catch (e) {
+    if (e instanceof CandleOilError) return res.status(e.status).json({ error: e.message })
+    res.status(500).json({ error: sanitizeError(e) })
+  }
+})
+
+// The candles are back. With them, optionally, the oil the filler did not use
+// (admin/root): it goes back onto the record that sent it, so nobody picks the
+// oil again (D17.12). The line's records at the filler are closed with it.
 router.post('/manufacturing/:id/lines/:lineId/receive-from-filling', auth, async (req, res) => {
   try {
+    const oilMl = parseFloat(req.body?.oil_returned_ml) || 0
+    if (oilMl > 0) requireOilRole(req.user)
     const line = await query(`SELECT * FROM production_order_lines WHERE id = $1 AND production_order_id = $2`, [req.params.lineId, req.params.id])
     if (!line.rows[0]) return res.status(404).json({ error: 'Line not found' })
     const l = line.rows[0]
     const newStatus = (!l.needs_labeling && !l.needs_packing) ? 'done' : 'filling_done'
     const isDone = newStatus === 'done'
-    await query(
-      `UPDATE production_order_lines SET candle_status = 'received_from_filling', line_status = $1, received_from_filling_at = NOW(), line_completed_at = CASE WHEN $2 THEN NOW() ELSE NULL END WHERE id = $3`,
-      [newStatus, isDone, req.params.lineId]
-    )
+    await withTransaction(async (client) => {
+      const tq = (text, params) => client.query(text, params)
+      if (oilMl > 0) {
+        const withOil = (await tq(
+          `SELECT id FROM external_processing
+            WHERE production_order_line_id = $1 AND processing_type = 'candle_filling' AND oil_qty_sent_ml IS NOT NULL
+            ORDER BY id DESC LIMIT 1`, [l.id])).rows[0]
+        if (!withOil) throw new CandleOilError('No oil was recorded as sent for this line, so none can come back on it')
+        await returnCandleOil(tq, { epId: withOil.id, ml: oilMl })
+      }
+      await tq(
+        `UPDATE external_processing
+            SET status = 'done', qty_returned = COALESCE(qty_sent, qty_returned),
+                actual_return = COALESCE(actual_return, (NOW() AT TIME ZONE 'Australia/Sydney')::date)
+          WHERE production_order_line_id = $1 AND processing_type = 'candle_filling' AND status IN ('requested','sent','partial')`, [l.id])
+      await tq(
+        `UPDATE production_order_lines SET candle_status = 'received_from_filling', line_status = $1, received_from_filling_at = NOW(), line_completed_at = CASE WHEN $2 THEN NOW() ELSE NULL END WHERE id = $3`,
+        [newStatus, isDone, req.params.lineId]
+      )
+    })
     const pending = await query(`SELECT COUNT(*) FROM production_order_lines WHERE production_order_id = $1 AND line_status = 'sent_for_filling'`, [req.params.id])
     if (parseInt(pending.rows[0].count) === 0) {
       await setOrderStatus(parseInt(req.params.id), 'in_production')
     }
     const ord5 = await query(`SELECT order_number FROM production_orders WHERE id = $1`, [req.params.id])
-    await auditLog(req.user.id, 'line_received_from_filling', 'production_order', parseInt(req.params.id), ord5.rows[0]?.order_number, { line: l.product_type })
+    await auditLog(req.user.id, 'line_received_from_filling', 'production_order', parseInt(req.params.id), ord5.rows[0]?.order_number, { line: l.product_type, ...(oilMl > 0 ? { oil_returned_ml: oilMl } : {}) })
     res.json({ success: true, line_status: newStatus })
-  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
+  } catch (e) {
+    if (e instanceof CandleOilError) return res.status(e.status).json({ error: e.message })
+    res.status(500).json({ error: sanitizeError(e) })
+  }
 })
 
 router.get('/ready-formula/available', auth, async (req, res) => {

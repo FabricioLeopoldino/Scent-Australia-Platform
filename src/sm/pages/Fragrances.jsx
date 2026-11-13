@@ -129,7 +129,7 @@ export default function Fragrances() {
                   >
                     <td style={{ padding: '10px 16px', fontSize: 11, fontFamily: 'monospace', color: 'rgba(232,234,242,0.5)' }}>{o.tag || '-'}</td>
                     <td style={{ padding: '10px 16px', fontSize: 11, fontFamily: 'monospace', color: 'rgba(232,234,242,0.5)' }}>{o.code}</td>
-                    <td style={{ padding: '10px 16px', fontSize: 13, fontWeight: 600, color: '#a78bfa' }}>{o.name}</td>
+                    <td style={{ padding: '10px 16px', fontSize: 13, fontWeight: 600, color: '#a78bfa' }}>{o.name}{o.candle_of && <span title="Poured instead of its ordinary oil on candle lines" style={{ marginLeft: 8, fontSize: 9, fontWeight: 700, color: '#fbbf24' }}>CANDLE VERSION</span>}</td>
                     <td style={{ padding: '10px 16px', fontSize: 12, color: 'rgba(232,234,242,0.6)' }}>{o.bin_location || '-'}</td>
                     <td style={{ padding: '10px 16px' }}>
                       <span style={{ fontSize: 14, fontWeight: 700, color: stock < 0 ? '#f87171' : '#e8eaf2' }}>{s.value}</span>

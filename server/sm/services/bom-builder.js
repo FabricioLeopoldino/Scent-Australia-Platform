@@ -25,6 +25,14 @@ async function getMasterAttrs(productType, qFn) {
   }
 }
 
+// What makes a line a candle: its master's flag (D17 R4). The two legacy codes
+// were hard-coded where lines are created, so a candle on any other master —
+// every MUSE one — was an ordinary product: its oil taken at Start, no filler.
+const LEGACY_CANDLE_TYPES = ['CANDLE_240G', 'CANDLE_400G']
+async function isCandleType(productType, qFn) {
+  return LEGACY_CANDLE_TYPES.includes(productType) || (await getMasterAttrs(productType, qFn)).isCandle
+}
+
 async function buildLineComponents(orderId, line, lineInput, clientId, qFn) {
   const qry = qFn || query
   const productType = line.product_type
@@ -264,4 +272,4 @@ async function getProductVolume(productType, qFn) {
   return attrs.volume
 }
 
-module.exports = { buildLineComponents, getMasterAttrs, getProductVolume, computeFinishedGoodBom }
+module.exports = { buildLineComponents, isCandleType, getMasterAttrs, getProductVolume, computeFinishedGoodBom }

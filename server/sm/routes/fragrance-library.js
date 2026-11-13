@@ -20,7 +20,11 @@ router.get('/fragrance-library', auth, async (req, res) => {
     // Default: active oils only (safe for the order/BOM pickers — never show a
     // discontinued oil there). The Fragrance Library display page opts in to see
     // inactive ones too via ?include_inactive=1, behind its own toggle.
-    let statusFilter = `AND p.status = 'active'`
+    // A candle version (D17 Block A: sa.products.candle_of) is never picked —
+    // a candle line names the ordinary oil and resolveCandleOil swaps it in —
+    // so it is left out of the pickers along with the inactive oils. The
+    // display page (include_inactive=1) shows everything.
+    let statusFilter = `AND p.status = 'active' AND p.candle_of IS NULL`
     if (req.query.include_inactive === '1') {
       statusFilter = ''
     }
@@ -37,7 +41,7 @@ router.get('/fragrance-library', auth, async (req, res) => {
     // The MUSE screens showed the total under "Stock (SA)" (owner, 10 Nov 2026:
     // New York read 67.7 L in The Atelier, which held 20 L).
     const r = await query(
-      `SELECT p.id, p.tag, p."productCode" AS code, p.name, p."currentStock" AS current_stock, p.unit, p.exclusivity, p.status,
+      `SELECT p.id, p.tag, p."productCode" AS code, p.name, p."currentStock" AS current_stock, p.unit, p.exclusivity, p.status, p.candle_of,
               COALESCE(m.bin_location, p.bin_location) AS bin_location,
               COALESCE(h.main, 0) AS main, COALESCE(h.muse, 0) AS muse, COALESCE(h.muse_atelier, 0) AS muse_atelier,
               COALESCE(h.muse_library, 0) AS muse_library, COALESCE(h.muse_archive, 0) AS muse_archive, COALESCE(h.held, 0) AS held

@@ -3,6 +3,11 @@ import { Truck, RotateCw } from 'lucide-react'
 import axios from 'axios'
 import { useToast } from '../SMModule.jsx'
 import { fmtDate as fmt } from '../utils/date.js'
+import { getStoredUser } from '../../shell/api.js'
+
+// Oil is typed in litres and stored in mL (D17 Block B).
+const litres = (ml) => Number((Number(ml || 0) / 1000).toFixed(3))
+const fmtL = (ml) => `${litres(ml).toLocaleString()} L`
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 function isOverdue(d) { return d && new Date(d) < new Date() }
@@ -25,6 +30,12 @@ export default function ExternalProcessing() {
   const [epReturnQty, setEpReturnQty]           = useState('')
   const [epReturnNotes, setEpReturnNotes]       = useState('')
   const [epReturning, setEpReturning]           = useState(false)
+  const [epReturnOil, setEpReturnOil]           = useState('')
+  // The oil a candle record sent to the filler: { item, oil, litres } while its window is open.
+  const [oilModal, setOilModal]                 = useState(null)
+  const [oilSaving, setOilSaving]               = useState(false)
+  // Moving oil is admin/root only (D17.14); the server enforces it, this hides the controls.
+  const canMoveOil = ['admin', 'root'].includes(getStoredUser()?.role)
   const { addToast } = useToast()
 
   useEffect(() => { load() }, [])
@@ -146,6 +157,28 @@ export default function ExternalProcessing() {
                     </div>
                   ))}
                 </div>
+                {item.processing_type === 'candle_filling' && item.production_order_line_id && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 11 }}>
+                    {item.oil_qty_sent_ml != null ? (
+                      <span style={{ color: 'var(--text-secondary)' }}>
+                        Oil: <strong style={{ color: 'var(--text-primary)' }}>{item.oil_name || item.oil_id}</strong> · {fmtL(item.oil_qty_sent_ml)} sent
+                        {Number(item.oil_qty_returned_ml) > 0 ? ` · ${fmtL(item.oil_qty_returned_ml)} back` : ''}
+                      </span>
+                    ) : item.status !== 'requested' ? (
+                      <>
+                        <span style={{ color: '#f87171', fontWeight: 700 }}>Oil not recorded</span>
+                        {canMoveOil && (
+                          <button onClick={async () => {
+                            const oil = await axios.get(`/api/manufacturing/${item.production_order_id}/lines/${item.production_order_line_id}/candle-oil`, api()).then(r => r.data).catch(() => null)
+                            setOilModal({ item, oil, litres: oil && !oil.debited_at_start ? String(litres(oil.calculated_ml)) : '' })
+                          }} style={{ background: 'var(--surface-2)', border: '1px solid var(--border-h)', borderRadius: 6, padding: '4px 9px', color: 'var(--accent-text)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                            Record oil sent
+                          </button>
+                        )}
+                      </>
+                    ) : null}
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: 6 }}>
                   {item.status === 'requested' && item.processing_type !== 'labels' ? (
                     <button onClick={() => { setEpMarkSentModal(item); setEpMarkSentQty('') }}
@@ -153,7 +186,7 @@ export default function ExternalProcessing() {
                       Mark Sent
                     </button>
                   ) : (
-                    <button onClick={() => { setEpReturnModal(item); setEpReturnQty(''); setEpReturnNotes('') }}
+                    <button onClick={() => { setEpReturnModal(item); setEpReturnQty(''); setEpReturnNotes(''); setEpReturnOil('') }}
                       style={{ flex: 1, background: 'var(--surface-2)', border: '1px solid var(--border-h)', borderRadius: 6, padding: '7px 0', color: item.status === 'partial' ? '#fbbf24' : '#4ade80', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
                       {item.status === 'partial' ? 'Mark Remaining Return' : 'Mark Returned'}
                     </button>
@@ -261,6 +294,15 @@ export default function ExternalProcessing() {
                 Label stock will be automatically updated on return
               </div>
             )}
+            {epReturnModal.oil_qty_sent_ml != null && canMoveOil && (
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="label">Oil returned (litres, optional)</label>
+                <input type="number" min="0" step="0.001" value={epReturnOil} onChange={e => setEpReturnOil(e.target.value)} className="input" />
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 5 }}>
+                  {epReturnModal.oil_name || 'Oil'}: {fmtL(epReturnModal.oil_qty_sent_ml)} was sent{Number(epReturnModal.oil_qty_returned_ml) > 0 ? `, ${fmtL(epReturnModal.oil_qty_returned_ml)} is already back` : ''}. Leave empty if none came back.
+                </div>
+              </div>
+            )}
           </div>
           <div className="modal-footer">
             <button className="btn btn-secondary" onClick={() => setEpReturnModal(null)}>Cancel</button>
@@ -278,6 +320,7 @@ export default function ExternalProcessing() {
                     qty_returned: qty,
                     notes: epReturnNotes || undefined,
                     short_return_reason: isShort ? epReturnNotes : undefined,
+                    oil_returned_ml: parseFloat(epReturnOil) > 0 ? Math.round(parseFloat(epReturnOil) * 1000) : undefined,
                   }, api())
                   setEpReturnModal(null)
                   load(true)
@@ -286,6 +329,56 @@ export default function ExternalProcessing() {
                 } finally { setEpReturning(false) }
               }}>
               {epReturning ? 'Saving...' : 'Confirm Return'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    {/* ── Record oil sent (candle filling, D17 Block B) ── */}
+    {oilModal && (
+      <div className="modal-overlay" onClick={() => setOilModal(null)}>
+        <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
+          <div className="modal-header">
+            <div>
+              <h2>Record oil sent</h2>
+              <p>{oilModal.item.product_name}{oilModal.item.order_number ? ` — ${oilModal.item.order_number}` : ''}</p>
+            </div>
+            <button className="modal-close" onClick={() => setOilModal(null)}>×</button>
+          </div>
+          <div className="modal-body">
+            {!oilModal.oil ? (
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>This candle line names no Fragrance Library oil, so there is nothing to record.</div>
+            ) : oilModal.oil.debited_at_start ? (
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>This line's oil was already taken when production started. Nothing more is taken now.</div>
+            ) : (
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-primary)', marginBottom: 10 }}>
+                  Oil: <strong>{oilModal.oil.name}</strong> <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-muted)' }}>{oilModal.oil.code}</span>
+                  {oilModal.oil.is_candle_version && <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, color: '#fbbf24' }}>CANDLE VERSION</span>}
+                </div>
+                <label className="label">Oil sent (litres) *</label>
+                <input type="number" min="0" step="0.001" autoFocus value={oilModal.litres} onChange={e => setOilModal(m => ({ ...m, litres: e.target.value }))} className="input" />
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 5 }}>
+                  The recipe asks for {fmtL(oilModal.oil.calculated_ml)}. Type what actually left. It comes off the stock now and can be recorded once.
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="modal-footer">
+            <button className="btn btn-secondary" onClick={() => setOilModal(null)}>Cancel</button>
+            <button className="btn btn-primary" disabled={oilSaving || !oilModal.oil || oilModal.oil.debited_at_start || !(parseFloat(oilModal.litres) > 0)}
+              onClick={async () => {
+                setOilSaving(true)
+                try {
+                  await axios.put(`/api/external-processing/${oilModal.item.id}/oil-sent`, { oil_sent_ml: Math.round(parseFloat(oilModal.litres) * 1000) }, api())
+                  addToast(`Oil recorded: ${oilModal.litres} L of ${oilModal.oil.name}`)
+                  setOilModal(null)
+                  load(true)
+                } catch (err) {
+                  addToast(err.response?.data?.error || 'Failed to record the oil', 'error')
+                } finally { setOilSaving(false) }
+              }}>
+              {oilSaving ? 'Saving...' : 'Record'}
             </button>
           </div>
         </div>

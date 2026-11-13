@@ -172,6 +172,30 @@ async function runStartupMigrations() {
   // production_order_lines; only an UNmatched order kept them, in the alarm
   // row, because nobody read the choice past ingestion (found 2026-09-09).
   await query(`ALTER TABLE production_order_lines ADD COLUMN IF NOT EXISTS customer_properties JSONB`)
+  // D17 Block B (11 Nov 2026) — the oil a candle filler holds. The record of
+  // what is out carries which oil went, how much, how much came back, and the
+  // ledger row of the send so a return goes back where it came from
+  // (services/candle-oil.js). oil_qty_sent_ml NULL = no oil recorded.
+  await query(`ALTER TABLE external_processing ADD COLUMN IF NOT EXISTS oil_id TEXT`)
+  await query(`ALTER TABLE external_processing ADD COLUMN IF NOT EXISTS oil_qty_sent_ml NUMERIC`)
+  await query(`ALTER TABLE external_processing ADD COLUMN IF NOT EXISTS oil_qty_returned_ml NUMERIC`)
+  await query(`ALTER TABLE external_processing ADD COLUMN IF NOT EXISTS oil_tx_id INTEGER`)
+  // When Start Production took a line's oil. A candle's is no longer taken
+  // there (D17.3) but when it leaves for the filler — and a candle line started
+  // BEFORE this release already had its oil taken at Start, so its send must
+  // not take it again. Back-filled ONCE, the first time the column appears:
+  // every oil line of an order that has a production job. Running it on every
+  // boot would mark new candle lines as debited and silence their send.
+  const hadDebitedAt = (await query(
+    `SELECT 1 FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'production_order_lines' AND column_name = 'oil_debited_at'`)).rows.length > 0
+  await query(`ALTER TABLE production_order_lines ADD COLUMN IF NOT EXISTS oil_debited_at TIMESTAMP`)
+  if (!hadDebitedAt) {
+    await query(
+      `UPDATE production_order_lines pol SET oil_debited_at = j.started
+         FROM (SELECT production_order_id, MIN(started_at) AS started FROM production_jobs GROUP BY production_order_id) j
+        WHERE j.production_order_id = pol.production_order_id AND pol.oil_id IS NOT NULL AND pol.oil_qty_ml > 0`)
+  }
   // The MUSE variant (the actual sellable sm.products row) is identified by
   // (master_product_id, oil_id) going forward, parallel to the legacy
   // (master_product_id, fragrance_id) pairing — same cross-schema FK pattern

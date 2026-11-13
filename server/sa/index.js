@@ -728,6 +728,7 @@ router.get('/products', async (req, res) => {
       skuMultipliers: parseJSONB(row.skuMultipliers),
       incomingOrders: posMap[row.id] || [],
       exclusivity: row.exclusivity || null,
+      candle_of: row.candle_of || null,   // D17 Block A: the oil this is the candle version of
       status: row.status || 'active',
       // null on purpose, not defaulted to true: the Dashboard reads "not
       // excluded", so undecided and chosen-in behave the same there, while the
@@ -4179,6 +4180,61 @@ router.patch('/products/:id/status', async (req, res) => {
 // the status toggle is: this is one deliberate act with one audit line, not part
 // of filling in a form, and the caller is a checkbox that should not have to
 // send a whole product to tick itself.
+// D17 Block A — the one door that says "this oil is the candle version of that
+// one" (owner, 11 Nov 2026: a candle version is a PURCHASED oil with its own
+// code and stock, found by testing a fragrance in wax; only Santal has one
+// today). From then on a candle line that names the ordinary oil pours this one
+// (sm/services/fragrance-library.js resolveCandleOil), and this one leaves the
+// MUSE oil pickers. It moves no stock. Its own endpoint for the reason given
+// below for the reorder watch: one deliberate act, one audit line.
+// Body: { candle_of: '<oil id>' } to link, { candle_of: null } to unlink.
+router.put('/products/:id/candle-of', async (req, res) => {
+  if (!['admin', 'root'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Only admin or root can link a candle version' });
+  }
+  try {
+    const target = req.body.candle_of || null;
+    const cur = (await pool.query(
+      `SELECT id, name, "productCode", category, candle_of FROM products WHERE id = $1`, [req.params.id])).rows[0];
+    if (!cur) return res.status(404).json({ error: 'Product not found' });
+    if (cur.category !== 'OILS') return res.status(400).json({ error: 'Only an oil can be a candle version' });
+    let parent = null;
+    if (target) {
+      if (target === cur.id) return res.status(400).json({ error: 'An oil cannot be the candle version of itself' });
+      parent = (await pool.query(
+        `SELECT id, name, "productCode", category, candle_of FROM products WHERE id = $1`, [target])).rows[0];
+      if (!parent || parent.category !== 'OILS') return res.status(400).json({ error: 'That oil does not exist in the Fragrance Library' });
+      if (parent.candle_of) return res.status(400).json({ error: `${parent.name} is itself a candle version — pick the ordinary oil` });
+      const taken = (await pool.query(
+        `SELECT name FROM products WHERE candle_of = $1 AND id <> $2`, [target, cur.id])).rows[0];
+      if (taken) return res.status(400).json({ error: `${parent.name} already has a candle version: ${taken.name}` });
+      const child = (await pool.query(`SELECT name FROM products WHERE candle_of = $1`, [cur.id])).rows[0];
+      if (child) return res.status(400).json({ error: `${cur.name} has a candle version of its own (${child.name}), so it cannot be one` });
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`UPDATE products SET candle_of = $1 WHERE id = $2`, [target, cur.id]);
+      await client.query(
+        `INSERT INTO audit_log (user_id, action, entity_type, entity_id, entity_name, details)
+         VALUES ($1, 'product_candle_version_changed', 'product', $2, $3, $4)`,
+        [req.user.id, cur.id, cur.name, JSON.stringify({
+          productCode: cur.productCode, from: cur.candle_of,
+          to: target, toCode: parent?.productCode || null, toName: parent?.name || null })]);
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+    res.json({ success: true, id: cur.id, candle_of: target });
+  } catch (err) {
+    console.error('[candle-of]', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 router.patch('/products/:id/reorder-watch', async (req, res) => {
   if (!['admin', 'root'].includes(req.user.role)) {
     return res.status(403).json({ error: 'Only admin or root can change the reorder watch' });

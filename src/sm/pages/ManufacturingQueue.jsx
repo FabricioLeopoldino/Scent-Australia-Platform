@@ -7,6 +7,11 @@ import SearchSelect from '../components/SearchSelect.jsx'
 import { fmt, fmtDate } from '../utils/date.js'
 import { LineFlags, lineScent, CustomerProperties } from '../components/LineMeta.jsx'
 import GlowingEffect from '../components/GlowingEffect.jsx'
+import { getStoredUser } from '../../shell/api.js'
+
+// Oil is typed in litres and stored in mL (D17 Block B).
+const litres = (ml) => Number((Number(ml || 0) / 1000).toFixed(3))
+const fmtL = (ml) => `${litres(ml).toLocaleString()} L`
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -51,6 +56,8 @@ export default function ManufacturingQueue() {
   const [packingSaving, setPackingSaving] = useState(false)
   const [lineModal, setLineModal]  = useState(null) // { type, orderId, lineId, lineNumber }
   const [lineModalForm, setLineModalForm] = useState({ supplier: '', eta: '' })
+  // Moving oil is admin/root only (D17.14); the server enforces it, this hides the field.
+  const canMoveOil = ['admin', 'root'].includes(getStoredUser()?.role)
   const packingPhotoRef = useRef(null)
   const { addToast } = useToast()
 
@@ -113,10 +120,14 @@ export default function ManufacturingQueue() {
         }))
         .filter(ll => ll.leftover_formula_ml || ll.leftover_labels_qty || ll.extra_fragrance_ml)
 
-      await axios.post(`/api/manufacturing/${modal.order.id}/complete`, {
+      const done = await axios.post(`/api/manufacturing/${modal.order.id}/complete`, {
         line_leftovers,
         notes_on_completion: completeForm.notes || null,
       }, api())
+      // Never a block: a candle line that finished with no oil recorded (D17 B3).
+      if (done.data?.candle_lines_without_oil?.length) {
+        addToast(`Completed — but no oil was recorded for candle line(s) ${done.data.candle_lines_without_oil.join(', ')}. The oil stock is too high until it is.`, 'error')
+      }
       const hasFormula = line_leftovers.some(ll => ll.leftover_formula_ml)
       const hasLabels  = line_leftovers.some(ll => ll.leftover_labels_qty)
       const hasExtra   = line_leftovers.some(ll => ll.extra_fragrance_ml)
@@ -251,8 +262,13 @@ export default function ManufacturingQueue() {
     if (!lineModal) return
     setSaving(true)
     try {
-      await axios.post(`/api/manufacturing/${lineModal.orderId}/lines/${lineModal.lineId}/${lineModal.type}`, lineModalForm, api())
-      addToast('Updated')
+      const { oil_l, ...form } = lineModalForm
+      const oilMl = Math.round((parseFloat(oil_l) || 0) * 1000)
+      const body = lineModal.type === 'send-for-filling'
+        ? { ...form, ...(oilMl > 0 ? { oil_sent_ml: oilMl } : {}) }
+        : { ...(oilMl > 0 ? { oil_returned_ml: oilMl } : {}) }
+      const res = await axios.post(`/api/manufacturing/${lineModal.orderId}/lines/${lineModal.lineId}/${lineModal.type}`, body, api())
+      addToast(res.data?.oil_skipped ? 'Sent. The oil was already taken when production started, so nothing more was taken.' : 'Updated')
       setLineModal(null)
       loadQueue()
       if (expanded === lineModal.orderId) loadDetail(lineModal.orderId)
@@ -560,23 +576,41 @@ export default function ManufacturingQueue() {
                           })()}
 
                           {/* Action buttons — only when in_production */}
-                          {isInProd && !isDone && (
+                          {/* A candle line keeps its buttons while the order waits for the filler: the second
+                              candle line still has to be sent, and the first received (D17 Block B). */}
+                          {(isInProd || (isCandle && order.status === 'waiting_external')) && !isDone && (
                             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                               {/* Step 1: Candle — send for external filling */}
                               {isCandle && ls === 'pending' && (
-                                <LineBtn color="#fbbf24" onClick={() => { setLineModal({ type: 'send-for-filling', orderId: order.id, lineId: line.id, lineNumber: line.line_number }); setLineModalForm({ supplier: '', eta: '' }) }}>
+                                <LineBtn color="#fbbf24" onClick={async () => {
+                                  // What this candle pours (its candle version where one exists) and what the recipe asks for.
+                                  const oil = line.oil_id ? await axios.get(`/api/manufacturing/${order.id}/lines/${line.id}/candle-oil`, api()).then(r => r.data).catch(() => null) : null
+                                  setLineModal({ type: 'send-for-filling', orderId: order.id, lineId: line.id, lineNumber: line.line_number, oil })
+                                  setLineModalForm({ supplier: '', eta: '', oil_l: oil && !oil.debited_at_start && canMoveOil ? String(litres(oil.calculated_ml)) : '' })
+                                }}>
                                   <Truck size={14} /> Send for Filling
                                 </LineBtn>
                               )}
                               {/* Candle waiting for return */}
-                              {isCandle && ls === 'sent_for_filling' && (
-                                <>
-                                  <span style={{ fontSize: 11, color: '#fbbf24' }}>Sent to {line.filling_supplier || '?'} · {fmt(line.sent_for_filling_at)}</span>
-                                  <LineBtn color="#4ade80" onClick={() => lineAction(order.id, line.id, 'receive-from-filling')}>
-                                    <CheckCircle size={14} /> Received from Filling
-                                  </LineBtn>
-                                </>
-                              )}
+                              {isCandle && ls === 'sent_for_filling' && (() => {
+                                // The record of what is at the filler, and the oil that went with it (D17 Block B).
+                                const ep = (detail.external_processing || []).filter(e => e.production_order_line_id === line.id && e.processing_type === 'candle_filling')
+                                  .sort((a, b) => b.id - a.id).find(e => e.oil_qty_sent_ml != null) || null
+                                return (
+                                  <>
+                                    <span style={{ fontSize: 11, color: '#fbbf24' }}>Sent to {line.filling_supplier || '?'} · {fmt(line.sent_for_filling_at)}</span>
+                                    {line.oil_id && (ep
+                                      ? <span style={{ fontSize: 11, color: 'rgba(232,234,242,0.6)' }}>Oil sent {fmtL(ep.oil_qty_sent_ml)}{Number(ep.oil_qty_returned_ml) > 0 ? ` · ${fmtL(ep.oil_qty_returned_ml)} back` : ''}</span>
+                                      : !line.oil_debited_at && <span style={{ fontSize: 11, fontWeight: 700, color: '#f87171' }} title="Record it in External Processing (admin)">Oil not recorded</span>)}
+                                    <LineBtn color="#4ade80" onClick={() => {
+                                      setLineModal({ type: 'receive-from-filling', orderId: order.id, lineId: line.id, lineNumber: line.line_number, ep })
+                                      setLineModalForm({ oil_l: '' })
+                                    }}>
+                                      <CheckCircle size={14} /> Received from Filling
+                                    </LineBtn>
+                                  </>
+                                )
+                              })()}
                               {/* Step 1: Non-candle — filling done */}
                               {!isCandle && ls === 'pending' && (
                                 <LineBtn color="#60a5fa" onClick={() => lineAction(order.id, line.id, 'filling-done')}>
@@ -866,15 +900,56 @@ export default function ManufacturingQueue() {
         <div className="modal-overlay" onClick={() => setLineModal(null)}>
           <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Send for Filling <span style={{ color: 'rgba(232,234,242,0.4)', fontFamily: 'monospace', fontSize: 12, fontWeight: 400, marginLeft: 8 }}>Line {lineModal.lineNumber}</span></h2>
+              <h2>{lineModal.type === 'send-for-filling' ? 'Send for Filling' : 'Received from Filling'} <span style={{ color: 'rgba(232,234,242,0.4)', fontFamily: 'monospace', fontSize: 12, fontWeight: 400, marginLeft: 8 }}>Line {lineModal.lineNumber}</span></h2>
               <button className="modal-close" onClick={() => setLineModal(null)}><X size={14} /></button>
             </div>
             <div className="modal-body">
-              <div style={{ display: 'grid', gap: 12 }}>
-                <F label="Filling Supplier">
-                  <SupplierPicker value={lineModalForm.supplier} onChange={supplier => setLineModalForm(f => ({ ...f, supplier }))} />
-                </F>
-              </div>
+              {lineModal.type === 'send-for-filling' ? (
+                <div style={{ display: 'grid', gap: 12 }}>
+                  <F label="Filling Supplier">
+                    <SupplierPicker value={lineModalForm.supplier} onChange={supplier => setLineModalForm(f => ({ ...f, supplier }))} />
+                  </F>
+                  <F label="Expected back (optional)">
+                    <input type="date" className="input" value={lineModalForm.eta || ''} onChange={e => setLineModalForm(f => ({ ...f, eta: e.target.value }))} />
+                  </F>
+                  {/* The oil that leaves with the glasses. It is taken from stock now,
+                      for the amount typed — not at Start Production (D17 Block B). */}
+                  {lineModal.oil && (
+                    <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 12, display: 'grid', gap: 8 }}>
+                      <div style={{ fontSize: 12, color: 'var(--text-primary)' }}>
+                        Oil: <strong>{lineModal.oil.name}</strong> <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'rgba(232,234,242,0.45)' }}>{lineModal.oil.code}</span>
+                        {lineModal.oil.is_candle_version && <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, color: '#fbbf24' }}>CANDLE VERSION</span>}
+                      </div>
+                      {lineModal.oil.debited_at_start ? (
+                        <div style={{ fontSize: 11, color: 'rgba(232,234,242,0.55)' }}>This line's oil was already taken when production started. Nothing more is taken now.</div>
+                      ) : canMoveOil ? (
+                        <F label="Oil sent (litres)">
+                          <input type="number" min="0" step="0.001" className="input" value={lineModalForm.oil_l || ''} onChange={e => setLineModalForm(f => ({ ...f, oil_l: e.target.value }))} />
+                          <div style={{ fontSize: 10, color: 'rgba(232,234,242,0.45)', marginTop: 4 }}>
+                            The recipe asks for {fmtL(lineModal.oil.calculated_ml)}. Type what actually leaves (rounded up is normal). It comes off the stock now; what the filler returns is added back later.
+                          </div>
+                        </F>
+                      ) : (
+                        <div style={{ fontSize: 11, color: '#fbbf24' }}>The oil sent ({fmtL(lineModal.oil.calculated_ml)} by the recipe) is recorded by an admin, in External Processing.</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gap: 12 }}>
+                  <div style={{ fontSize: 12, color: 'rgba(232,234,242,0.7)' }}>The candles are back from the filler.</div>
+                  {lineModal.ep && canMoveOil ? (
+                    <F label="Oil returned (litres, optional)">
+                      <input type="number" min="0" step="0.001" className="input" autoFocus value={lineModalForm.oil_l || ''} onChange={e => setLineModalForm(f => ({ ...f, oil_l: e.target.value }))} />
+                      <div style={{ fontSize: 10, color: 'rgba(232,234,242,0.45)', marginTop: 4 }}>
+                        {fmtL(lineModal.ep.oil_qty_sent_ml)} was sent{Number(lineModal.ep.oil_qty_returned_ml) > 0 ? `, ${fmtL(lineModal.ep.oil_qty_returned_ml)} is already back` : ''}. Leave empty if none came back: the rest is in the candles.
+                      </div>
+                    </F>
+                  ) : lineModal.ep ? (
+                    <div style={{ fontSize: 11, color: '#fbbf24' }}>Oil that came back is recorded by an admin.</div>
+                  ) : null}
+                </div>
+              )}
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setLineModal(null)}>Cancel</button>
