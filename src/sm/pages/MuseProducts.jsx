@@ -10,6 +10,7 @@ import BOMEditor from '../components/BOMEditor.jsx'
 import { suggestMasterCode, MASTER_PREFIXES } from '../utils/masterCode.js'
 import { splitVolume } from '../utils/volume.js'
 import MuseHeader from '../components/MuseHeader.jsx'
+import StockBreakdown, { OWN_STOCK_BY_MODULE } from '../../sa/components/StockBreakdown.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -479,12 +480,16 @@ function DetailDrawer({ master, detail, loading, fragrances, availableFragrances
                           </div>
                         </div>
                         <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontSize: 9, color: 'rgba(232,234,242,0.4)', textTransform: 'uppercase', fontWeight: 700 }}>Oil stock (total)</div>
+                          <div style={{ fontSize: 9, color: 'rgba(232,234,242,0.4)', textTransform: 'uppercase', fontWeight: 700 }}>Total stock</div>
                           {(() => { const s = splitVolume(f.current_stock, 'ml'); return (
                             <div style={{ fontSize: 13, fontWeight: 700, color: Number(f.current_stock) > 0 ? '#4ade80' : '#f87171' }}>
                               {s.value} <span style={{ fontSize: 10, color: 'rgba(232,234,242,0.4)' }}>{s.unit}</span>
                             </div>
                           )})()}
+                          {/* Who holds it, as on SA's Fragrance Library (owner, 10 Nov 2026). */}
+                          {(() => { const o = fragrances.find(x => x.id === f.oil_id); return o?.sectors
+                            ? <StockBreakdown sectors={o.sectors} unit={o.unit} own={OWN_STOCK_BY_MODULE[localStorage.getItem('platform_active_module')] || null} />
+                            : null })()}
                         </div>
                         <IconButton variant="danger" onClick={() => onRemoveFragrance(f.oil_id)} title="Remove oil (archives its variant)"><X size={13} /></IconButton>
                       </div>

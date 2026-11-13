@@ -6,6 +6,8 @@ import Button from '../components/Button.jsx'
 import { useToast } from '../SMModule.jsx'
 import ConfirmModal from '../components/ConfirmModal.jsx'
 import SearchSelect from '../components/SearchSelect.jsx'
+import { OWN_STOCK_BY_MODULE, usable } from '../../sa/components/StockBreakdown.jsx'
+import { SECTORS } from '../../../shared/sectors.js'
 import { fmtDate as fmt } from '../utils/date.js'
 import { warehouseDate } from '../../../shared/warehouse-hours.js'
 import { LineFlags, lineScent, CustomerProperties } from '../components/LineMeta.jsx'
@@ -1347,7 +1349,17 @@ function CreateOrderModal({ onClose, onCreated, productTypes = [], editingOrder 
                         setLine(idx, { oil_id: v, fragrance_id: '', use_ready_formula: false, ready_formula_id: '' })
                         if (v) loadReadyFormula(v, true)
                       }}
-                      options={oilOptions.map(o => ({ value: o.id, label: o.name, sub: `${o.code} · ${Number(o.current_stock).toLocaleString()} ${o.unit}` }))}
+                      options={(() => {
+                        // What THIS unit can use (its own stock, MUSE shared, then SA), not the
+                        // platform total — the total counts oil another MUSE unit holds. Client
+                        // work draws as The Atelier (server: productionSector).
+                        const own = segmentFor === 'MUSE'
+                          ? (OWN_STOCK_BY_MODULE[localStorage.getItem('platform_active_module')] || 'MUSE_LIBRARY')
+                          : 'MUSE_ATELIER'
+                        const n = v => Number(v || 0).toLocaleString()
+                        return oilOptions.map(o => ({ value: o.id, label: o.name,
+                          sub: `${o.code} · ${n(usable(o, own))} ${o.unit} usable · ${SECTORS.find(s => s.key === own).short} ${n(o.sectors?.[own])} · Shared ${n(o.sectors?.MUSE)} · SA ${n(o.sectors?.SA)}` }))
+                      })()}
                       clearable
                       placeholder={oilOptions.length === 0 ? `No oils available for ${segmentFor}` : 'Select an oil...'}
                     />

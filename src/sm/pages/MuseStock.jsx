@@ -12,6 +12,7 @@ import { splitVolume } from '../utils/volume.js'
 import ProductFormModal, { EMPTY_PRODUCT_FORM, ALL_PROD_CATEGORIES, PRODUCT_SEGMENTS } from '../components/ProductFormModal.jsx'
 import StockTable from '../components/StockTable.jsx'
 import MuseHeader from '../components/MuseHeader.jsx'
+import { OWN_STOCK_BY_MODULE, usable } from '../../sa/components/StockBreakdown.jsx'
 import GlowingEffect from '../components/GlowingEffect.jsx'
 import NewMuseFragranceModal from '../components/NewMuseFragranceModal.jsx'
 
@@ -715,7 +716,7 @@ export default function MuseStock() {
                   <option value="">— not linked —</option>
                   {oils.map(o => (
                     <option key={o.id} value={o.id}>
-                      {o.code} · {o.name}{o.current_stock != null ? `  (${o.current_stock} ${o.unit || 'mL'})` : ''}
+                      {o.code} · {o.name}{o.current_stock != null ? `  (${Number(usable(o, OWN_STOCK_BY_MODULE[localStorage.getItem('platform_active_module')] || null)).toLocaleString()} ${o.unit || 'mL'} usable)` : ''}
                     </option>
                   ))}
                 </select>
