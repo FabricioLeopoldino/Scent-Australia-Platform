@@ -234,5 +234,13 @@ export async function runCrossSchemaMigrations() {
   // free text (2026-08-31). The note stays: the reason says WHAT KIND, the note
   // says the particulars. See shared/stock-reasons.js for why this matters.
   await platformPool.query(`ALTER TABLE sa.transactions ADD COLUMN IF NOT EXISTS reason VARCHAR(20)`);
+  // D17 Block A (owner, 11 Nov 2026): a candle-grade oil is its own purchased
+  // record with its own stock (today only Santal, FRAG_0337). candle_of names
+  // the ordinary oil it is the candle version of; NULL = an ordinary oil, which
+  // is every existing row. Nothing in SA reads it. Unique: one oil has at most
+  // one candle version, so resolving "which oil does this candle pour" has one
+  // answer. Additive and nullable, like exclusivity above.
+  await platformPool.query(`ALTER TABLE sa.products ADD COLUMN IF NOT EXISTS candle_of TEXT REFERENCES sa.products(id) ON DELETE SET NULL`);
+  await platformPool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_products_candle_of ON sa.products(candle_of) WHERE candle_of IS NOT NULL`);
   console.log('[platform-db] Cross-schema migrations complete (transfer + Fragrance Library types in sa CHECK; sa.products.exclusivity present).');
 }

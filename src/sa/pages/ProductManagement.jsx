@@ -263,8 +263,20 @@ export default function ProductManagement({ user, libraryMode = false, company =
         })
       });
 
+      // D17 Block A: "candle version of" is its own audited act on the server,
+      // sent only when it changed. A refusal is shown and the rest stays saved.
+      let candleError = null;
+      if (res.ok && editingProduct && formData.category === 'OILS' && (formData.candle_of || '') !== (editingProduct.candle_of || '')) {
+        const c = await fetch(`/api/products/${editingProduct.id}/candle-of`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ candle_of: formData.candle_of || null }),
+        });
+        if (!c.ok) candleError = (await c.json().catch(() => ({}))).error || 'The candle version link was not saved';
+      }
+      if (candleError) showToast(candleError, 'error');
+
       if (res.ok) {
-        showToast(editingProduct ? 'Product updated!' : 'Product created!', 'success');
+        if (!candleError) showToast(editingProduct ? 'Product updated!' : 'Product created!', 'success');
         setShowAddModal(false);
         setAddForSku(null);
         setEditingProduct(null);
@@ -424,7 +436,8 @@ export default function ProductManagement({ user, libraryMode = false, company =
       bin_location: product.bin_location || '',
       sub_category: product.sub_category || '',
       color: product.color || '',
-      exclusivity: product.exclusivity || 'SHARED'
+      exclusivity: product.exclusivity || 'SHARED',
+      candle_of: product.candle_of || ''
     });
     setShowAddModal(true);
   };
@@ -1300,6 +1313,31 @@ export default function ProductManagement({ user, libraryMode = false, company =
                       <em> and </em> the Atelier — they are two units of the same business.
                       <strong> Scent Australia only</strong> is what keeps a client's Signature Fragrance out of Muse.
                       Doesn't affect Shopify.
+                    </div>
+                  </div>
+                )}
+
+                {/* D17 Block A (owner, 11 Nov 2026): a candle-grade oil is its own
+                    purchased record. Linking it here makes every candle that names the
+                    ordinary oil pour this one, and takes this one out of the MUSE pickers. */}
+                {formData.category === 'OILS' && editingProduct && ['admin', 'root'].includes(user.role) && (
+                  <div className="form-group">
+                    <label>Candle version of</label>
+                    <select
+                      className="input"
+                      value={formData.candle_of || ''}
+                      onChange={(e) => setFormData({...formData, candle_of: e.target.value})}
+                    >
+                      <option value="">— not a candle version (an ordinary oil) —</option>
+                      {products
+                        .filter(p => p.category === 'OILS' && p.id !== editingProduct.id && (!p.candle_of || p.id === formData.candle_of))
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map(p => <option key={p.id} value={p.id}>{p.name} ({p.productCode})</option>)}
+                    </select>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
+                      Only for a candle-grade oil bought because the ordinary one is too weak in wax. Once linked,
+                      a candle of that fragrance uses <strong>this</strong> oil's stock, and this oil is no longer
+                      offered when picking a fragrance. Moves no stock.
                     </div>
                   </div>
                 )}

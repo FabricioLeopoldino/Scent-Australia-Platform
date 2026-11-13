@@ -119,6 +119,46 @@ async function drawFromSector(tq, oilId, sector, qty, notes, transactionId) {
     [oilId, sector, qty, notes || null, transactionId])
 }
 
+// D14: which usage bucket an order's oil lands in — MUSE (no client) or a B2B
+// client, split by is_large_client into Major and Standard. One definition for
+// the debit at Start, the candle send and /complete.
+async function resolveOrderSegment(order, tq) {
+  if (!order.client_id) return 'MUSE'
+  const cli = await tq(`SELECT is_large_client FROM clients WHERE id = $1`, [order.client_id])
+  return cli.rows[0]?.is_large_client ? 'MAJOR' : 'STANDARD'
+}
+
+// The oil a production line takes, with the unit of the VARIANT being made —
+// which picks the MUSE stock it is drawn from. Not the master's unit: every
+// master (TS10, RS100, RD200…) is 'library', and The Library and The Archive
+// share masters. The variant is the sm product under that master carrying this
+// line's oil; when several match, the one the line names first (variant_name,
+// which the MUSE webhook writes from the sold variant), then a live one before
+// an archived one, then the oldest. None → The Library (productionSector).
+// ONE query text for the debit at Start, the shortage warning and the candle
+// send, so they can never look at different stocks. Callers add the WHERE.
+const LINE_OIL_SELECT =
+  `SELECT pol.id, pol.production_order_id, pol.oil_id, pol.oil_qty_ml, pol.is_candle, pol.oil_debited_at, pol.quantity,
+          (SELECT v.business_unit FROM products v
+             JOIN products m ON m.id = v.master_product_id
+            WHERE m.product_code = pol.product_type AND m.category = 'FINISHED_GOOD' AND v.oil_id = pol.oil_id
+            ORDER BY (v.name IS DISTINCT FROM pol.variant_name), (v.archived IS TRUE), v.id LIMIT 1) AS business_unit
+     FROM production_order_lines pol`
+
+// D17 Block A — which oil a CANDLE pours (owner, 11 Nov 2026). Any Library
+// fragrance may be chosen for a candle and is poured from its ordinary oil;
+// where a candle version of that oil exists (a purchased, candle-grade record:
+// sa.products.candle_of), the candle uses it instead. Existence decides WHICH
+// oil; stock never does — a candle version that has run out is not swapped
+// for the ordinary oil, it goes negative like everything else. A retired
+// (inactive) candle version no longer counts. Never rejects: no candle version
+// is the normal case.
+async function resolveCandleOil(tq, oilId) {
+  const r = await tq(
+    `SELECT id FROM sa.products WHERE candle_of = $1 AND category = 'OILS' AND COALESCE(status, 'active') <> 'inactive'`, [oilId])
+  return r.rows[0]?.id || oilId
+}
+
 function resolveSegment(segment) {
   const s = SEGMENT_MAP[segment]
   if (!s) throw new Error(`Unknown segment "${segment}" for Fragrance Library consumption (expected MUSE, STANDARD or MAJOR)`)
@@ -192,15 +232,19 @@ async function consumeFragranceOil(tq, oilId, qtyMl, segment, notes, businessUni
     [oil.id, oil.productCode || oil.tag, oil.name, debitType, qty, oil.unit || 'mL', newStock, notes || null]
   )
   await drawFromSector(tq, oil.id, productionSector(segment, businessUnit), qty, notes, tx.rows[0].id)
-  return { oilId: oil.id, name: oil.name, code: oil.productCode, qtyMl: qty, newStock }
+  return { oilId: oil.id, name: oil.name, code: oil.productCode, qtyMl: qty, newStock, transactionId: tx.rows[0].id }
 }
 
 /**
  * Restore (credit) fragrance oil back to the Fragrance Library — the reversal
  * of consumeFragranceOil, for a cancelled/failed production.
  * Same signature and shape as consumeFragranceOil.
+ *
+ * @param draw  optional { txId, returnedBefore } — the ledger row of the debit
+ *              this undoes and how much of it has already come back. With it,
+ *              the oil returns to the stocks that debit drew from (D17 R2).
  */
-async function restoreFragranceOil(tq, oilId, qtyMl, segment, notes) {
+async function restoreFragranceOil(tq, oilId, qtyMl, segment, notes, draw) {
   const qty = parseFloat(qtyMl)
   if (!oilId || !(qty > 0)) throw new Error('restoreFragranceOil requires oilId and a positive qtyMl')
   const { exclusivityBucket, reversalType } = resolveSegment(segment)
@@ -219,13 +263,31 @@ async function restoreFragranceOil(tq, oilId, qtyMl, segment, notes) {
      VALUES ($1,$2,$3,'OILS',$4,$5,$6,$7,$8) RETURNING id`,
     [oil.id, oil.productCode || oil.tag, oil.name, reversalType, qty, oil.unit || 'mL', newStock, notes || null]
   )
-  // Oil coming back goes onto the shelf, i.e. to SA (the remainder): nothing
-  // links a reversal to the draw it undoes, so it cannot know which sector
-  // that came from. ponytail: link reversals to their draw if restores start
-  // to matter — today nothing calls this outside its own tests.
-  await tq(`INSERT INTO sa.sector_movements (product_id, from_sector, to_sector, quantity, kind, notes, transaction_id, cost_per_unit)
-            VALUES ($1,'USED','SA',$2,'reversal',$3,$4, sa.sector_avg_cost($1))`, [oil.id, qty, notes || null, tx.rows[0].id])
-  return { oilId: oil.id, name: oil.name, code: oil.productCode, qtyMl: qty, newStock }
+  // Where the oil goes back to. A return that names its draw (the candle
+  // filler's surplus, D17 R2) goes back to the stocks that draw took from, the
+  // last one drawn first — SA covered the shortfall, so the surplus is SA's
+  // before it is the unit's — each up to what it gave, skipping what earlier
+  // returns already put back. A return with no draw goes onto the shelf, i.e.
+  // to SA (the remainder): nothing says which stock it came from.
+  const back = async (sector, ml) => tq(
+    `INSERT INTO sa.sector_movements (product_id, from_sector, to_sector, quantity, kind, notes, transaction_id, cost_per_unit)
+     VALUES ($1,'USED',$2,$3,'reversal',$4,$5, sa.sector_avg_cost($1))`, [oil.id, sector, ml, notes || null, tx.rows[0].id])
+  let left = qty
+  if (draw?.txId) {
+    const drawn = (await tq(
+      `SELECT from_sector, quantity FROM sa.sector_movements
+        WHERE transaction_id = $1 AND product_id = $2 AND to_sector = 'USED' ORDER BY id DESC`, [draw.txId, oil.id])).rows
+    let skip = parseFloat(draw.returnedBefore) || 0
+    for (const m of drawn) {
+      let room = parseFloat(m.quantity)
+      const skipped = Math.min(skip, room); skip -= skipped; room -= skipped
+      const part = Math.min(left, room)
+      if (part > 0) { await back(m.from_sector, part); left -= part }
+    }
+  }
+  if (left > 0) await back('SA', left)
+  return { oilId: oil.id, name: oil.name, code: oil.productCode, qtyMl: qty, newStock, transactionId: tx.rows[0].id }
 }
 
-module.exports = { consumeFragranceOil, restoreFragranceOil, SEGMENT_MAP, canUseOil, EXCLUSIVITY_ALLOWS, SECTOR_FOR_UNIT, productionSector }
+module.exports = { consumeFragranceOil, restoreFragranceOil, SEGMENT_MAP, canUseOil, EXCLUSIVITY_ALLOWS, SECTOR_FOR_UNIT, productionSector,
+  resolveOrderSegment, resolveCandleOil, LINE_OIL_SELECT }

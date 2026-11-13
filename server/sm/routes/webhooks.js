@@ -6,7 +6,7 @@ const { query, withTransaction } = require('../db')
 const { auth, auditLog } = require('../auth')
 const { enqueueDraftOrder, buildDraftOrderPayload } = require('../services/shopify-sync')
 const { adjustProductStock } = require('../services/stock-service')
-const { computeFinishedGoodBom, buildLineComponents } = require('../services/bom-builder')
+const { computeFinishedGoodBom, buildLineComponents, isCandleType } = require('../services/bom-builder')
 const { consumeFragranceOil } = require('../services/fragrance-library')
 const { setOrderStatus } = require('../services/order-status')
 
@@ -235,7 +235,7 @@ async function createProductionOrderFromShopify(body, shopifyOrderId) {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,$9,true,$10) RETURNING *`,
         [ord.id, i + 1, line.product_type, line.fragrance_id, line.oil_id,
          line.variant_name, line.oil_pct, line.quantity,
-         ['CANDLE_240G', 'CANDLE_400G'].includes(line.product_type),
+         await isCandleType(line.product_type, tq),
          line.properties ? JSON.stringify(line.properties) : null]
       )).rows[0];
       // Same BOM builder the manual path uses — without it the order would

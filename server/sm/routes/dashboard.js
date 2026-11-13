@@ -71,10 +71,11 @@ router.get('/dashboard/stats', auth, async (req, res) => {
 router.get('/dashboard/external-processing', auth, async (req, res) => {
   try {
     const result = await query(
-      `SELECT ep.*, po.order_number, c.name as client_name
+      `SELECT ep.*, po.order_number, c.name as client_name, oil.name AS oil_name, oil."productCode" AS oil_code
        FROM external_processing ep
        LEFT JOIN production_orders po ON ep.production_order_id = po.id
        LEFT JOIN clients c ON ep.client_id = c.id
+       LEFT JOIN sa.products oil ON oil.id = ep.oil_id
        WHERE ep.status IN ('requested','sent','partial')
        ORDER BY ep.expected_return ASC NULLS LAST, ep.sent_date ASC
        LIMIT 25`

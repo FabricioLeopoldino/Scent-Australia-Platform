@@ -3,7 +3,8 @@ const { sanitizeError } = require('../errors')
 const router = express.Router()
 const { query, withTransaction } = require('../db')
 const { auth, auditLog, requireRole } = require('../auth')
-const { buildLineComponents } = require('../services/bom-builder')
+const { buildLineComponents, isCandleType } = require('../services/bom-builder')
+const { sendCandleOil, returnCandleOil, requireOilRole, CandleOilError } = require('../services/candle-oil')
 const { startProductionInternal } = require('./manufacturing')
 const { setOrderStatus, STATUS_TRANSITIONS, InvalidStatusTransition } = require('../services/order-status')
 
@@ -386,7 +387,7 @@ router.post('/production-orders', auth, async (req, res) => {
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
           [ord.id, i + 1, line.product_type, line.fragrance_id || null, line.oil_id || null, line.variant_name || null, line.oil_pct || 25,
            line.packaging_component_id || null, line.label_client_label_id || null, line.quantity,
-           ['CANDLE_240G', 'CANDLE_400G'].includes(line.product_type),
+           await isCandleType(line.product_type, tq),
            !!(line.labels_supplier || line.labels_eta), line.labels_supplier || null, line.labels_eta || null,
            line.needs_labeling || false, line.needs_packing || false,
            line.labels_order_qty ? parseInt(line.labels_order_qty) : null,
@@ -488,7 +489,7 @@ router.put('/production-orders/:id', auth, async (req, res) => {
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
           [orderId, i + 1, line.product_type, line.fragrance_id || null, line.oil_id || null, line.variant_name || null, line.oil_pct || 25,
            line.packaging_component_id || null, line.label_client_label_id || null, line.quantity,
-           ['CANDLE_240G', 'CANDLE_400G'].includes(line.product_type),
+           await isCandleType(line.product_type, tq),
            !!(line.labels_supplier || line.labels_eta), line.labels_supplier || null, line.labels_eta || null,
            line.needs_labeling || false, line.needs_packing || false,
            line.labels_order_qty ? parseInt(line.labels_order_qty) : null,
@@ -677,9 +678,40 @@ router.post('/external-processing', auth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
 })
 
+// D17 Block B — the oil that went to the filler with a candle record that has
+// none yet: one created on a screen with no oil field, or sent by someone who
+// may not move oil. One debit per record (services/candle-oil.js).
+router.put('/external-processing/:id/oil-sent', auth, async (req, res) => {
+  try {
+    requireOilRole(req.user)
+    const out = await withTransaction(async (client) =>
+      sendCandleOil((text, params) => client.query(text, params), { epId: parseInt(req.params.id), ml: req.body.oil_sent_ml }))
+    if (out.skipped) {
+      return res.status(400).json({ error: 'This line was started before candle oil moved to the send: its oil was already taken when production started, so nothing more is taken now' })
+    }
+    await auditLog(req.user.id, 'candle_oil_sent', 'external_processing', parseInt(req.params.id), out.oil.name,
+      { oil: out.oil.code, oil_sent_ml: out.ml, calculated_ml: out.oil.calculated_ml, candle_version: out.oil.is_candle_version })
+    res.json({ success: true, oil: out.oil.name, oil_sent_ml: out.ml })
+  } catch (e) {
+    if (e instanceof CandleOilError) return res.status(e.status).json({ error: e.message })
+    res.status(500).json({ error: sanitizeError(e) })
+  }
+})
+
 router.put('/external-processing/:id/return', auth, async (req, res) => {
   try {
     const { qty_returned, notes, short_return_reason, create_label, label_name, artwork_version, applicable_product_type } = req.body
+    // Surplus oil from the filler (D17 B4), with the candles or on its own.
+    // First and in its own transaction: if it is refused, nothing else happened.
+    const oilBack = parseFloat(req.body.oil_returned_ml) || 0
+    if (oilBack > 0) {
+      requireOilRole(req.user)
+      const r = await withTransaction(async (client) =>
+        returnCandleOil((text, params) => client.query(text, params), { epId: parseInt(req.params.id), ml: oilBack }))
+      await auditLog(req.user.id, 'candle_oil_returned', 'external_processing', parseInt(req.params.id), null,
+        { oil_id: r.oil_id, oil_returned_ml: r.ml, returned_total_ml: r.returned_total })
+      if (!qty_returned) return res.json({ success: true, oil_returned_ml: r.ml })
+    }
     if (!qty_returned) return res.status(400).json({ error: 'qty_returned required' })
     const ep = await query(`SELECT * FROM external_processing WHERE id = $1`, [req.params.id])
     if (!ep.rows[0]) return res.status(404).json({ error: 'Not found' })
@@ -807,7 +839,10 @@ router.put('/external-processing/:id/return', auth, async (req, res) => {
 
     await auditLog(req.user.id, 'external_processing_returned', 'external_processing', item.id, item.product_name, { qty_returned: qtyReturned, newStatus })
     res.json({ success: true, status: newStatus, label_id: labelId })
-  } catch (e) { res.status(500).json({ error: sanitizeError(e) }) }
+  } catch (e) {
+    if (e instanceof CandleOilError) return res.status(e.status).json({ error: e.message })
+    res.status(500).json({ error: sanitizeError(e) })
+  }
 })
 
 router.put('/external-processing/:id/mark-sent', auth, async (req, res) => {
