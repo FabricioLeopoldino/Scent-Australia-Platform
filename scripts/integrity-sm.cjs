@@ -92,6 +92,14 @@ const check = async (name, sql, pool = sm, expectZero = true) => {
   // therefore what has to be reportable. DIF_00001 (the Aere diffuser device)
   // sits under segment MUSE with no SKU and correctly carries no unit — it is
   // hardware, not a collection product.
+  // A product's collection is its master's (PRD_MUSE_ARCHIVE.md A1, 13 Nov
+  // 2026): the Library and the Archive have their own bottle, box and label,
+  // so a variant in one collection under the other's master would be reported
+  // in one and made with the other's packaging.
+  await check("a MUSE product sits in its master's collection",
+    `SELECT COUNT(*) n FROM products v JOIN products m ON m.id = v.master_product_id
+      WHERE v.segment='MUSE' AND v.category='FINISHED_GOOD' AND COALESCE(v.archived,false)=false
+        AND m.business_unit IN ('library','archive') AND v.business_unit IS DISTINCT FROM m.business_unit`);
   await check('everything sellable carries a business_unit',
     `SELECT COUNT(*) n FROM products WHERE sku IS NOT NULL
        AND COALESCE(archived,false)=false AND business_unit IS NULL`);

@@ -164,10 +164,15 @@ router.patch('/products/:id/oil', auth, requireRole('admin', 'root'), async (req
     // write precisely the row integrity-sm fails on.
     const eligible = p.segment === 'MUSE' && p.category === 'FINISHED_GOOD'
 
+    //
+    // REVISED 13 Nov 2026 (PRD_MUSE_ARCHIVE.md A1): the collection is the
+    // MASTER's, not the fragrance's. One oil is sold in both collections under
+    // two names (Santal / Afterglow), so "the collection of another product of
+    // this oil" has no single answer — it took whichever row came first. The
+    // variant stays in, or returns to, the collection of the format it is made in.
     const dest = eligible ? (await query(
       `SELECT business_unit FROM products
-        WHERE oil_id = $1 AND segment = 'MUSE' AND category = 'FINISHED_GOOD'
-          AND business_unit IS NOT NULL AND id <> $2 LIMIT 1`, [oil_id, p.id])).rows[0] : null
+        WHERE id = $1 AND business_unit IN ('library', 'archive')`, [p.master_product_id])).rows[0] : null
 
     const updated = await query(
       `UPDATE products SET oil_id = $1,

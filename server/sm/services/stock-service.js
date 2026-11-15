@@ -20,7 +20,8 @@ async function adjustProductStock(productId, delta, type, notes, userId, orderId
   // already happened and cannot be refused: a MUSE retail sale Shopify already
   // shipped. Refusing it would roll back the whole fulfillment and lose the sale;
   // instead we record it and let the balance go negative (a signal to investigate,
-  // mirroring the SA/oil model). Production/BOM consumption keeps the guard.
+  // mirroring the SA/oil model). Start Production passes it too (owner, 10–11 Nov
+  // 2026: a shortage warns and never blocks). Manual removals keep the guard.
   if (delta < 0 && !opts.allowNegative) {
     const check = await qry(`SELECT current_stock, product_code, name FROM products WHERE id = $1`, [productId])
     if (!check.rows[0]) throw new Error('Product not found')
