@@ -79,7 +79,7 @@ async function planFragrance(oilId, wanted) {
   }
 
   const masters = (await query(
-    `SELECT id, product_code, name, volume_ml, default_oil_pct, price
+    `SELECT id, product_code, name, volume_ml, default_oil_pct, price, business_unit
        FROM products WHERE product_code = ANY($1::text[]) AND is_master = true`,
     [FORMATS.map((f) => f.master)])).rows
   const byCode = new Map(masters.map((m) => [m.product_code, m]))
@@ -99,6 +99,7 @@ async function planFragrance(oilId, wanted) {
     return {
       master: f.master,
       master_id: m.id,
+      master_unit: m.business_unit || null,
       format: f.variantTitle,
       sku: `Muse_${f.prefix}${pad(next)}`,
       product_code: `${f.master}-M${pad(next)}`,
@@ -238,6 +239,16 @@ router.post('/muse-fragrance', auth, requireRole('admin', 'root'), async (req, r
       const plan = await planFragrance(String(oil_id), formats)
       const name = String(title || plan.title).trim()
       if (!name) throw Object.assign(new Error('A title is required'), { status: 400 })
+      // A product's collection is its FORMAT's (owner, 13 Nov 2026: The Archive's
+      // bottle, box and label are all its own, so it has its own masters and
+      // recipes — PRD_MUSE_ARCHIVE.md). These formats are The Library's. An
+      // Archive product born here would be made with Library packaging.
+      const elsewhere = plan.lines.filter((l) => l.master_unit && l.master_unit !== unit)
+      if (elsewhere.length) {
+        throw Object.assign(new Error(
+          `${elsewhere.map((l) => l.format).join(', ')} ${elsewhere.length > 1 ? 'are formats' : 'is a format'} of The ${elsewhere[0].master_unit === 'archive' ? 'Archive' : 'Library'}. ` +
+          `A product of The ${unit === 'archive' ? 'Archive' : 'Library'} is registered under that collection's own formats.`), { status: 400 })
+      }
 
       const created = []
       for (const l of plan.lines) {
@@ -445,24 +456,41 @@ router.patch('/muse-fragrance/:oilId/collection', auth, requireRole('admin', 'ro
       return res.status(400).json({ error: "business_unit must be 'library' or 'archive'" })
     }
 
+    // REVISED 13 Nov 2026 (PRD_MUSE_ARCHIVE.md A1). This used to move EVERY
+    // product of the oil, on the belief that one oil lives in one collection.
+    // It does not: Afterglow (Archive) and Santal (Library) are the same oil,
+    // as are Morning Air / Desert Flowers and Garden Path / Zen Garden — so
+    // correcting one would have dragged the other out of its collection. And
+    // the collections no longer share formats: The Archive's bottle, box and
+    // label are its own (owner, 13 Nov 2026), so a product's collection is its
+    // master's. This now only puts back a product that disagrees with its
+    // master; it cannot move one into a collection whose packaging it is not
+    // made with.
     const before = (await query(
-      `SELECT id, sku, name, business_unit FROM products
-       WHERE oil_id = $1 AND segment = 'MUSE' AND category = 'FINISHED_GOOD'
-       ORDER BY id`, [req.params.oilId])).rows
+      `SELECT v.id, v.sku, v.name, v.business_unit, m.business_unit AS master_unit
+         FROM products v LEFT JOIN products m ON m.id = v.master_product_id
+        WHERE v.oil_id = $1 AND v.segment = 'MUSE' AND v.category = 'FINISHED_GOOD'
+        ORDER BY v.id`, [req.params.oilId])).rows
     if (!before.length) {
       return res.status(404).json({ error: 'No MUSE products are registered against this fragrance' })
     }
 
-    const moving = before.filter((r) => r.business_unit !== unit)
+    const elsewhere = before.filter((r) => r.business_unit !== unit && r.master_unit && r.master_unit !== unit)
+    const moving = before.filter((r) => r.business_unit !== unit && !elsewhere.includes(r))
+    if (!moving.length && elsewhere.length) {
+      const other = elsewhere[0].master_unit === 'archive' ? 'Archive' : 'Library'
+      return res.status(400).json({ error:
+        `${elsewhere.length > 1 ? 'These products are' : 'This product is'} made in The ${other}'s format (its own bottle, box and label), so ${elsewhere.length > 1 ? 'they belong' : 'it belongs'} to The ${other}. ` +
+        `To sell this fragrance in The ${unit === 'archive' ? 'Archive' : 'Library'}, register it there under that collection's formats.` })
+    }
     if (!moving.length) {
       // Not an error: saying so beats a silent success that looks like a change.
       return res.json({ ok: true, changed: 0, business_unit: unit, message: 'Already in that collection' })
     }
 
     const after = await withTransaction(async (client) => (await client.query(
-      `UPDATE products SET business_unit = $1
-       WHERE oil_id = $2 AND segment = 'MUSE' AND category = 'FINISHED_GOOD'
-       RETURNING id, sku, name`, [unit, req.params.oilId])).rows)
+      `UPDATE products SET business_unit = $1 WHERE id = ANY($2::int[])
+       RETURNING id, sku, name`, [unit, moving.map((r) => r.id)])).rows)
 
     // One audit row per variant, matching how registration records them, so the
     // move reads on each product's own history rather than only on the oil.

@@ -201,7 +201,8 @@ export default function NewMuseFragranceModal({ onClose, onCreated, addToast }) 
                       is ten records to update instead of ten born correct. */}
                   <label style={{ ...LABEL, display: 'block', marginBottom: 5 }}>Collection</label>
                   <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
-                    {[['library', 'Library'], ['archive', 'Archive']].map(([v, l]) => (
+                    {/* The Archive is not offered: its bottle, box and label are its own, so its products are born under its own formats (PRD_MUSE_ARCHIVE.md, 13 Nov 2026). */}
+                    {[['library', 'Library']].map(([v, l]) => (
                       <button key={v} type="button" onClick={() => setUnit(v)}
                         style={{
                           flex: 1, padding: '8px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer',

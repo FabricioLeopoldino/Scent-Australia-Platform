@@ -39,6 +39,7 @@ const check = (ok, label, detail = '') => {
 
 // The rules as integrity-sm states them. Kept here as the QUERIES it runs, so a
 // rule quietly deleted from the battery shows up as a failure here.
+const MASTER_RULE = "product outside its master's collection";
 const RULES = {
   'unknown value': `SELECT count(*) n FROM products WHERE business_unit IS NOT NULL
                       AND business_unit NOT IN ('library','archive','atelier')`,
@@ -50,15 +51,14 @@ const RULES = {
                       AND COALESCE(archived,false)=false AND business_unit IS NULL`,
   'material with a unit': `SELECT count(*) n FROM products WHERE business_unit IS NOT NULL
                       AND category IN ('COMPONENT','RAW_MATERIAL','LABEL')`,
-  // Added 2026-09-16. The collection is a fact about the FRAGRANCE — the Archive
-  // is ten fragrances, each sold across every format. A fragrance whose Reed
-  // Diffuser is Archive and whose Room Spray is Library reports wrong, and does
-  // so silently: no total looks odd until someone adds two of them together.
-  // Not in integrity-sm yet, so it is checked here.
-  'fragrance split across collections': `SELECT count(*) n FROM (
-                      SELECT oil_id FROM products
-                       WHERE segment='MUSE' AND category='FINISHED_GOOD' AND oil_id IS NOT NULL
-                       GROUP BY oil_id HAVING count(DISTINCT business_unit) > 1) x`,
+  // REVISED 13 Nov 2026 (PRD_MUSE_ARCHIVE.md A1). The rule added on 16 Sep was
+  // "one oil, one collection". It cannot hold: Afterglow (Archive) and Santal
+  // (Library) are one oil, as are two more pairs. What must hold instead is
+  // that a product sits in the collection of the FORMAT it is made in — the
+  // Archive's bottle, box and label are its own (owner, 13 Nov 2026).
+  [MASTER_RULE]: `SELECT count(*) n FROM products v JOIN products m ON m.id = v.master_product_id
+                      WHERE v.segment='MUSE' AND v.category='FINISHED_GOOD' AND COALESCE(v.archived,false)=false
+                        AND m.business_unit IN ('library','archive') AND v.business_unit IS DISTINCT FROM m.business_unit`,
 };
 
 (async () => {
@@ -148,8 +148,14 @@ const RULES = {
     check(/^[^\n]*requireRole\('admin', 'root'\)/.test(
       patch.slice(patch.indexOf("router.patch('/muse-fragrance/:oilId/collection'"))),
       'and it is admin-only');
-    check(/oil_id = \$2 AND segment = 'MUSE' AND category = 'FINISHED_GOOD'/.test(patch),
-      'it is keyed on the oil, so every format moves together');
+    // REVISED 13 Nov 2026 (PRD_MUSE_ARCHIVE.md A1). It used to move every
+    // product of the oil. One oil is now sold in both collections under two
+    // names (Santal / Afterglow), each made in its own collection's format, so
+    // the endpoint may only put back a product that disagrees with its master.
+    check(/m\.business_unit AS master_unit/.test(collectionBody) && /r\.master_unit !== unit/.test(collectionBody),
+      "it reads each product's master and leaves alone a product made in the other collection's format");
+    check(/WHERE id = ANY\(\$2::int\[\]\)/.test(collectionBody) && !/WHERE oil_id = \$2/.test(collectionBody),
+      'it updates only the products it decided to move, never "every product of the oil"');
 
     // Counted over exactly the rows the endpoint's UPDATE touches — archived
     // included. Excluding them here made `moved > n` on any fragrance with an
@@ -162,7 +168,9 @@ const RULES = {
     // relink endpoint rather than in this screen, so every caller is covered.
     const relink = src('server/sm/routes/products.js');
     check(/business_unit = COALESCE\(\$3, business_unit\)/.test(relink),
-      'relinking a variant to another fragrance adopts that fragrance’s collection');
+      'relinking a variant keeps it in a collection named by the relink query');
+    check(/WHERE id = \$1 AND business_unit IN \('library', 'archive'\)`, \[p\.master_product_id\]/.test(relink),
+      "and that collection is its MASTER's, not that of another product of the same oil");
 
     const frag = (await client.query(
       `SELECT oil_id, count(*) n, min(business_unit) unit, count(DISTINCT business_unit) units
@@ -182,20 +190,21 @@ const RULES = {
       // once the Archive is populated.
       const target = frag.unit === 'archive' ? 'library' : 'archive';
       await client.query(`SAVEPOINT move`);
+      // The integrity rule that replaces "one oil, one collection": moving a
+      // product out of its master's collection is what must now be caught.
+      check(Number((await client.query(RULES[MASTER_RULE])).rows[0].n) === 0,
+        "every MUSE product sits in its master's collection today");
       const moved = (await client.query(
         `UPDATE products SET business_unit = $2
           WHERE oil_id = $1 AND segment = 'MUSE' AND category = 'FINISHED_GOOD'
           RETURNING id`, [frag.oil_id, target])).rows.length;
       check(moved === Number(frag.n),
-        `all ${frag.n} formats of one fragrance move together`, `${moved} moved`);
-
-      const split = Number((await client.query(
-        `SELECT count(DISTINCT business_unit) n FROM products
-          WHERE oil_id = $1 AND segment='MUSE' AND category='FINISHED_GOOD'`,
-        [frag.oil_id])).rows[0].n);
-      check(split === 1, 'the fragrance is not left split across two collections');
+        `all ${frag.n} formats of one fragrance can be written to the other collection`, `${moved} moved`);
+      check(Number((await client.query(RULES[MASTER_RULE])).rows[0].n) > 0,
+        "and the integrity rule catches them: they no longer match their master's collection");
 
       for (const [label, sql] of Object.entries(RULES)) {
+        if (label === MASTER_RULE) continue; // the one rule this move is meant to break
         check(Number((await client.query(sql)).rows[0].n) === 0,
           `still no ${label} after the move`);
       }

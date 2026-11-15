@@ -179,8 +179,14 @@ async function startProductionInternal(orderId, userId, targetStatus = 'in_produ
     for (const res_item of reservations.rows) {
       if (res_item.source === 'general_stock' && res_item.product_id) {
         await tq(`SELECT id FROM products WHERE id = $1 FOR UPDATE`, [res_item.product_id])
+        // Never refused for stock (owner, 10–11 Nov 2026: a shortage is a
+        // warning, "não trava", and a negative balance is normal for now).
+        // This was the one debit at Start that still blocked: with the
+        // ethanol below zero, no spray or diffuser order could start at all,
+        // while the queue said it could. Oil, client stock and labels already
+        // record the real debit and go negative; now the components do too.
         await adjustProductStock(res_item.product_id, -res_item.quantity_reserved, 'production_debit',
-          `Production: ${order.rows[0].order_number}`, userId, orderId, null, tq)
+          `Production: ${order.rows[0].order_number}`, userId, orderId, null, tq, { allowNegative: true })
         await tq(`UPDATE stock_reservations SET status = 'consumed', quantity_consumed = $1 WHERE id = $2`, [res_item.quantity_reserved, res_item.id])
       }
     }
