@@ -131,10 +131,23 @@ function expandBundles(lineItems) {
   return out;
 }
 
+// The Atelier sells two things that are work, not goods (PRD_MUSE_ATELIER.md E,
+// owner 16 Nov 2026): the metallic foil finish, applied by the printer to the
+// label and packaging, and the paid design of the label. Neither has a recipe
+// or stock. Such a line is an INSTRUCTION for whoever produces the order — it
+// is written on the production order and never raised as an unmatched line,
+// on the paid order and on the shipment alike.
+const SERVICE_SKUS = {
+  'MUSE-ATL-FOIL': 'Metallic foil detailing',
+  'MUSE-ATL-DESIGN': 'Graphic design service (we design the label)',
+};
+const servicesText = (services) => services.map((s) => `${s.label} ×${s.qty}`).join('; ');
+
 async function planLinesFromShopifyOrder(tq, body) {
   const toProduce = [];
   const unmatched = [];
   const fromStock = [];   // matched, and the shelf already covers it — pick, don't make
+  const services = [];    // work the customer bought, to be read by whoever produces
   const shape = lineShape;
   for (const li of expandBundles(body.line_items)) {
     const sku = (li.sku || '').trim();
@@ -142,6 +155,7 @@ async function planLinesFromShopifyOrder(tq, body) {
     const title = li.title || li.name || '(untitled)';
     if (qty <= 0) continue;
     if (!sku) { unmatched.push({ reason: 'no_sku', title, qty, ...shape(li) }); continue; }
+    if (SERVICE_SKUS[sku]) { services.push({ sku, label: SERVICE_SKUS[sku], qty }); continue; }
 
     const r = await tq(
       `SELECT p.id, p.name, p.current_stock, p.oil_id, p.fragrance_id,
@@ -184,7 +198,7 @@ async function planLinesFromShopifyOrder(tq, body) {
       properties: shape(li).properties,
     });
   }
-  return { toProduce, unmatched, fromStock };
+  return { toProduce, unmatched, fromStock, services };
 }
 
 async function createProductionOrderFromShopify(body, shopifyOrderId) {
@@ -200,11 +214,11 @@ async function createProductionOrderFromShopify(body, shopifyOrderId) {
   // that collision is the fix; anything else rethrows.
   const attempt = async () => await withTransaction(async (client) => {
     const tq = (text, params) => client.query(text, params);
-    const { toProduce, unmatched, fromStock } = await planLinesFromShopifyOrder(tq, body);
+    const { toProduce, unmatched, fromStock, services } = await planLinesFromShopifyOrder(tq, body);
     // fromStock has to come back HERE above all: this is the branch a
     // shelf-covered order takes, and without it plan.fromStock is undefined and
     // the "waiting to ship" audit never fires — on the one path it exists for.
-    if (toProduce.length === 0) return { toProduce, unmatched, fromStock, order: null };
+    if (toProduce.length === 0) return { toProduce, unmatched, fromStock, services, order: null };
 
     const orderNumber = await getNextOrderNumber();
     const ord = (await tq(
@@ -215,7 +229,8 @@ async function createProductionOrderFromShopify(body, shopifyOrderId) {
          (order_number, client_id, order_type, notes, status, created_by,
           shopify_order_id, shopify_order_number)
        VALUES ($1, NULL, 'STANDARD', $2, 'draft', NULL, $3, $4) RETURNING *`,
-      [orderNumber, `Auto-created from Shopify order ${orderRef}`, shopifyOrderId, body.name || null]
+      [orderNumber, `Auto-created from Shopify order ${orderRef}${services.length ? `. Customer also ordered: ${servicesText(services)}` : ''}`,
+       shopifyOrderId, body.name || null]
     )).rows[0];
 
     for (let i = 0; i < toProduce.length; i++) {
@@ -242,7 +257,7 @@ async function createProductionOrderFromShopify(body, shopifyOrderId) {
       // start and debit nothing.
       await buildLineComponents(ord.id, dbLine, line, null, tq);
     }
-    return { toProduce, unmatched, fromStock, order: ord };
+    return { toProduce, unmatched, fromStock, services, order: ord };
   });
 
   let plan;
@@ -280,6 +295,15 @@ async function createProductionOrderFromShopify(body, shopifyOrderId) {
       shopify_order: orderRef,
       shopify_order_id: shopifyOrderId,
       lines: plan.fromStock.map((l) => ({ sku: l.sku, qty: l.qty, variant: l.variant_name || l.title })),
+      ...(plan.services.length ? { services: servicesText(plan.services) } : {}),
+    });
+  }
+  // A service bought with nothing to make (the design service on its own, or
+  // with goods already on the shelf) has no production order to be written on.
+  // It is recorded so it shows in Activity instead of vanishing.
+  if (plan.services.length && !plan.order) {
+    await auditLog(0, 'shopify_order_services', 'production_order', null, orderRef, {
+      shopify_order: orderRef, shopify_order_id: shopifyOrderId, services: plan.services,
     });
   }
 
@@ -376,6 +400,7 @@ async function smFulfillmentHandler(req, res, topic, body) {
           unmatched.push({ reason: 'no_sku', title, qty, ...lineShape(li) });
           continue;
         }
+        if (SERVICE_SKUS[sku]) continue; // work, not goods: no stock to move (see SERVICE_SKUS)
 
         // ── Each line is isolated by a savepoint ─────────────────────────────
         // Everything below runs in ONE transaction so the stock movements and

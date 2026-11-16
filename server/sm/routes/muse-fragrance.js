@@ -226,9 +226,9 @@ router.post('/muse-fragrance', auth, requireRole('admin', 'root'), async (req, r
     const { oil_id, title, formats, prices, business_unit } = req.body || {}
     if (!oil_id) return res.status(400).json({ error: 'oil_id required' })
     // Only the two MUSE collections can be registered here. 'atelier' is a real
-    // business_unit but its products do not come through this screen, and
-    // accepting it would write a row integrity-sm then fails on, since this
-    // route always writes segment 'MUSE'.
+    // business_unit but its products do not come through this screen: The
+    // Atelier's are registered by scripts/atelier-register.mjs, under its own
+    // formats (PRD_MUSE_ATELIER.md), and this route only knows the Library's.
     const unit = business_unit == null || business_unit === '' ? 'library' : String(business_unit)
     if (!['library', 'archive'].includes(unit)) {
       return res.status(400).json({ error: "business_unit must be 'library' or 'archive'" })
@@ -448,10 +448,10 @@ router.delete('/muse-fragrance/:number', auth, requireRole('admin', 'root'), asy
 router.patch('/muse-fragrance/:oilId/collection', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
     const unit = String(req.body?.business_unit || '')
-    // 'atelier' is a real business_unit and is refused here on purpose: the
-    // owner's axis rule is atelier => segment NOT MUSE, and every row this
-    // touches is segment MUSE. Writing it would create exactly the row
-    // integrity-sm fails on.
+    // 'atelier' is a real business_unit and is refused here on purpose: an
+    // Atelier product hangs under the Atelier's own formats, so moving a
+    // Library or Archive product there would break "a product's collection is
+    // its master's" — exactly the row integrity-sm fails on.
     if (!['library', 'archive'].includes(unit)) {
       return res.status(400).json({ error: "business_unit must be 'library' or 'archive'" })
     }
@@ -478,7 +478,7 @@ router.patch('/muse-fragrance/:oilId/collection', auth, requireRole('admin', 'ro
     const elsewhere = before.filter((r) => r.business_unit !== unit && r.master_unit && r.master_unit !== unit)
     const moving = before.filter((r) => r.business_unit !== unit && !elsewhere.includes(r))
     if (!moving.length && elsewhere.length) {
-      const other = elsewhere[0].master_unit === 'archive' ? 'Archive' : 'Library'
+      const other = { archive: 'Archive', atelier: 'Atelier' }[elsewhere[0].master_unit] || 'Library'
       return res.status(400).json({ error:
         `${elsewhere.length > 1 ? 'These products are' : 'This product is'} made in The ${other}'s format (its own bottle, box and label), so ${elsewhere.length > 1 ? 'they belong' : 'it belongs'} to The ${other}. ` +
         `To sell this fragrance in The ${unit === 'archive' ? 'Archive' : 'Library'}, register it there under that collection's formats.` })

@@ -86,8 +86,13 @@ const check = async (name, sql, pool = sm, expectZero = true) => {
        AND business_unit NOT IN ('library','archive','atelier')`);
   await check('library/archive live only under segment MUSE',
     `SELECT COUNT(*) n FROM products WHERE business_unit IN ('library','archive') AND segment <> 'MUSE'`);
-  await check('atelier never lives under segment MUSE',
-    `SELECT COUNT(*) n FROM products WHERE business_unit = 'atelier' AND segment = 'MUSE'`);
+  // "atelier never lives under segment MUSE" stood here until 16 Nov 2026
+  // (PRD_MUSE_ATELIER.md, owner's OK). It was written when the Atelier meant
+  // client work. The store's Atelier is MUSE retail: Library fragrances in the
+  // Library's packaging under the customer's label, so its products need
+  // segment MUSE for the oil rules, exactly as The Archive's do. What keeps a
+  // stray 'atelier' out is the master rule below: an Atelier product must hang
+  // under one of the Atelier's own formats.
   // The real boundary is the SKU, not the category: a SKU is what gets sold and
   // therefore what has to be reportable. DIF_00001 (the Aere diffuser device)
   // sits under segment MUSE with no SKU and correctly carries no unit — it is
@@ -99,7 +104,7 @@ const check = async (name, sql, pool = sm, expectZero = true) => {
   await check("a MUSE product sits in its master's collection",
     `SELECT COUNT(*) n FROM products v JOIN products m ON m.id = v.master_product_id
       WHERE v.segment='MUSE' AND v.category='FINISHED_GOOD' AND COALESCE(v.archived,false)=false
-        AND m.business_unit IN ('library','archive') AND v.business_unit IS DISTINCT FROM m.business_unit`);
+        AND m.business_unit IN ('library','archive','atelier') AND v.business_unit IS DISTINCT FROM m.business_unit`);
   await check('everything sellable carries a business_unit',
     `SELECT COUNT(*) n FROM products WHERE sku IS NOT NULL
        AND COALESCE(archived,false)=false AND business_unit IS NULL`);

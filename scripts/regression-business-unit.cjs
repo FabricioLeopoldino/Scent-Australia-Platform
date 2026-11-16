@@ -14,7 +14,8 @@
 //     segment        decides oil and production
 //     business_unit  decides reporting
 //     library|archive  =>  segment must be MUSE
-//     atelier          =>  segment must NOT be MUSE
+//     atelier          =>  under one of the Atelier's own formats (16 Nov 2026;
+//                          until then "segment must NOT be MUSE", PRD_MUSE_ATELIER.md)
 //     anything with a SKU must carry one
 //     materials carry none
 //
@@ -45,8 +46,6 @@ const RULES = {
                       AND business_unit NOT IN ('library','archive','atelier')`,
   'library/archive outside MUSE': `SELECT count(*) n FROM products
                       WHERE business_unit IN ('library','archive') AND segment <> 'MUSE'`,
-  'atelier inside MUSE': `SELECT count(*) n FROM products
-                      WHERE business_unit = 'atelier' AND segment = 'MUSE'`,
   'sellable without a unit': `SELECT count(*) n FROM products WHERE sku IS NOT NULL
                       AND COALESCE(archived,false)=false AND business_unit IS NULL`,
   'material with a unit': `SELECT count(*) n FROM products WHERE business_unit IS NOT NULL
@@ -58,7 +57,7 @@ const RULES = {
   // Archive's bottle, box and label are its own (owner, 13 Nov 2026).
   [MASTER_RULE]: `SELECT count(*) n FROM products v JOIN products m ON m.id = v.master_product_id
                       WHERE v.segment='MUSE' AND v.category='FINISHED_GOOD' AND COALESCE(v.archived,false)=false
-                        AND m.business_unit IN ('library','archive') AND v.business_unit IS DISTINCT FROM m.business_unit`,
+                        AND m.business_unit IN ('library','archive','atelier') AND v.business_unit IS DISTINCT FROM m.business_unit`,
 };
 
 (async () => {
@@ -67,7 +66,7 @@ const RULES = {
   for (const [label, needle] of [
     ['unknown values', "business_unit NOT IN ('library','archive','atelier')"],
     ['library/archive under MUSE', "business_unit IN ('library','archive') AND segment <> 'MUSE'"],
-    ['atelier not under MUSE', "business_unit = 'atelier' AND segment = 'MUSE'"],
+    ["a product in its master's collection, the Atelier's included", "m.business_unit IN ('library','archive','atelier')"],
     ['sellable carries one', 'sku IS NOT NULL'],
     ['materials carry none', "category IN ('COMPONENT','RAW_MATERIAL','LABEL')"],
   ]) check(battery.includes(needle), `integrity-sm still checks ${label}`);
@@ -100,7 +99,7 @@ const RULES = {
     // A real MUSE variant to corrupt, then roll back.
     const victim = (await client.query(
       `SELECT id FROM products WHERE segment='MUSE' AND category='FINISHED_GOOD'
-        AND business_unit='library' LIMIT 1`)).rows[0];
+        AND business_unit='library' AND master_product_id IS NOT NULL LIMIT 1`)).rows[0];
     check(!!victim, 'a MUSE product exists to test with');
 
     const breaks = async (label, set, rule) => {
@@ -112,7 +111,7 @@ const RULES = {
     };
     await breaks("a typo'd unit is caught", `business_unit = 'libary'`, 'unknown value');
     await breaks('library under the wrong segment is caught', `segment = 'STANDARD'`, 'library/archive outside MUSE');
-    await breaks('atelier under MUSE is caught', `business_unit = 'atelier'`, 'atelier inside MUSE');
+    await breaks("a Library product called atelier is caught (it is not under an Atelier format)", `business_unit = 'atelier'`, MASTER_RULE);
     await breaks('a sellable row with no unit is caught', `business_unit = NULL`, 'sellable without a unit');
     await breaks('a material given a unit is caught', `category = 'COMPONENT'`, 'material with a unit');
 

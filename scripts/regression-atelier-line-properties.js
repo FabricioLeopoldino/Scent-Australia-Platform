@@ -50,6 +50,11 @@ const ORDER_ID = STAMP % 2147480000;
 const ORDER_REF = `#ZZ-ATELIER-${SHORT}`;
 const NO_PROPS_REF = `#ZZ-ATELIER-NP-${SHORT}`;
 const NO_PROPS_ID = ORDER_ID + 1;
+// The Atelier's two service lines (16 Nov 2026, PRD_MUSE_ATELIER.md E).
+const SVC_REF = `#ZZ-ATELIER-SV-${SHORT}`;
+const SVC_ID = ORDER_ID + 2;
+const SVC_ONLY_REF = `#ZZ-ATELIER-SO-${SHORT}`;
+const SVC_ONLY_ID = ORDER_ID + 3;
 
 const pool = new Pool({
   connectionString: process.env.PLATFORM_DATABASE_URL.replace('-pooler.', '.'),
@@ -162,6 +167,46 @@ try {
   check(plainLine?.customer_properties === null, 'and its column is null, not an empty artifact',
     JSON.stringify(plainLine?.customer_properties));
 
+  // WHY (16 Nov 2026). The Atelier sells the metallic foil finish and the label
+  // design as lines of their own. They are work, not goods: no recipe, no
+  // stock. Before this they would have raised "SKU not found" on every Atelier
+  // order that carried them — an alarm that is always false is one nobody reads.
+  console.log('\n3. The foil and the design service are instructions, not products');
+  const r3 = await post('orders/paid', {
+    id: SVC_ID, name: SVC_REF, financial_status: 'paid',
+    line_items: [
+      { sku: TAG, quantity: 2, title: `${TAG} probe`, variant_title: 'Adventure' },
+      { sku: 'MUSE-ATL-FOIL', quantity: 2, title: 'Metallic Foil Detailing' },
+      { sku: 'MUSE-ATL-DESIGN', quantity: 1, title: 'Graphic design service' },
+    ],
+  });
+  check(r3.status === 200, 'orders/paid answers 200', `got ${r3.status}`);
+  const svcOrder = await waitFor(
+    () => pool.query(
+      `SELECT po.notes, (SELECT COUNT(*)::int FROM production_order_lines l WHERE l.production_order_id = po.id) AS lines
+         FROM production_orders po WHERE po.shopify_order_number = $1`, [SVC_REF]).then((r) => r.rows[0]),
+    (row) => !!row);
+  check(svcOrder?.lines === 1, 'only the product becomes a line to produce', `got ${svcOrder?.lines}`);
+  check(/Metallic foil detailing ×2/.test(svcOrder?.notes || '') && /Graphic design service[^;]* ×1/.test(svcOrder?.notes || ''),
+    'the production order says what else the customer bought', svcOrder?.notes);
+  await new Promise((r) => setTimeout(r, 1500)); // the alarm, if any, is written after the order
+  const svcAlarm = (await pool.query(
+    `SELECT 1 FROM audit_log WHERE action = 'shopify_order_unmatched' AND details->>'shopify_order' = $1`, [SVC_REF])).rows;
+  check(svcAlarm.length === 0, 'and neither service raises the unmatched alarm');
+
+  const r4 = await post('orders/paid', {
+    id: SVC_ONLY_ID, name: SVC_ONLY_REF, financial_status: 'paid',
+    line_items: [{ sku: 'MUSE-ATL-DESIGN', quantity: 1, title: 'Graphic design service' }],
+  });
+  check(r4.status === 200, 'a design service bought on its own answers 200', `got ${r4.status}`);
+  const svcOnly = await waitFor(
+    () => pool.query(
+      `SELECT details FROM audit_log WHERE action = 'shopify_order_services' AND details->>'shopify_order' = $1`, [SVC_ONLY_REF]).then((r) => r.rows[0]),
+    (row) => !!row);
+  check(!!svcOnly, 'it is recorded, so it shows in Activity instead of vanishing');
+  const svcOnlyOrder = (await pool.query(`SELECT 1 FROM production_orders WHERE shopify_order_number = $1`, [SVC_ONLY_REF])).rows;
+  check(svcOnlyOrder.length === 0, 'with no production order, since there is nothing to make');
+
   if (failed) {
     console.log('\n--- server log ---');
     console.log(log.split('\n').filter((l) => /muse-order|webhook|rror/i.test(l)).slice(-14).join('\n'));
@@ -178,7 +223,7 @@ try {
   try {
     orders = (await pool.query(
       `SELECT id FROM production_orders WHERE shopify_order_number = ANY($1::text[])`,
-      [[ORDER_REF, NO_PROPS_REF]])).rows.map((o) => o.id);
+      [[ORDER_REF, NO_PROPS_REF, SVC_REF, SVC_ONLY_REF]])).rows.map((o) => o.id);
   } catch { /* nothing to clean */ }
   for (const id of orders) {
     await pool.query('DELETE FROM production_order_components WHERE production_order_id = $1', [id]).catch(() => {});
@@ -196,9 +241,9 @@ try {
   // actually keyed by everywhere else in this file.
   await pool.query(
     `DELETE FROM audit_log WHERE details->>'shopify_order' = ANY($1::text[])`,
-    [[ORDER_REF, NO_PROPS_REF]]).catch(() => {});
+    [[ORDER_REF, NO_PROPS_REF, SVC_REF, SVC_ONLY_REF]]).catch(() => {});
   await pool.query(`DELETE FROM webhook_processed WHERE shopify_order_id = ANY($1::bigint[])`,
-    [[ORDER_ID, NO_PROPS_ID]]).catch(() => {});
+    [[ORDER_ID, NO_PROPS_ID, SVC_ID, SVC_ONLY_ID]]).catch(() => {});
   await pool.end();
   process.exit(failed === 0 ? 0 : 1);
 }
