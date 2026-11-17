@@ -168,7 +168,8 @@ const RULES = {
     const relink = src('server/sm/routes/products.js');
     check(/business_unit = COALESCE\(\$3, business_unit\)/.test(relink),
       'relinking a variant keeps it in a collection named by the relink query');
-    check(/WHERE id = \$1 AND business_unit IN \('library', 'archive'\)`, \[p\.master_product_id\]/.test(relink),
+    // 'atelier' joined the list on 17 Nov 2026: The Atelier's formats are MUSE masters too.
+    check(/WHERE id = \$1 AND business_unit IN \('library', 'archive', 'atelier'\)`, \[p\.master_product_id\]/.test(relink),
       "and that collection is its MASTER's, not that of another product of the same oil");
 
     const frag = (await client.query(

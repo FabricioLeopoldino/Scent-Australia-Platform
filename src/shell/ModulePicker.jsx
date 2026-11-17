@@ -2,7 +2,7 @@ import { Package, FlaskConical, Sparkles, Factory, Users, LogOut, Droplets, Hist
 import { SYSTEM_NAMES, SA_DISPLAY_NAME } from '../../shared/business-names.js';
 
 // Module Picker — behavioral spec in PRD Appendix B.
-// Tiles: SA / SM enabled by user.modules; a tile marked comingSoon shows but cannot open (The Archive, until it has products).
+// Tiles: SA / SM enabled by user.modules; a tile marked comingSoon shows but cannot open (none today).
 // No-access tiles are hidden (Appendix B default). B2: never auto-skip.
 const MODULES = [
   {
@@ -69,9 +69,9 @@ const MODULES = [
     accent: '#b1545a',
   },
   {
-    // MUSE's core collection. No product is registered to it yet (all 506 MUSE
-    // finished goods are Library on 23 Oct), so the tile waits: its screens are
-    // built on real data once the ten Archive fragrances are registered.
+    // MUSE's core collection. Opened on 17 Nov 2026, once its 30 products were
+    // registered (PRD_MUSE_ARCHIVE.md): the same screens as The Library, listing
+    // The Archive's products only (src/sm/collection.js).
     key: 'ARCHIVE',
     title: 'The Archive',
     subtitle: 'MUSE · Core collection',
@@ -79,7 +79,6 @@ const MODULES = [
     logo: '/logos/muse-logo-wine.svg',
     accent: '#d4b574',
     viewOf: 'SM',
-    comingSoon: true,
   },
   {
     // MUSE is a VIEW over the SM module (same backend/segments) — the tile

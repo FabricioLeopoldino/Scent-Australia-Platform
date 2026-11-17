@@ -172,7 +172,7 @@ router.patch('/products/:id/oil', auth, requireRole('admin', 'root'), async (req
     // variant stays in, or returns to, the collection of the format it is made in.
     const dest = eligible ? (await query(
       `SELECT business_unit FROM products
-        WHERE id = $1 AND business_unit IN ('library', 'archive')`, [p.master_product_id])).rows[0] : null
+        WHERE id = $1 AND business_unit IN ('library', 'archive', 'atelier')`, [p.master_product_id])).rows[0] : null
 
     const updated = await query(
       `UPDATE products SET oil_id = $1,

@@ -197,6 +197,32 @@ async function main() {
       JSON.stringify(skus.rows.map((r) => r.sku))
     );
 
+    // ── Collections (17 Nov 2026): a MUSE format is born in a collection, and an
+    // oil added to it follows. It used to be born with none, and the start-up
+    // backfill then called it 'library' whatever its master was.
+    const libUnits = await db.query(
+      `SELECT m.business_unit AS master_unit, v.business_unit FROM products v JOIN products m ON m.id = v.master_product_id
+        WHERE v.master_product_id = $1 AND v.oil_id = ANY($2::text[])`, [masterId, [oil1, oil2]]);
+    record('collection: with none named, the format and its variants are The Library',
+      libUnits.rows.length === 2 && libUnits.rows.every((r) => r.master_unit === 'library' && r.business_unit === 'library'),
+      JSON.stringify(libUnits.rows));
+    const arc = await api('POST', '/api/sm/masters', {
+      name: 'Archive Reed 200ml TEST', product_code: 'RD200_ARC_TEST', segment: 'MUSE', business_unit: 'archive', volume_ml: 200,
+    });
+    const arcId = arc.json?.master?.id;
+    const arcOil = arcId ? await api('POST', `/api/sm/masters/${arcId}/fragrances`, { oil_id: oil1 }) : { status: 0 };
+    const arcUnits = await db.query(
+      `SELECT m.business_unit AS master_unit, v.business_unit FROM products v JOIN products m ON m.id = v.master_product_id
+        WHERE v.master_product_id = $1`, [arcId || 0]);
+    record('collection: an oil added to an Archive format is an Archive product',
+      arc.status === 201 && arcOil.status === 200 && arcUnits.rows.length === 1
+        && arcUnits.rows[0].master_unit === 'archive' && arcUnits.rows[0].business_unit === 'archive',
+      `${arc.status}/${arcOil.status} ${JSON.stringify(arcUnits.rows)}`);
+    const badUnit = await api('POST', '/api/sm/masters', {
+      name: 'Bad Unit TEST', product_code: 'RD200_BAD_TEST', segment: 'MUSE', business_unit: 'nowhere', volume_ml: 200,
+    });
+    record('collection: an unknown collection is refused', badUnit.status === 400, `status=${badUnit.status}`);
+
     // ── MUSE production order: reserve → start (debit) → complete ──
     const eth0 = await stockOf(ethanolId), fr0 = await oilStockOf(oil1), bot0 = await stockOf(bottleId);
     const variant0 = parseFloat(
@@ -438,6 +464,8 @@ async function main() {
     // must not survive the run — sa is production data.
     await dropTestOils().catch((e) => console.error(`teardown: could not drop test oils — ${e.message}`));
     await db.query(`DELETE FROM products WHERE product_code = 'RD200_LEGACY_TEST'`).catch(() => {});
+    await db.query(`DELETE FROM products WHERE master_product_id IN (SELECT id FROM products WHERE product_code = 'RD200_ARC_TEST')`).catch(() => {});
+    await db.query(`DELETE FROM products WHERE product_code IN ('RD200_ARC_TEST', 'RD200_BAD_TEST')`).catch(() => {});
     // sm.audit_log's FK is ON DELETE SET NULL too: the suite's own audit rows would stay behind, unowned.
     await db.query(`DELETE FROM audit_log WHERE user_id IN (SELECT id FROM users WHERE name = '__regression_sm')`);
     await db.query(`DELETE FROM users WHERE name = '__regression_sm'`);

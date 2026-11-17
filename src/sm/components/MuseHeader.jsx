@@ -1,6 +1,11 @@
 // Brand header used at the top of every /muse-* page. Swaps logo variant by theme:
 // dark → Parchment (light logo on dark bg), light → Wine Stain (logo in brand wine).
+import { COLLECTION_NAMES, activeCollection } from '../collection.js'
+
 export default function MuseHeader({ subtitle }) {
+  // Every MUSE page says whose products it is listing (the open tile).
+  const collection = COLLECTION_NAMES[activeCollection()]
+  if (collection) subtitle = subtitle ? `${collection} · ${subtitle}` : collection
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 14,

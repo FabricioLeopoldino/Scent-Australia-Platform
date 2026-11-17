@@ -201,6 +201,14 @@ router.post('/masters', auth, requireRole('admin', 'root'), async (req, res) => 
       return res.status(400).json({ error: 'MUSE masters do not accept fragrance_ids at creation. Create the master, then add oils via POST /masters/:id/fragrances.' })
     }
 
+    // A MUSE format is born in a collection: the one whose tile it was created
+    // from, The Library when none is named (17 Nov 2026). Client work carries
+    // none here, as before.
+    const unit = segment === 'MUSE' ? (req.body.business_unit || 'library') : null
+    if (unit && !['library', 'archive', 'atelier'].includes(unit)) {
+      return res.status(400).json({ error: "business_unit must be 'library', 'archive' or 'atelier'" })
+    }
+
     const result = await withTransaction(async (client) => {
       const tq = (text, params) => client.query(text, params)
 
@@ -208,15 +216,15 @@ router.post('/masters', auth, requireRole('admin', 'root'), async (req, res) => 
       const masterRes = await tq(
         `INSERT INTO products
           (name, product_code, category, segment, is_master, client_id,
-           volume_ml, volume_unit, default_oil_pct, container_name, is_pure_oil, is_candle, unit, current_stock, notes, image_data, price)
-         VALUES ($1, $2, 'FINISHED_GOOD', $3, true, $4, $5, $6, $7, $8, $9, $10, 'units', 0, $11, $12, $13)
+           volume_ml, volume_unit, default_oil_pct, container_name, is_pure_oil, is_candle, unit, current_stock, notes, image_data, price, business_unit)
+         VALUES ($1, $2, 'FINISHED_GOOD', $3, true, $4, $5, $6, $7, $8, $9, $10, 'units', 0, $11, $12, $13, $14)
          RETURNING *`,
         [
           name.trim(), product_code.trim().toUpperCase(), segment, client_id || null,
           volume_ml ? parseFloat(volume_ml) : null, volume_unit || 'ml',
           default_oil_pct ? parseFloat(default_oil_pct) : 25,
           container_name?.trim() || null, !!is_pure_oil, !!is_candle, notes || null, image_data || null,
-          req.body.price != null ? parseFloat(req.body.price) : null,
+          req.body.price != null ? parseFloat(req.body.price) : null, unit,
         ]
       )
       const master = masterRes.rows[0]
@@ -362,13 +370,19 @@ router.post('/masters/:id/fragrances', auth, requireRole('admin', 'root'), async
         const variantCode = `${master.product_code}-${slugify(o.product_code || o.name)}`
         const variantName = `${master.name} — ${o.name}`
         const v = await tq(
+          // The variant is born in its master's collection (17 Nov 2026). It
+          // used to be born with none, and the start-up backfill then called
+          // every such MUSE product 'library': an oil added to an Archive or
+          // Atelier format became a Library product under a master that is
+          // not, drawing The Library's oil.
           `INSERT INTO products
             (name, product_code, category, segment, is_master, master_product_id, oil_id,
-             unit, current_stock, volume_ml, volume_unit, container_name, is_pure_oil, is_candle, client_id, price)
-           VALUES ($1, $2, 'FINISHED_GOOD', 'MUSE', false, $3, $4, 'units', 0, $5, $6, $7, $8, $9, NULL, $10)
-           ON CONFLICT (product_code) DO UPDATE SET name = EXCLUDED.name, oil_id = EXCLUDED.oil_id, archived = false
+             unit, current_stock, volume_ml, volume_unit, container_name, is_pure_oil, is_candle, client_id, price, business_unit)
+           VALUES ($1, $2, 'FINISHED_GOOD', 'MUSE', false, $3, $4, 'units', 0, $5, $6, $7, $8, $9, NULL, $10, $11)
+           ON CONFLICT (product_code) DO UPDATE SET name = EXCLUDED.name, oil_id = EXCLUDED.oil_id, archived = false,
+             business_unit = COALESCE(EXCLUDED.business_unit, products.business_unit)
            RETURNING id`,
-          [variantName, variantCode, master.id, o.id, master.volume_ml, master.volume_unit, master.container_name, master.is_pure_oil, master.is_candle, master.price]
+          [variantName, variantCode, master.id, o.id, master.volume_ml, master.volume_unit, master.container_name, master.is_pure_oil, master.is_candle, master.price, master.business_unit || 'library']
         )
         const variantId = v.rows[0].id
         await ensureMuseSku(tq, variantId)  // keeps existing SKU if the variant was re-added
