@@ -15,6 +15,7 @@ import MuseHeader from '../components/MuseHeader.jsx'
 import { OWN_STOCK_BY_MODULE, usable } from '../../sa/components/StockBreakdown.jsx'
 import GlowingEffect from '../components/GlowingEffect.jsx'
 import NewMuseFragranceModal from '../components/NewMuseFragranceModal.jsx'
+import { activeCollection, inCollection } from '../collection.js'
 
 // FRAGRANCE removed (Phase B, 2026-07-29): oil lives in the SA Fragrance Library
 // (the "Fragrances" nav item), not as an editable FRAG_* record here. This page
@@ -307,10 +308,10 @@ export default function MuseStock() {
       ])
       // Filter: only MUSE variants (master_product_id set, segment=MUSE, no client)
       const onlyVariants = prodRes.data.filter(p =>
-        p.segment === 'MUSE' && p.master_product_id && !p.client_id && !p.archived
+        p.segment === 'MUSE' && p.master_product_id && !p.client_id && !p.archived && inCollection(p)
       )
       setVariants(onlyVariants)
-      setMasters(mastersRes.data)
+      setMasters(mastersRes.data.filter(m => inCollection(m)))
       // Map in-production qty by master_id|fragrance_id
       const ip = {}
       inProdRes.data.forEach(r => { ip[`${r.master_id}-${r.fragrance_id}`] = parseFloat(r.qty) || 0 })
@@ -424,9 +425,14 @@ export default function MuseStock() {
           // The store codes are minted here, not typed into Shopify — see
           // NewMuseFragranceModal. This tab is where MUSE variants live, which
           // is why "New Product" is hidden on it and this takes its place.
-          <Button onClick={() => setNewFragranceModal(true)}>
-            <Plus size={15} /> New Fragrance
-          </Button>
+          // The Library only: that window registers The Library's formats. The
+          // Archive's and The Atelier's products are born under the store's
+          // own codes (PRD_MUSE_ARCHIVE.md, PRD_MUSE_ATELIER.md).
+          activeCollection() === 'library' && (
+            <Button onClick={() => setNewFragranceModal(true)}>
+              <Plus size={15} /> New Fragrance
+            </Button>
+          )
         ) : (
           <Button onClick={openCreateProduct}>
             <Plus size={15} /> New Product
@@ -745,6 +751,11 @@ export default function MuseStock() {
                   {!editVariantForm.business_unit && <option value="">— not set —</option>}
                   <option value="library">The Library</option>
                   <option value="archive">The Archive</option>
+                  {/* Shown only for a product that is already there, so the box
+                      does not read "The Library" for an Atelier product. Moving
+                      one in or out is refused by the server: The Atelier's
+                      formats are its own. */}
+                  {editVariantForm.business_unit === 'atelier' && <option value="atelier">The Atelier</option>}
                 </select>
                 {/* Registration already asks this; the toggle there defaults to
                     Library, and the ten Archive fragrances register in one

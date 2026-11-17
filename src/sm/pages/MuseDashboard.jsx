@@ -6,6 +6,7 @@ import { useToast } from '../SMModule.jsx'
 import { splitVolume } from '../utils/volume.js'
 import { fmtDate, fmt } from '../utils/date.js'
 import MuseHeader from '../components/MuseHeader.jsx'
+import { inCollection } from '../collection.js'
 import GlowingEffect from '../components/GlowingEffect.jsx'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
@@ -51,8 +52,9 @@ export default function MuseDashboard() {
       setOil(oilPos.data)
       setToShip(ship.data || [])
       setUnread(unmatched.data || [])
-      setMasters(m.data)
-      setVariants(p.data.filter(v => v.segment === 'MUSE' && v.master_product_id && !v.archived))
+      // The open tile's collection only (materials and orders are MUSE-wide).
+      setMasters(m.data.filter(x => inCollection(x)))
+      setVariants(p.data.filter(v => v.segment === 'MUSE' && v.master_product_id && !v.archived && inCollection(v)))
       // Components, labels and raw materials — the things that actually run out.
       // They were invisible here until 2026-08-12, so a label at zero showed
       // nowhere while 445 made-to-order variants shouted "out of stock".

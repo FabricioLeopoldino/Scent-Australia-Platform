@@ -99,7 +99,7 @@ function SysBadge({ system }) {
   )
 }
 
-const SCOPE_BY_MODULE = { MUSE: 'MUSE', SM: SYSTEM_NAMES.SM, OPS: 'SM' }
+const SCOPE_BY_MODULE = { MUSE: 'MUSE', ARCHIVE: 'MUSE', SM: SYSTEM_NAMES.SM, OPS: 'SM' }
 const SCOPE_LABEL = { MUSE: 'MUSE', [SYSTEM_NAMES.SM]: SYSTEM_NAMES.SM, SM: `${SYSTEM_NAMES.SM} & MUSE` }
 
 export default function HistoryActivity({ kind = 'history' }) {

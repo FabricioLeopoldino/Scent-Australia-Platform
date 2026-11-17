@@ -11,6 +11,7 @@ import { suggestMasterCode, MASTER_PREFIXES } from '../utils/masterCode.js'
 import { splitVolume } from '../utils/volume.js'
 import MuseHeader from '../components/MuseHeader.jsx'
 import StockBreakdown, { OWN_STOCK_BY_MODULE } from '../../sa/components/StockBreakdown.jsx'
+import { activeCollection, inCollection } from '../collection.js'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -147,6 +148,7 @@ export default function MuseProducts() {
           name: createForm.name.trim(),
           product_code: createForm.product_code.trim().toUpperCase(),
           segment: 'MUSE',
+          business_unit: activeCollection() || 'library', // born in the collection whose tile is open
           client_id: null,
           volume_ml: createForm.volume_ml ? parseFloat(createForm.volume_ml) : null,
           volume_unit: createForm.volume_unit || 'ml',
@@ -209,11 +211,13 @@ export default function MuseProducts() {
   }
 
   // Distinct container names for filter
-  const containerOptions = [...new Set(masters.filter(m => !m.archived).map(m => m.container_name).filter(Boolean))]
+  const containerOptions = [...new Set(masters.filter(m => !m.archived && inCollection(m)).map(m => m.container_name).filter(Boolean))]
 
   // Filter masters
   const displayed = masters.filter(m => {
-    if (m.archived) return false
+    // `masters` keeps every collection and the archived ones, so a new code is
+    // never proposed twice; the screen lists the open tile's formats only.
+    if (m.archived || !inCollection(m)) return false
     if (containerFilter !== 'ALL' && m.container_name !== containerFilter) return false
     if (!search) return true
     const s = search.toLowerCase()

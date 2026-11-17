@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { SYSTEM_NAMES } from '../../../shared/business-names.js'
 import { useLocation } from 'wouter'
 import { useAuth } from '../SMModule.jsx'
+import { COLLECTION_NAMES, activeCollection } from '../collection.js'
 import {
   LayoutDashboard, ShoppingBag, Factory, Package, Archive,
   BookOpen, Users, ScanBarcode, Truck, RotateCcw,
@@ -47,7 +48,15 @@ const NAV_SECTIONS = [
     { path: '/fragrances', label: 'Fragrance Library', icon: FlaskConical, roles: ['root','admin','user'] },
     { path: '/sm-stock', label: 'Stock', icon: Package, roles: ['root','admin','user'] },
   ]},
-  { header: 'THE LIBRARY', views: ['muse'], items: [
+  // The Atelier's products on the MUSE store (the 348 customiser variants): the
+  // same screens as The Library and The Archive, listing The Atelier's own.
+  { header: 'MUSE STORE PRODUCTS', views: ['sm'], items: [
+    { path: '/muse/products', label: 'Catalog', icon: Star, roles: ['root','admin','user'] },
+    { path: '/bom-muse', label: 'Bill of Materials', icon: BookOpen, roles: ['root','admin','user'] },
+    { path: '/muse-stock', label: 'Stock', icon: Package, roles: ['root','admin','user'] },
+  ]},
+  // 'COLLECTION' is replaced by the open tile's name: The Library or The Archive.
+  { header: 'COLLECTION', views: ['muse'], items: [
     { path: '/muse', label: 'Dashboard', icon: Star, roles: ['root','admin','user'] },
     { path: '/muse/products', label: 'Catalog', icon: Star, roles: ['root','admin','user'] },
     { path: '/fragrances', label: 'Fragrances', icon: FlaskConical, roles: ['root','admin','user'] },
@@ -79,7 +88,8 @@ export default function Layout({ children }) {
   //   MUSE tile → MU:SE mark + MUSE sections
   //   SM tile   → The Atelier brand + B2B sections
   const activeModule = typeof localStorage !== 'undefined' ? localStorage.getItem('platform_active_module') : null
-  const activeView = activeModule === 'MUSE' ? 'muse' : activeModule === 'OPS' ? 'ops' : activeModule === 'REPORTS' ? 'reports' : 'sm'
+  // The Archive opens the same MUSE screens as The Library (src/sm/collection.js).
+  const activeView = activeModule === 'MUSE' || activeModule === 'ARCHIVE' ? 'muse' : activeModule === 'OPS' ? 'ops' : activeModule === 'REPORTS' ? 'reports' : 'sm'
 
   const sidebarWidth = collapsed ? 64 : 220
 
@@ -118,7 +128,7 @@ export default function Layout({ children }) {
               <img src="/logos/muse-logo-parchment.svg" alt="MU:SE" className="theme-dark-only" style={{ height: 22, display: 'block' }} />
               <img src="/logos/muse-logo-wine.svg" alt="MU:SE" className="theme-light-only" style={{ height: 22, display: 'block' }} />
               <div style={{ fontSize: 8.5, fontWeight: 600, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-                The Library
+                {COLLECTION_NAMES[activeCollection()]}
               </div>
             </div>
           )}
@@ -206,14 +216,16 @@ export default function Layout({ children }) {
                     letterSpacing: '0.12em', textTransform: 'uppercase',
                     padding: '12px 14px 4px',
                   }}>
-                    {section.header}
+                    {section.header === 'COLLECTION' ? COLLECTION_NAMES[activeCollection()] : section.header}
                   </div>
                 )}
                 {section.header && collapsed && sIdx > 0 && (
                   <div style={{ height: 1, background: 'var(--border)', margin: '6px 8px' }} />
                 )}
                 {visibleItems.map(item => {
-                  const isActive = location === item.path || (item.path !== '/' && location.startsWith(item.path))
+                  // '/muse' (the dashboard) is matched exactly, like '/': as a prefix it
+                  // also lit up under /muse/products and /muse-stock.
+                  const isActive = location === item.path || (item.path !== '/' && item.path !== '/muse' && location.startsWith(item.path))
                   const Icon = item.icon
 
                   return (

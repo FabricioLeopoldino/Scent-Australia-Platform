@@ -4,6 +4,7 @@ import axios from 'axios'
 import { useToast } from '../SMModule.jsx'
 import BOMEditor from '../components/BOMEditor.jsx'
 import MuseHeader from '../components/MuseHeader.jsx'
+import { inCollection } from '../collection.js'
 
 function api() { return { headers: { Authorization: `Bearer ${localStorage.getItem('platform_token')}` } } }
 
@@ -42,7 +43,7 @@ export default function BOMMuse() {
     setLoading(true)
     try {
       const r = await axios.get('/api/masters', { ...api(), params: { segment: 'MUSE' } })
-      setMasters(r.data)
+      setMasters(r.data.filter(m => inCollection(m))) // the open tile's formats only
     } catch (e) {
       addToast(e.response?.data?.error || 'Failed to load masters', 'error')
     } finally { setLoading(false) }

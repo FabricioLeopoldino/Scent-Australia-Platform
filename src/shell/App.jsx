@@ -50,7 +50,7 @@ export default function App() {
     // §2.1): /library, its own menu over the SA API. SA's menu keeps SA Fragrances.
     else if (moduleKey === 'FRAGLIB') navigate('/library');
     else if (moduleKey === 'PURCHASING') navigate('/purchase-orders'); // H4: every purchase order
-    else if (moduleKey === 'MUSE') navigate('/sm/muse');
+    else if (moduleKey === 'MUSE' || moduleKey === 'ARCHIVE') navigate('/sm/muse'); // same screens, each its own collection
     else if (moduleKey === 'OPS') navigate('/sm'); // production dashboard
     else if (moduleKey === 'REPORTS') navigate('/sm/history'); // centralized cross-system report (admin/root)
     else navigate('/sm/customers'); // SM tile = B2B world
@@ -138,11 +138,11 @@ function PurchaseOrdersWrapper({ user, onSwitchModule, onLogout }) {
 }
 
 function SMWrapper({ user, onLogout }) {
-  // Keep interceptors module-aware after deep reloads; preserve the MUSE (D7)
-  // and REPORTS view choices when already set — both are views over SM. OPS is
+  // Keep interceptors module-aware after deep reloads; preserve the MUSE (D7),
+  // ARCHIVE and REPORTS view choices when already set — both are views over SM. OPS is
   // not preserved while its tile is hidden (21 Oct 2026): a browser that last
   // picked it lands on the SM view instead of a menu nobody can choose.
-  if (!['MUSE', 'REPORTS'].includes(getActiveModule())) setActiveModule('SM');
+  if (!['MUSE', 'ARCHIVE', 'REPORTS'].includes(getActiveModule())) setActiveModule('SM');
   return <SMModule user={user} onLogout={onLogout} />;
 }
 

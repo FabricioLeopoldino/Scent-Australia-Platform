@@ -14,7 +14,7 @@ function api() { return { headers: { Authorization: `Bearer ${localStorage.getIt
 // NOT the retired legacy FRAG_* catalog (which was always 0 here). Oil is
 // created and stocked in SA (Scent Stock Manager); to change stock, go there.
 // Data source: /api/fragrance-library?segment= (D14), filtered by exclusivity.
-const SEGMENT_BY_MODULE = { MUSE: 'MUSE' } // anything else (SM/OPS) → STANDARD
+const SEGMENT_BY_MODULE = { MUSE: 'MUSE', ARCHIVE: 'MUSE' } // anything else (SM/OPS) → STANDARD
 
 // The page used to show the oil's TOTAL under "Stock (SA)" (owner, 10 Nov 2026:
 // New York read 67.7 L in The Atelier, which held 20 L). It now shows the same
