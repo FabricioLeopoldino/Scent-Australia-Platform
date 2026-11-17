@@ -81,18 +81,33 @@ const AUDITED_FIELDS = ['name', 'product_code', 'category', 'sub_category', 'uni
   'min_stock_level', 'supplier', 'supplier_id', 'supplier_code', 'barcode',
   'shopify_variant_id', 'client_id', 'volume_ml', 'default_oil_pct', 'segment', 'price']
 
+// Column names for the UPDATE below come from this list, never from the request.
+const CLEARABLE_FIELDS = ['sub_category', 'supplier', 'supplier_id', 'supplier_code', 'bin_location',
+  'barcode', 'shopify_variant_id', 'lead_time', 'notes', 'image_data', 'client_id', 'price', 'description']
+
 router.put('/products/:id', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
-    const { name, product_code, category, sub_category, unit, min_stock_level, supplier, supplier_id, supplier_code, bin_location, barcode, shopify_variant_id, lead_time, notes, image_data, client_id, volume_ml, default_oil_pct, segment, price, description } = req.body
+    const { name, product_code, category, unit, min_stock_level, volume_ml, default_oil_pct, segment } = req.body
     // Read first so the audit can say what the value WAS. Without this, nothing
     // recorded who changed a SKU or a price — which is why the eleven wrong MUSE
     // codes of 2026-08-10 had no author and no timestamp (verified 2026-08-13:
     // not one product_updated row existed in 2,761 audit entries).
     const before = (await query(`SELECT * FROM products WHERE id = $1`, [req.params.id])).rows[0]
-    const result = await query(
-      `UPDATE products SET name=COALESCE($1,name), product_code=COALESCE($2,product_code), category=COALESCE($3,category), sub_category=$4, unit=COALESCE($5,unit), min_stock_level=COALESCE($6,min_stock_level), supplier=$7, supplier_id=$8, supplier_code=$9, bin_location=$10, barcode=$11, shopify_variant_id=$12, lead_time=$13, notes=$14, image_data=$15, client_id=$16, volume_ml=COALESCE($17,volume_ml), default_oil_pct=COALESCE($18,default_oil_pct), segment=COALESCE($19,segment), price=$20, description=$21 WHERE id=$22 RETURNING *`,
-      [name, product_code?.toUpperCase(), category, sub_category ?? null, unit, min_stock_level, supplier ?? null, supplier_id ?? null, supplier_code ?? null, bin_location ?? null, barcode ?? null, shopify_variant_id ?? null, lead_time ?? null, notes ?? null, image_data ?? null, client_id ?? null, volume_ml ? parseFloat(volume_ml) : null, default_oil_pct ? parseFloat(default_oil_pct) : null, segment ?? null, price != null && price !== '' ? parseFloat(price) : null, description ?? null, req.params.id]
-    )
+    // These eight are never cleared: null (or not sent) keeps the value.
+    const vals = [name, product_code?.toUpperCase(), category, unit, min_stock_level, volume_ml ? parseFloat(volume_ml) : null, default_oil_pct ? parseFloat(default_oil_pct) : null, segment ?? null]
+    const sets = ['name=COALESCE($1,name)', 'product_code=COALESCE($2,product_code)', 'category=COALESCE($3,category)', 'unit=COALESCE($4,unit)', 'min_stock_level=COALESCE($5,min_stock_level)', 'volume_ml=COALESCE($6,volume_ml)', 'default_oil_pct=COALESCE($7,default_oil_pct)', 'segment=COALESCE($8,segment)']
+    // These can be cleared, but only by a form that SENT them. Until 2026-11-17 a
+    // field left out of the body was written as NULL, so the MUSE fragrance edit
+    // (which sends name, minimum and notes) blanked the barcode, location,
+    // supplier, variant id, price, description and photo on every save.
+    for (const col of CLEARABLE_FIELDS) {
+      if (!(col in req.body)) continue
+      const v = req.body[col]
+      vals.push(col === 'price' ? (v != null && v !== '' ? parseFloat(v) : null) : v ?? null)
+      sets.push(`${col}=$${vals.length}`)
+    }
+    vals.push(req.params.id)
+    const result = await query(`UPDATE products SET ${sets.join(', ')} WHERE id=$${vals.length} RETURNING *`, vals)
     if (!result.rows[0]) return res.status(404).json({ error: 'Not found' })
     const after = result.rows[0]
     const changes = {}
