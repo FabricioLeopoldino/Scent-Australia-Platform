@@ -344,17 +344,19 @@ async function runStartupMigrations() {
   // THE RULE, enforced by integrity-sm:
   //     segment        decides oil and production
   //     business_unit  decides reporting
-  //     library|archive  =>  segment must be MUSE
-  //     atelier          =>  segment must NOT be MUSE
+  //     library|archive|atelier  =>  segment must be MUSE (atelier joined on 16 Nov 2026)
+  //     a MUSE product sits in its master's collection
   //
   // Only finished goods carry it. A component belongs to no business unit — a
   // bottle used on a Library order is Library consumption because of the ORDER,
   // not because of the bottle, so materials stay NULL on purpose.
   await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS business_unit VARCHAR(20)`)
   await query(`CREATE INDEX IF NOT EXISTS idx_products_business_unit ON products(business_unit)`)
-  // Backfill only what is certain. Every MUSE finished good alive today is
-  // Library: the Archive has no products registered yet (September) and the
-  // Atelier has none either. STANDARD and null rows are deliberately left
+  // Backfill only what is certain. Written in September, when every MUSE
+  // finished good was Library. Since November The Archive's and The Atelier's
+  // products are born with their unit (their scripts, POST /masters, the two
+  // variant-creating paths), so a NULL left today is still a Library-screen
+  // creation. STANDARD and null rows are deliberately left
   // untouched — calling the legacy Scented Merchandise catalogue "atelier"
   // would be a guess, and the owner has not said it is the same thing.
   await query(`
