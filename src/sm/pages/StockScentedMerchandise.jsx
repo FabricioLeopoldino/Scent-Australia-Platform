@@ -4,7 +4,7 @@ import axios from 'axios'
 import Button from '../components/Button.jsx'
 import { useLocation } from 'wouter'
 import { useToast } from '../SMModule.jsx'
-import ProductFormModal, { EMPTY_PRODUCT_FORM, ALL_PROD_CATEGORIES } from '../components/ProductFormModal.jsx'
+import ProductFormModal, { EMPTY_PRODUCT_FORM, ALL_PROD_CATEGORIES, PRODUCT_SEGMENTS } from '../components/ProductFormModal.jsx'
 import StockTable from '../components/StockTable.jsx'
 import GlowingEffect from '../components/GlowingEffect.jsx'
 
@@ -328,7 +328,7 @@ export default function StockScentedMerchandise() {
             <h1 style={{ fontFamily: 'Archivo Black, sans-serif', fontSize: 22, color: '#e8eaf2' }}>Stock</h1>
           </div>
           <div style={{ fontSize: 13, color: 'rgba(232,234,242,0.5)' }}>
-            Components, labels and reserved stock for The Atelier
+            Components, labels and raw materials for The Atelier
           </div>
         </div>
         {/* "+ New Product" across the general product tabs (parity with /stock).
@@ -364,9 +364,10 @@ export default function StockScentedMerchandise() {
       <div style={{ display: 'flex', gap: 4, marginBottom: 14, borderBottom: '1px solid rgba(255,255,255,0.08)', flexWrap: 'wrap' }}>
         <TabBtn active={tab === 'components'} onClick={() => setTab('components')} icon={<Package size={13} />} label="Components" count={componentsCount} color="#60a5fa" />
         <TabBtn active={tab === 'labels'} onClick={() => setTab('labels')} icon={<Tag size={13} />} label="Labels" count={labelsCount} color="#f472b6" />
-        <TabBtn active={tab === 'client_labels'} onClick={() => setTab('client_labels')} icon={<Tag size={13} />} label="Client Labels" count={clientLabels.length} color="#e879f9" />
         <TabBtn active={tab === 'raw'} onClick={() => setTab('raw')} icon={<Package size={13} />} label="Raw Materials" count={rawCount} color="#fbbf24" />
-        <TabBtn active={tab === 'reserved'} onClick={() => setTab('reserved')} icon={<Briefcase size={13} />} label="Reserved Stock" count={reservedStock.length} color="#a78bfa" />
+        {/* "Client Labels" and "Reserved Stock" removed (owner, 19 Nov 2026): client
+            details stay out of The Atelier, which will work from the store's orders.
+            Their data is kept; the views below are no longer reachable. */}
       </div>
 
       <div style={{ position: 'relative', marginBottom: 0, maxWidth: 360 }}>
@@ -428,6 +429,9 @@ export default function StockScentedMerchandise() {
           onSave={handleCreateProduct}
           allProducts={allProducts}
           categories={SM_PROD_CATEGORIES}
+          // No "Major" segment: it asks for a client and files the product as
+          // that client's reserved stock (removed from The Atelier, 19 Nov 2026).
+          segments={PRODUCT_SEGMENTS.filter(s => s.key !== 'MAJOR')}
         />
       )}
 

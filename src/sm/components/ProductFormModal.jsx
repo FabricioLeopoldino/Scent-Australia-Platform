@@ -214,11 +214,12 @@ export default function ProductFormModal({ mode, form, setForm, saving, onClose,
                 )
               })}
             </div>
-            <div style={{ fontSize: 10, color: 'rgba(232,234,242,0.4)', marginTop: 5 }}>
+            {/* Only where "Major" is offered (not in The Atelier since 19 Nov 2026). */}
+            {segs.some((s) => s.key === 'MAJOR') && <div style={{ fontSize: 10, color: 'rgba(232,234,242,0.4)', marginTop: 5 }}>
               {mode === 'edit'
                 ? <>To convert to a Major client's Reserved Stock, <strong>delete this product and recreate</strong> using the Major option.</>
                 : <>MUSE / Standard / Shared live in general stock. <strong style={{ color: '#a78bfa' }}>Major</strong> goes into the selected client's Reserved Stock.</>}
-            </div>
+            </div>}
           </PField>
 
           {mode === 'create' && form.segment === 'MAJOR' && (

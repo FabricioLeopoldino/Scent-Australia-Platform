@@ -53,7 +53,7 @@ export default function App() {
     else if (moduleKey === 'MUSE' || moduleKey === 'ARCHIVE') navigate('/sm/muse'); // same screens, each its own collection
     else if (moduleKey === 'OPS') navigate('/sm'); // production dashboard
     else if (moduleKey === 'REPORTS') navigate('/sm/history'); // centralized cross-system report (admin/root)
-    else navigate('/sm/customers'); // SM tile = B2B world
+    else navigate('/sm/muse/products'); // The Atelier opens on its store catalogue (client screens removed, 19 Nov 2026)
   }
 
   function backToPicker() {

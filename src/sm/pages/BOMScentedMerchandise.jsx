@@ -29,9 +29,9 @@ export default function BOMScentedMerchandise() {
     if (!m) return
     const code = decodeURIComponent(m[1])
     const inStd = standardMasters.find(x => x.product_code === code)
-    const inMaj = majorMasters.find(x => x.product_code === code)
-    if (!inStd && !inMaj) return
-    setTab(inStd ? 'standard' : 'major')
+    // A Major Client master is no longer shown here (19 Nov 2026).
+    if (!inStd) return
+    setTab('standard')
     setHighlightCode(code)
     const t1 = setTimeout(() => {
       const el = document.getElementById(`bom-card-${code}`)
@@ -109,7 +109,8 @@ export default function BOMScentedMerchandise() {
         <GlowingEffect spread={30} proximity={80} inactiveZone={0.1} borderWidth={1.5} />
       <div style={{ display: 'flex', gap: 4, marginBottom: 14, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
         <TabBtn active={tab === 'standard'} onClick={() => setTab('standard')} icon={<Tag size={13} />} label="Standard" count={standardMasters.length} color="#60a5fa" />
-        <TabBtn active={tab === 'major'} onClick={() => setTab('major')} icon={<Briefcase size={13} />} label="Major Client" count={majorMasters.length} color="#a78bfa" />
+        {/* "Major Client" removed (owner, 19 Nov 2026): client details stay out of
+            The Atelier. The recipes are kept. */}
       </div>
 
       {/* Search */}

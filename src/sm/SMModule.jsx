@@ -6,7 +6,6 @@ import { getToken, expireSession, getStoredUser } from '../shell/api.js';
 import Layout from './components/Layout.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import StockManagement from './pages/StockManagement.jsx';
-import Clients from './pages/Clients.jsx';
 import ProductionOrders from './pages/ProductionOrders.jsx';
 import ManufacturingQueue from './pages/ManufacturingQueue.jsx';
 import TransactionHistory from './pages/TransactionHistory.jsx';
@@ -23,8 +22,6 @@ import MuseProducts from './pages/MuseProducts.jsx';
 import MuseDashboard from './pages/MuseDashboard.jsx';
 import StandardCatalog from './pages/StandardCatalog.jsx';
 import ContainerTypes from './pages/ContainerTypes.jsx';
-import MajorClients from './pages/MajorClients.jsx';
-import MajorClientDetail from './pages/MajorClientDetail.jsx';
 import BOMScentedMerchandise from './pages/BOMScentedMerchandise.jsx';
 import StockScentedMerchandise from './pages/StockScentedMerchandise.jsx';
 import BOMMuse from './pages/BOMMuse.jsx';
@@ -132,7 +129,9 @@ export default function SMModule({ user, onLogout }) {
                 <Route path="/manufacturing-queue" component={ManufacturingQueue} />
                 <Route path="/products" component={StockManagement} />
                 <Route path="/stock" component={StockManagement} />
-                <Route path="/customers" component={Clients} />
+                {/* Client screens removed from The Atelier (owner, 19 Nov 2026); their old
+                    addresses land on The Atelier's store catalogue. The data is kept. */}
+                <Route path="/customers"><Redirect to="/muse/products" /></Route>
                 <Route path="/barcode" component={BarcodeScanner} />
                 <Route path="/incoming-orders" component={IncomingOrders} />
                 <Route path="/external-processing" component={ExternalProcessing} />
@@ -154,8 +153,8 @@ export default function SMModule({ user, onLogout }) {
                     StockManagement all along, which is why the page never showed. */}
                 <Route path="/fragrances" component={Fragrances} />
                 <Route path="/standard/catalog" component={StandardCatalog} />
-                <Route path="/major-clients" component={MajorClients} />
-                <Route path="/major-clients/:id" component={MajorClientDetail} />
+                <Route path="/major-clients"><Redirect to="/muse/products" /></Route>
+                <Route path="/major-clients/:id"><Redirect to="/muse/products" /></Route>
                 <Route path="/bom-sm" component={BOMScentedMerchandise} />
                 <Route path="/sm-stock" component={StockScentedMerchandise} />
                 <Route path="/bom-muse" component={BOMMuse} />

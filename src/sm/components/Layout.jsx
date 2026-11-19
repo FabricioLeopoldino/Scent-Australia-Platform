@@ -5,10 +5,10 @@ import { COLLECTION_NAMES, activeCollection } from '../collection.js'
 import DevelopmentNotice from './DevelopmentNotice.jsx'
 import {
   LayoutDashboard, ShoppingBag, Factory, Package, Archive,
-  BookOpen, Users, ScanBarcode, Truck, RotateCcw,
+  BookOpen, ScanBarcode, Truck, RotateCcw,
   History, ScrollText, UserCog, LogOut, ChevronLeft, ChevronRight,
-  Beaker, ClipboardList, Star, Briefcase, Tag, Box, FlaskConical,
-  Sun, Moon, Send, FileText, AlertTriangle,
+  Beaker, ClipboardList, Star, Tag, Box, FlaskConical,
+  Sun, Moon, Send, FileText, AlertTriangle, Construction,
 } from 'lucide-react'
 
 function getInitialTheme() {
@@ -41,9 +41,10 @@ const NAV_SECTIONS = [
     { path: '/stock', label: 'Stock Management', icon: Archive, roles: ['root','admin','user'] },
   ]},
   { header: 'THE ATELIER', views: ['sm'], items: [
-    { path: '/customers', label: 'Clients', icon: Users, roles: ['root','admin','user'] },
+    // Clients and Major Clients removed from The Atelier (owner, 19 Nov 2026):
+    // The Atelier will work like SA, from the store's orders by webhook, and
+    // client details live in Shopify and the CRM, not here. The data is kept.
     { path: '/standard/catalog', label: 'Standard Catalog', icon: Tag, roles: ['root','admin','user'] },
-    { path: '/major-clients', label: 'Major Clients', icon: Briefcase, roles: ['root','admin','user'] },
     { path: '/bom-sm', label: 'Bill of Materials', icon: BookOpen, roles: ['root','admin','user'] },
     { path: '/fragrances', label: 'Fragrance Library', icon: FlaskConical, roles: ['root','admin','user'] },
     { path: '/sm-stock', label: 'Stock', icon: Package, roles: ['root','admin','user'] },
@@ -131,6 +132,14 @@ export default function Layout({ children }) {
               <div style={{ fontSize: 8.5, fontWeight: 600, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
                 {COLLECTION_NAMES[activeCollection()]}
               </div>
+              {/* Same as the notice on every MUSE screen (DevelopmentNotice.jsx). */}
+              <div title="This area is being built alongside the MUSE Shopify store, which is still being finalised."
+                style={{ display: 'flex', alignItems: 'center', gap: 6, width: 'fit-content', marginTop: 2,
+                  padding: '3px 8px', borderRadius: 6, fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap',
+                  color: 'var(--text-primary)', background: 'rgba(212,181,116,0.12)', border: '1px solid rgba(212,181,116,0.35)' }}>
+                <Construction size={13} style={{ color: '#d4b574', flexShrink: 0 }} aria-hidden="true" />
+                MUSE — in development
+              </div>
             </div>
           )}
           {!collapsed && activeView === 'reports' && (
@@ -163,6 +172,9 @@ export default function Layout({ children }) {
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
               <img src="/logos/muse-colon-parchment.svg" alt="MU:SE" className="theme-dark-only" style={{ height: 22 }} />
               <img src="/logos/muse-colon-wine.svg" alt="MU:SE" className="theme-light-only" style={{ height: 22 }} />
+              <Construction size={14} style={{ color: '#d4b574' }} aria-label="MUSE — in development">
+                <title>MUSE — in development</title>
+              </Construction>
             </div>
           )}
           {collapsed && activeView === 'ops' && (
