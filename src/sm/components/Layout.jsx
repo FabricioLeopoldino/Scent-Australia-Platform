@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { SYSTEM_NAMES } from '../../../shared/business-names.js'
 import { useLocation } from 'wouter'
 import { useAuth } from '../SMModule.jsx'
 import { COLLECTION_NAMES, activeCollection } from '../collection.js'
+import DevelopmentNotice from './DevelopmentNotice.jsx'
 import {
   LayoutDashboard, ShoppingBag, Factory, Package, Archive,
   BookOpen, Users, ScanBarcode, Truck, RotateCcw,
@@ -122,26 +122,14 @@ export default function Layout({ children }) {
           display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'space-between',
           minHeight: 64
         }}>
-          {!collapsed && activeView === 'muse' && (
+          {!collapsed && (activeView === 'muse' || activeView === 'sm') && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {/* MUSE view — the MU:SE editorial mark is the brand */}
+              {/* The three MUSE collections — The Library, The Archive and (since
+                  19 Nov 2026, owner) The Atelier — carry the MU:SE mark */}
               <img src="/logos/muse-logo-parchment.svg" alt="MU:SE" className="theme-dark-only" style={{ height: 22, display: 'block' }} />
               <img src="/logos/muse-logo-wine.svg" alt="MU:SE" className="theme-light-only" style={{ height: 22, display: 'block' }} />
               <div style={{ fontSize: 8.5, fontWeight: 600, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
                 {COLLECTION_NAMES[activeCollection()]}
-              </div>
-            </div>
-          )}
-          {!collapsed && activeView === 'sm' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {/* SM view — The Atelier wordmark (D7: MUSE mark lives on its own tile) */}
-              <div>
-                <div className="serif" style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.02em', lineHeight: 1.1 }}>
-                  {SYSTEM_NAMES.SM}
-                </div>
-                <div style={{ fontSize: 8.5, fontWeight: 600, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'var(--text-muted)', marginTop: 3 }}>
-                  MUSE · White Label · Custom
-                </div>
               </div>
             </div>
           )}
@@ -171,15 +159,10 @@ export default function Layout({ children }) {
               </div>
             </div>
           )}
-          {collapsed && activeView === 'muse' && (
+          {collapsed && (activeView === 'muse' || activeView === 'sm') && (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
               <img src="/logos/muse-colon-parchment.svg" alt="MU:SE" className="theme-dark-only" style={{ height: 22 }} />
               <img src="/logos/muse-colon-wine.svg" alt="MU:SE" className="theme-light-only" style={{ height: 22 }} />
-            </div>
-          )}
-          {collapsed && activeView === 'sm' && (
-            <div className="serif" style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.06em' }}>
-              SM
             </div>
           )}
           {collapsed && activeView === 'ops' && (
@@ -320,6 +303,8 @@ export default function Layout({ children }) {
 
       {/* Main content */}
       <div style={{ flex: 1, marginLeft: sidebarWidth, transition: 'margin-left 0.2s ease', minHeight: '100vh' }}>
+        {/* The three MUSE collections are still in development (owner, 19 Nov 2026). */}
+        {(activeView === 'muse' || activeView === 'sm') && <DevelopmentNotice />}
         {children}
       </div>
     </div>

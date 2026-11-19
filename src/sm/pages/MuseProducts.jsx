@@ -40,6 +40,13 @@ function resizeImageFile(file) {
 
 export default function MuseProducts() {
   const [masters, setMasters]               = useState([])
+  // Read once, when the page opens. `masters` holds every collection, so reading
+  // it at each render let a tile picked in another tab swap the list (and the
+  // collection a new master is born in) mid-screen.
+  const [collection]                        = useState(activeCollection)
+  // The Archive's and The Atelier's formats and products carry the store's own
+  // codes; creating them here would mint Library ones (as on MUSE Stock).
+  const canCreate                           = collection === 'library' || !collection
   const [fragrances, setFragrances]         = useState([])
   const [loading, setLoading]               = useState(true)
   const [containerFilter, setContainerFilter] = useState('ALL')
@@ -148,7 +155,7 @@ export default function MuseProducts() {
           name: createForm.name.trim(),
           product_code: createForm.product_code.trim().toUpperCase(),
           segment: 'MUSE',
-          business_unit: activeCollection() || 'library', // born in the collection whose tile is open
+          business_unit: collection || 'library', // born in the collection whose tile is open
           client_id: null,
           volume_ml: createForm.volume_ml ? parseFloat(createForm.volume_ml) : null,
           volume_unit: createForm.volume_unit || 'ml',
@@ -211,13 +218,13 @@ export default function MuseProducts() {
   }
 
   // Distinct container names for filter
-  const containerOptions = [...new Set(masters.filter(m => !m.archived && inCollection(m)).map(m => m.container_name).filter(Boolean))]
+  const containerOptions = [...new Set(masters.filter(m => !m.archived && inCollection(m, collection)).map(m => m.container_name).filter(Boolean))]
 
   // Filter masters
   const displayed = masters.filter(m => {
     // `masters` keeps every collection and the archived ones, so a new code is
     // never proposed twice; the screen lists the open tile's formats only.
-    if (m.archived || !inCollection(m)) return false
+    if (m.archived || !inCollection(m, collection)) return false
     if (containerFilter !== 'ALL' && m.container_name !== containerFilter) return false
     if (!search) return true
     const s = search.toLowerCase()
@@ -242,9 +249,11 @@ export default function MuseProducts() {
             <p style={{ fontSize: 13, color: 'rgba(232,234,242,0.4)', marginTop: 2 }}>Manage own brand masters and their fragrance variants</p>
           </div>
         </div>
-        <Button onClick={openCreate}>
-          <Plus size={15} /> New Master
-        </Button>
+        {canCreate && (
+          <Button onClick={openCreate}>
+            <Plus size={15} /> New Master
+          </Button>
+        )}
       </div>
 
       {/* Container filter */}
@@ -274,7 +283,7 @@ export default function MuseProducts() {
         <div style={{ textAlign: 'center', padding: '60px 0', color: 'rgba(232,234,242,0.3)', fontSize: 14 }}>
           <Star size={36} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
           <div>No MUSE masters yet</div>
-          <div style={{ fontSize: 12, marginTop: 6 }}>Click "New Master" to add your first own-brand product</div>
+          {canCreate && <div style={{ fontSize: 12, marginTop: 6 }}>Click "New Master" to add your first own-brand product</div>}
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 14 }}>
@@ -318,6 +327,7 @@ export default function MuseProducts() {
           availableFragrances={availableFragrances}
           addFragId={addFragId}
           setAddFragId={setAddFragId}
+          canAdd={canCreate}
           onAddFragrance={handleAddFragrance}
           addingFragrance={addingFragrance}
           onRemoveFragrance={handleRemoveFragrance}
@@ -429,7 +439,7 @@ function MasterCard({ master, onClick, onEdit, onDelete, onZoom, highlight }) {
 // ─────────────────────────────────────────────────────────────
 // Detail Drawer
 // ─────────────────────────────────────────────────────────────
-function DetailDrawer({ master, detail, loading, fragrances, availableFragrances, addFragId, setAddFragId, onAddFragrance, addingFragrance, onRemoveFragrance, onClose, onDelete, onEditBOM }) {
+function DetailDrawer({ master, detail, loading, fragrances, availableFragrances, addFragId, setAddFragId, canAdd, onAddFragrance, addingFragrance, onRemoveFragrance, onClose, onDelete, onEditBOM }) {
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9000, display: 'flex', justifyContent: 'flex-end' }}>
       <div onClick={e => e.stopPropagation()} className="sm-solid-panel" style={{
@@ -504,8 +514,13 @@ function DetailDrawer({ master, detail, loading, fragrances, availableFragrances
                 <div style={{ fontSize: 12, color: 'rgba(232,234,242,0.4)', fontStyle: 'italic', marginBottom: 14 }}>No fragrances assigned yet.</div>
               )}
 
-              {/* Add fragrance row */}
-              {availableFragrances.length > 0 ? (
+              {/* Add fragrance row: The Library only. An Archive or Atelier
+                  product is born under the store's own code, by its script. */}
+              {!canAdd ? (
+                <div style={{ fontSize: 11, color: 'rgba(232,234,242,0.4)', fontStyle: 'italic' }}>
+                  New fragrances for this collection are registered with the store's own codes, not added here.
+                </div>
+              ) : availableFragrances.length > 0 ? (
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <div style={{ flex: 1 }}>
                     <SearchSelect

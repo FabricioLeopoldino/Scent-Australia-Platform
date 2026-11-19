@@ -276,6 +276,26 @@ async function main() {
       strength.rows.length === 1 && strength.rows[0].oil_id === oil1 && parseFloat(strength.rows[0].actual_pct_used) > 25,
       `${strength.rows.length} rows, ${JSON.stringify(strength.rows[0] || {})}`);
 
+    // ── Collections, second path (19 Nov 2026): completing an order for an oil
+    // with no product yet under the format creates that product. It too must
+    // be born in the format's collection, not left for the boot backfill to
+    // call 'library'. oil2 has no product under the Archive test format.
+    if (arcId) {
+      const arcOrder = await api('POST', '/api/sm/production-orders', {
+        order_type: 'STANDARD', lines: [{ product_type: 'RD200_ARC_TEST', oil_id: oil2, oil_pct: 25, quantity: 1 }],
+      });
+      const arcOrderId = arcOrder.json?.id;
+      await api('PUT', `/api/sm/production-orders/${arcOrderId}/status`, { status: 'queued' });
+      await api('POST', `/api/sm/manufacturing/${arcOrderId}/start`);
+      const arcLine = (await db.query(`SELECT id FROM production_order_lines WHERE production_order_id = $1`, [arcOrderId])).rows[0]?.id;
+      await api('POST', `/api/sm/manufacturing/${arcOrderId}/lines/${arcLine}/filling-done`);
+      const arcDone = await api('POST', `/api/sm/manufacturing/${arcOrderId}/complete`, { notes_on_completion: '[regression] archive' });
+      const made = await db.query(`SELECT business_unit, current_stock FROM products WHERE master_product_id = $1 AND oil_id = $2`, [arcId, oil2]);
+      record('collection: a product created by completing an order is born in its format\'s collection',
+        arcDone.status === 200 && made.rows.length === 1 && made.rows[0].business_unit === 'archive' && near(made.rows[0].current_stock, 1),
+        `${arcOrder.status}/${arcDone.status} ${JSON.stringify(made.rows)}`);
+    }
+
     // ── Major Client priority displacement ──
     // idempotent client (rerun-safe)
     let clientId = (await db.query(`SELECT id FROM clients WHERE name = '[regression] Coco Republic Test' LIMIT 1`)).rows[0]?.id;
@@ -464,6 +484,7 @@ async function main() {
     // must not survive the run — sa is production data.
     await dropTestOils().catch((e) => console.error(`teardown: could not drop test oils — ${e.message}`));
     await db.query(`DELETE FROM products WHERE product_code = 'RD200_LEGACY_TEST'`).catch(() => {});
+    await db.query(`DELETE FROM transactions WHERE product_id IN (SELECT id FROM products WHERE master_product_id IN (SELECT id FROM products WHERE product_code = 'RD200_ARC_TEST'))`).catch(() => {});
     await db.query(`DELETE FROM products WHERE master_product_id IN (SELECT id FROM products WHERE product_code = 'RD200_ARC_TEST')`).catch(() => {});
     await db.query(`DELETE FROM products WHERE product_code IN ('RD200_ARC_TEST', 'RD200_BAD_TEST')`).catch(() => {});
     // sm.audit_log's FK is ON DELETE SET NULL too: the suite's own audit rows would stay behind, unowned.

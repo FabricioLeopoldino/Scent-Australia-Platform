@@ -65,7 +65,7 @@ const MODULES = [
     title: SYSTEM_NAMES.SM,
     subtitle: 'MUSE · White Label · Custom',
     icon: FlaskConical,
-    logo: '/logo-light.png',       // same mark as SA (owner decision)
+    logo: '/logos/muse-logo-wine.svg', // the MU:SE mark, as The Library and The Archive (owner, 19 Nov 2026)
     accent: '#b1545a',
   },
   {

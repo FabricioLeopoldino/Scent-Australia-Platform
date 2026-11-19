@@ -508,12 +508,17 @@ router.post('/manufacturing/:id/complete', auth, async (req, res) => {
             const scentCode = usesOil ? (fl.oil_code || fl.oil_id) : (fl.fragrance_code || fl.fragrance_id)
             const variantCode = `${fl.product_type}-${scentCode}`
             const variantName = `${fl.master_name || fl.product_type} — ${scentName || 'Unknown'}`
+            // Born in its master's collection (19 Nov 2026), as in POST
+            // /masters/:id/fragrances. With none, the start-up backfill made it
+            // a Library product under an Archive or Atelier format, drawing
+            // The Library's oil.
             const created = await tq(
               `INSERT INTO products
                 (name, product_code, category, segment, is_master, master_product_id, fragrance_id, oil_id,
-                 unit, current_stock, volume_ml, volume_unit, client_id, price)
+                 unit, current_stock, volume_ml, volume_unit, client_id, price, business_unit)
                VALUES ($1, $2, 'FINISHED_GOOD', 'MUSE', false, $3, $4, $5, 'units', 0, $6, $7, NULL,
-                       (SELECT price FROM products WHERE id = $3))
+                       (SELECT price FROM products WHERE id = $3),
+                       COALESCE((SELECT business_unit FROM products WHERE id = $3), 'library'))
                ON CONFLICT (product_code) DO UPDATE SET name = EXCLUDED.name
                RETURNING id`,
               [variantName, variantCode, fl.master_id, usesOil ? null : fl.fragrance_id, usesOil ? fl.oil_id : null, fl.master_volume, fl.master_volume_unit || 'ml']
