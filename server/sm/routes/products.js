@@ -404,6 +404,9 @@ router.delete('/products/:id/attachments/:attachId', auth, requireRole('root', '
 // Publish a product to Shopify as a draft (system stays source of truth for stock/price).
 router.post('/products/:id/shopify/publish', auth, requireRole('admin', 'root'), async (req, res) => {
   try {
+    // On hold (shared/shopify-block.js, owner 19 Nov 2026).
+    const block = await import('../../../shared/shopify-block.js')
+    if (block.SHOPIFY_PRODUCT_CREATION_BLOCKED) return res.status(block.SHOPIFY_BLOCK_STATUS).json({ error: block.SHOPIFY_BLOCK_MESSAGE, blocked: true })
     if (!process.env.SM_SHOPIFY_SHOP_DOMAIN || !process.env.SM_SHOPIFY_ACCESS_TOKEN) {
       return res.status(503).json({ error: 'Shopify not configured' })
     }

@@ -277,6 +277,12 @@ export default function ProductManagement({ user, libraryMode = false, company =
 
       if (res.ok) {
         if (!candleError) showToast(editingProduct ? 'Product updated!' : 'Product created!', 'success');
+        // Shopify product creation is on hold (shared/shopify-block.js): say so
+        // on every new product, so nobody expects it in the store.
+        if (!editingProduct) {
+          const created = await res.json().catch(() => ({}));
+          if (created.shopify_notice) showToast(`Created in the platform only. ${created.shopify_notice}`, 'warning', 9000);
+        }
         setShowAddModal(false);
         setAddForSku(null);
         setEditingProduct(null);

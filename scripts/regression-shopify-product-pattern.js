@@ -12,6 +12,7 @@
 import { oilProductInput, oilVariantBulkInput, variantCost, oilWarnings, OIL_PATTERN } from '../shared/shopify-product-pattern.js';
 import { publishOil, addMissingOilSizes } from '../server/sa/shopify-products.js';
 import { readShopifyImage } from '../server/sa/shopify-image.js';
+import { SHOPIFY_PRODUCT_CREATION_BLOCKED, SHOPIFY_BLOCK_MESSAGE } from '../shared/shopify-block.js';
 
 let failed = 0;
 const check = (ok, label, detail = '') => {
@@ -69,6 +70,17 @@ const oldListing = (k) => ({ id: `gid://shopify/Product/old-${k}`, title: `Jardi
 const main = { id: 'gid://shopify/Product/main', title: 'Jardin de Carthage (LUX0639)', productType: OIL_PATTERN.productType, status: 'ACTIVE' };
 
 try {
+  if (SHOPIFY_PRODUCT_CREATION_BLOCKED) {
+  // On hold since 19 Nov 2026 (shared/shopify-block.js): both refuse before
+  // anything else. Sections 2 and 3 below come back when the hold is lifted.
+  console.log('\n2. Publish and Add missing sizes: ON HOLD');
+  calls = [];
+  const e1 = await publishOil(oil, { costPerLitre: 42.40 }).catch((e) => e);
+  const e2 = await addMissingOilSizes(oil, { costPerLitre: 42.40 }).catch((e) => e);
+  check(e1?.status === 423 && e1.message === SHOPIFY_BLOCK_MESSAGE && e2?.status === 423 && e2.message === SHOPIFY_BLOCK_MESSAGE,
+    'Publish and Add missing sizes refuse with the hold notice', `${e1?.status} ${e2?.status}`);
+  check(calls.length === 0, 'and Shopify is not asked anything', String(calls.length));
+  } else {
   console.log('\n2. Publish');
   calls = [];
   script = {
@@ -132,6 +144,7 @@ try {
   script.variants = () => ({ data: { productVariants: { nodes: [v('SA_CA_00078', oldListing('SA_CA'))] } } });
   err = await addMissingOilSizes(oil, {}).catch((e) => e);
   check(err?.status === 409 && /no main product in Shopify yet/.test(err.message), 'no main product yet: refused, Publish creates it');
+  }
 
   // The product sheet's Publish / Add missing sizes (SKU Mapping removed, 6 Nov)
   // decide from readShopifyImage's `main`. It must be the server's own rule, or

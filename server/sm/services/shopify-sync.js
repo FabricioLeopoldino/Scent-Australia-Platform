@@ -430,6 +430,9 @@ async function findProductBySkus(skus) {
 
 // lines: [{ format, sku, price }] in the order they should appear.
 async function createMuseProductOnShopify({ title, lines }) {
+  // On hold (shared/shopify-block.js, owner 19 Nov 2026).
+  const block = await import('../../../shared/shopify-block.js')
+  if (block.SHOPIFY_PRODUCT_CREATION_BLOCKED) throw Object.assign(new Error(block.SHOPIFY_BLOCK_MESSAGE), { status: block.SHOPIFY_BLOCK_STATUS })
   // Same gate as every other outbound call: a staging or local boot must never
   // create real products on the live store.
   if (!outboundEnabled()) throw new Error('Shopify publishing is disabled (SM_SHOPIFY_SYNC_ENABLED)')

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useToast } from '../components/Toast';
 import ConfirmModal from '../components/ConfirmModal';
 import { GlowingEffect } from '../components/GlowingEffect';
+import { SHOPIFY_PRODUCT_CREATION_BLOCKED, SHOPIFY_BLOCK_MESSAGE } from '../../../shared/shopify-block.js';
 
 const EMPTY_FORM = {
   tag: '', product_code: '', name: '', shopify_skus: '',
@@ -20,7 +21,8 @@ export default function Formulas({ user }) {
   const [search, setSearch]             = useState('');
   const [codeLoading, setCodeLoading]   = useState(false);
   const [nextCode, setNextCode]         = useState(null);
-  const [publishToShopify, setPublishToShopify] = useState(true);
+  // Off and not offered while Shopify product creation is on hold (shared/shopify-block.js).
+  const [publishToShopify, setPublishToShopify] = useState(!SHOPIFY_PRODUCT_CREATION_BLOCKED);
   const [saving, setSaving]             = useState(false);
   const [shopifyStatuses, setShopifyStatuses] = useState({});
   const [adjustingFormula, setAdjustingFormula] = useState(null); // formula being adjusted
@@ -94,7 +96,9 @@ export default function Formulas({ user }) {
       if (!res.ok) throw new Error((await res.json()).error);
       const data = await res.json();
 
-      if (!editing && publishToShopify && data.shopifyResult) {
+      if (!editing && data.shopifyResult?.blocked) {
+        showToast(`Formula created in the platform only. ${data.shopifyResult.error}`, 'warning', 9000);
+      } else if (!editing && publishToShopify && data.shopifyResult) {
         const { added = [], failed = [] } = data.shopifyResult;
         if (added.length > 0) showToast(`Formula created + ${added.length} Shopify product(s) published as draft`, 'success');
         else if (failed.length > 0) showToast('Formula created but Shopify publish failed — check credentials', 'warning');
@@ -505,8 +509,13 @@ export default function Formulas({ user }) {
                 </div>
               )}
 
-              {/* Shopify publish toggle — only for new formulas */}
-              {!editing && (
+              {/* Shopify publish toggle — only for new formulas; while on hold, the notice instead */}
+              {!editing && SHOPIFY_PRODUCT_CREATION_BLOCKED && (
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, fontSize: 12, color: 'var(--text-muted)' }}>
+                  Shopify: {SHOPIFY_BLOCK_MESSAGE}
+                </div>
+              )}
+              {!editing && !SHOPIFY_PRODUCT_CREATION_BLOCKED && (
                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14 }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
                     <div

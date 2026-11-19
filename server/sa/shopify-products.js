@@ -11,6 +11,7 @@
 // comes back in Shopify's own words, and nothing is guessed. Two mains for one
 // oil would split its sales history in Shopify, so a second one is refused.
 import { OIL_PATTERN, oilProductInput, oilVariantBulkInput, oilSkus, oilWarnings } from '../../shared/shopify-product-pattern.js';
+import { SHOPIFY_PRODUCT_CREATION_BLOCKED, SHOPIFY_BLOCK_MESSAGE, SHOPIFY_BLOCK_STATUS } from '../../shared/shopify-block.js';
 
 const API = '2026-04';
 const httpError = (status, message, extra = {}) => Object.assign(new Error(message), { status, ...extra });
@@ -76,6 +77,7 @@ const PUBLISH_HOLD_MS = 10 * 60 * 1000;
 
 /** Create the oil's main product. Refused when one already exists. */
 export async function publishOil(product, opts = {}) {
+  if (SHOPIFY_PRODUCT_CREATION_BLOCKED) throw httpError(SHOPIFY_BLOCK_STATUS, SHOPIFY_BLOCK_MESSAGE);
   const held = publishing.get(product.id);
   if (held && Date.now() - held.at < PUBLISH_HOLD_MS) {
     throw httpError(409, held.title
@@ -120,6 +122,7 @@ async function createOilProduct(product, { costPerLitre, prices } = {}) {
 
 /** Add the sizes the main product lacks. Refused when there is no main product yet. */
 export async function addMissingOilSizes(product, { costPerLitre, prices } = {}) {
+  if (SHOPIFY_PRODUCT_CREATION_BLOCKED) throw httpError(SHOPIFY_BLOCK_STATUS, SHOPIFY_BLOCK_MESSAGE);
   const sizes = oilSkus(product);
   const existing = await variantsBySku(sizes.map(([, sku]) => sku));
   const main = mainOf(existing);
