@@ -1,4 +1,4 @@
-import { Package, FlaskConical, Sparkles, Factory, Users, LogOut, Droplets, History, ClipboardList } from 'lucide-react';
+import { Package, FlaskConical, Sparkles, Factory, Users, LogOut, Droplets, History, ClipboardList, Construction } from 'lucide-react';
 import { SYSTEM_NAMES, SA_DISPLAY_NAME } from '../../shared/business-names.js';
 
 // Module Picker — behavioral spec in PRD Appendix B.
@@ -67,6 +67,7 @@ const MODULES = [
     icon: FlaskConical,
     logo: '/logos/muse-logo-wine.svg', // the MU:SE mark, as The Library and The Archive (owner, 19 Nov 2026)
     accent: '#b1545a',
+    inDevelopment: true,
   },
   {
     // MUSE's core collection. Opened on 17 Nov 2026, once its 30 products were
@@ -79,6 +80,7 @@ const MODULES = [
     logo: '/logos/muse-logo-wine.svg',
     accent: '#d4b574',
     viewOf: 'SM',
+    inDevelopment: true,
   },
   {
     // MUSE is a VIEW over the SM module (same backend/segments) — the tile
@@ -92,6 +94,7 @@ const MODULES = [
     logo: '/logos/muse-logo-wine.svg', // MUSE's own wordmark (wine, reads on the light plate)
     accent: '#d4b574',
     viewOf: 'SM',
+    inDevelopment: true,
   },
   {
     // Centralized cross-system History & Activity (owner 2026-07-28) — its own
@@ -169,6 +172,17 @@ export default function ModulePicker({ user, onPick, onLogout, onOpenUsers }) {
                 <div style={{ fontSize: 16, fontWeight: 800 }}>{m.title}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{m.subtitle}</div>
                 {disabled && <span className="badge-soon">Coming soon</span>}
+                {/* The three MUSE collections, while the MUSE Shopify store is being
+                    finalised (owner, 19 Nov 2026). Same mark as the notice inside. */}
+                {m.inDevelopment && (
+                  <span title="Being built alongside the MUSE Shopify store, which is still being finalised."
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 4, padding: '3px 9px',
+                      borderRadius: 6, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', color: 'var(--text-primary)',
+                      background: 'rgba(212,181,116,0.12)', border: '1px solid rgba(212,181,116,0.40)' }}>
+                    <Construction size={13} style={{ color: '#d4b574' }} aria-hidden="true" />
+                    MUSE — in development
+                  </span>
+                )}
               </button>
             );
           })}
