@@ -11,6 +11,7 @@
 
 import express from 'express';
 import { calcSmartDemand } from '../../shared/demand-calculator.js';
+import { SHOPIFY_PRODUCT_CREATION_BLOCKED, SHOPIFY_BLOCK_MESSAGE, SHOPIFY_BLOCK_STATUS } from '../../shared/shopify-block.js';
 import { bomVariantFor } from '../../shared/refurb-machines.js';
 import { NON_DEMAND_REMOVE_REASONS, UNPATTERNED_REMOVE_REASONS } from '../../shared/stock-reasons.js';
 import { router as purchaseOrdersRouter, migratePurchaseOrders } from './purchase-orders.js';
@@ -245,6 +246,7 @@ const upload = multer({
 // HELPER: Create product in Shopify automatically
 // ========================================================================
 async function createProductInShopify(product) {
+  if (SHOPIFY_PRODUCT_CREATION_BLOCKED) throw Object.assign(new Error(SHOPIFY_BLOCK_MESSAGE), { status: SHOPIFY_BLOCK_STATUS });
   // Support both SHOPIFY_ACCESS_TOKEN (new) and SHOPIFY_API_PASSWORD (legacy fallback)
   const accessToken = process.env.SHOPIFY_ACCESS_TOKEN || process.env.SHOPIFY_API_PASSWORD;
   if (!process.env.SHOPIFY_STORE_NAME || !accessToken) {
@@ -958,7 +960,11 @@ router.post('/products', async (req, res) => {
     // SKUs are still generated and stored, so if the oil ever becomes shared,
     // publishing it needs no backfill.
     const withholdFromShopify = category === 'OILS' && !!finalExclusivity;
-    if (withholdFromShopify) {
+    if (SHOPIFY_PRODUCT_CREATION_BLOCKED) {
+      // On hold (shared/shopify-block.js): created here only; the response
+      // carries the notice so the screen can say so.
+      console.log(`⏸️ "${row.name}" created in the platform only — Shopify product creation is on hold`);
+    } else if (withholdFromShopify) {
       console.log(`🔒 Oil "${row.name}" is exclusive to ${finalExclusivity} — withheld from the Scent Shopify store (D15 §10)`);
     } else if (category === 'OILS') {
       // An oil goes to Shopify from its product sheet's Publish, where its cost
@@ -995,7 +1001,8 @@ router.post('/products', async (req, res) => {
       shopifySkus: parseJSONB(row.shopifySkus),
       skuMultipliers: parseJSONB(row.skuMultipliers),
       incoming_orders: [],
-      exclusivity: row.exclusivity || null
+      exclusivity: row.exclusivity || null,
+      ...(SHOPIFY_PRODUCT_CREATION_BLOCKED && { shopify_notice: SHOPIFY_BLOCK_MESSAGE }),
     });
   } catch (error) {
     console.error('Create product error:', error);
@@ -2162,6 +2169,7 @@ router.get('/shopify/pending-orders', async (req, res) => {
 // ========================================================================
 router.post('/shopify/publish/:productId', async (req, res) => {
   if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can publish to Shopify' });
+  if (SHOPIFY_PRODUCT_CREATION_BLOCKED) return res.status(SHOPIFY_BLOCK_STATUS).json({ error: SHOPIFY_BLOCK_MESSAGE, blocked: true });
   try {
     const { productId } = req.params;
     const { userId } = req.body || {};
@@ -2225,6 +2233,7 @@ async function auditShopifyOil(userId, product, action, out) {
 // ========================================================================
 router.post('/shopify/add-missing-variants/:productId', async (req, res) => {
   if (!['admin', 'root'].includes(req.user.role)) return res.status(403).json({ error: 'Only admin or root can publish to Shopify' });
+  if (SHOPIFY_PRODUCT_CREATION_BLOCKED) return res.status(SHOPIFY_BLOCK_STATUS).json({ error: SHOPIFY_BLOCK_MESSAGE, blocked: true });
   try {
     // An oil: the missing sizes become variants of its main product (P7),
     // never products of their own.
@@ -3455,6 +3464,7 @@ router.get('/stock-reconciliation', async (req, res) => {
 
 // ── Helper: create 400ml + 1L products in Shopify for a formula ──────────
 async function createFormulaInShopify(formula) {
+  if (SHOPIFY_PRODUCT_CREATION_BLOCKED) throw Object.assign(new Error(SHOPIFY_BLOCK_MESSAGE), { status: SHOPIFY_BLOCK_STATUS });
   const accessToken = process.env.SHOPIFY_ACCESS_TOKEN || process.env.SHOPIFY_API_PASSWORD;
   if (!process.env.SHOPIFY_STORE_NAME || !accessToken)
     throw new Error('Shopify credentials not configured');
@@ -3638,7 +3648,9 @@ router.post('/formulas', async (req, res) => {
     } catch (e) { console.warn('audit_log (formula_created):', e.message); }
 
     let shopifyResult = null;
-    if (publishToShopify) {
+    if (publishToShopify && SHOPIFY_PRODUCT_CREATION_BLOCKED) {
+      shopifyResult = { blocked: true, error: SHOPIFY_BLOCK_MESSAGE };
+    } else if (publishToShopify) {
       try { shopifyResult = await createFormulaInShopify(formula); }
       catch (e) { shopifyResult = { error: e.message }; }
     }

@@ -22,6 +22,7 @@ import 'dotenv/config';
 import pkg from 'pg';
 import bcrypt from 'bcryptjs';
 import { createRequire } from 'node:module';
+import { SHOPIFY_PRODUCT_CREATION_BLOCKED, SHOPIFY_BLOCK_MESSAGE } from '../shared/shopify-block.js';
 const require = createRequire(import.meta.url);
 const { Pool } = pkg;
 
@@ -646,15 +647,22 @@ async function run() {
 
   // ── P7: publishing an oil to Shopify checks the oil first, before Shopify is
   // asked (Shopify is blanked here, so a check that passes stops at "not connected").
+  const X = await createOil('X', { exclusivity: 'MUSE' });
+  if (SHOPIFY_PRODUCT_CREATION_BLOCKED) {
+    // On hold since 19 Nov 2026 (shared/shopify-block.js): Publish refuses
+    // before the P7 checks; they come back when the hold is lifted.
+    r = await api('root', 'POST', `/api/sa/shopify/publish/${A}`, { costPerLitre: 42.4 });
+    record('P7 on hold: Publish answers with the hold notice', r.status === 423 && r.json?.error === SHOPIFY_BLOCK_MESSAGE, r.json?.error);
+  } else {
   r = await api('root', 'POST', `/api/sa/shopify/publish/${E}`, { costPerLitre: 42.4 });
   record('P7: an oil not registered in SA is not published to the SA store', r.status === 400 && /not registered in SA Fragrances/.test(r.json?.error || ''), r.json?.error);
-  const X = await createOil('X', { exclusivity: 'MUSE' });
   r = await api('root', 'POST', `/api/sa/shopify/publish/${X}`, { costPerLitre: 42.4 });
   record('P7: nor one exclusive to MUSE (D15 §10)', r.status === 400 && /exclusive to MUSE/.test(r.json?.error || ''), r.json?.error);
   r = await api('root', 'POST', `/api/sa/shopify/publish/${A}`, { costPerLitre: -1 });
   record('P7: a negative cost per litre is refused', r.status === 400 && /cost per litre/.test(r.json?.error || ''), r.json?.error);
   r = await api('root', 'POST', `/api/sa/shopify/publish/${A}`, { costPerLitre: 42.4 });
   record('P7: an SA oil passes the checks and reaches Shopify (not connected here)', r.status === 400 && /Shopify is not connected/.test(r.json?.error || ''), r.json?.error);
+  }
   r = await api('user', 'POST', `/api/sa/shopify/publish/${A}`, { costPerLitre: 42.4 });
   record('P7: a user cannot publish', r.status === 403, `status=${r.status}`);
 
