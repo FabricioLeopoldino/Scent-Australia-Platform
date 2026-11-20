@@ -4,6 +4,7 @@ import ConfirmModal from '../components/ConfirmModal';
 import { GlowingEffect } from '../components/GlowingEffect';
 import OperatorPicker from '../components/OperatorPicker';
 import { PackageOpen, ArchiveRestore, Plus, X, Pencil, Check } from 'lucide-react';
+import { isSaProduct } from '../utils/stockStatus';
 
 // Flexible qty parser: 1L / 1.5L / 1000 / 500ml → mL value
 const parseQtyMl = (raw) => {
@@ -93,7 +94,11 @@ export default function ProductReturns({ user }) {
       const pData = await pRes.json();
       const fData = await fRes.json();
       const oData = oRes && oRes.ok ? await oRes.json() : [];
-      setProducts(Array.isArray(pData) ? pData : []);
+      // What comes back to SA's shelf: active products, and oils SA carries.
+      // It listed every product, so a deactivated oil (Warm Spicy Cinnamon
+      // FRAG_0340, merged into FRAG_0344 on 6 Nov) showed twice under one
+      // name, and MUSE-only oils were offered for an SA return (20 Nov 2026).
+      setProducts((Array.isArray(pData) ? pData : []).filter((p) => p.status !== 'inactive' && isSaProduct(p)));
       setFormulas(Array.isArray(fData) ? fData : []);
       setOperators(Array.isArray(oData) ? oData : []);
     } catch (e) {
