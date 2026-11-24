@@ -758,6 +758,11 @@ router.post('/shopify/draft-order', auth, async (req, res) => {
     if (!process.env.SM_SHOPIFY_SHOP_DOMAIN || !process.env.SM_SHOPIFY_ACCESS_TOKEN) {
       return res.status(503).json({ error: 'Shopify not configured' })
     }
+    // Same gate as the rest of MUSE's outbound Shopify writes: nothing (and no
+    // customer link) leaves for the MUSE store until cutover.
+    if (String(process.env.SM_SHOPIFY_SYNC_ENABLED || '').toLowerCase() !== 'true') {
+      return res.status(503).json({ error: 'Shopify draft orders are disabled until cutover (SM_SHOPIFY_SYNC_ENABLED)' })
+    }
 
     // Built by the SHARED builder (services/shopify-sync). This route used to
     // construct its own query + line titles, which is how it kept printing
